@@ -337,10 +337,11 @@ content-type: application/json
 #
 #    If the live page returns a Cloudflare challenge (you'll see a
 #    502 with `{"detail":"upstream source unavailable"}` and no jobs),
-#    the live path is blocked from your IP — the suite cannot bypass
-#    this by design. Try from a residential IP, or skip the live
-#    verify and rely on the parser unit tests (which run against
-#    a captured HTML fixture).
+#    the live path is blocked from your IP — `playwright-stealth`
+#    reduces the challenge frequency but is not a guarantee (see
+#    the stealth note at the end of this section). Try from a
+#    residential IP, or skip the live verify and rely on the parser
+#    unit tests (which run against a captured HTML fixture).
 curl -i "http://localhost:8000/jobs/indeed?keywords=python&l=madrid&limit=20"
 ```
 
@@ -352,12 +353,12 @@ x-request-id: <uuid-or-your-trace-id>
 {
   "jobs": [
     {
-      "id": "100000001",
-      "title": "Senior Python Developer",
-      "company": "Acme Corp",
-      "location": "Madrid, Spain",
-      "url": "https://es.indeed.com/viewjob?jk=100000001",
-      "posted_at": "2026-05-01T00:00:00+00:00"
+      "id": "dd6cc0f5b0f0cfc9",
+      "title": "Desarrollador Python Junior (Madrid) | Sigma AI",
+      "company": "Sigma Group",
+      "location": "Madrid, Madrid provincia",
+      "url": "https://es.indeed.com/viewjob?jk=dd6cc0f5b0f0cfc9",
+      "posted_at": "2026-06-02T17:00:00+00:00"
     }
   ]
 }
@@ -414,7 +415,10 @@ the maintenance burden is yours from this point on:
 4. Retry step 5 above.
 
 The automated test suite cannot catch a live DOM drift; only this
-manual procedure can. **Future work**: consider adding
-`playwright-stealth` as a follow-up change to reduce Cloudflare
-challenge frequency — the v1 scraper intentionally does not include
-it (REQ-I-016) so the live failure mode is observable.
+manual procedure can. The scraper uses
+[`playwright-stealth`](https://pypi.org/project/playwright-stealth/)
+to bypass Cloudflare's bot detection; ensure Chromium is installed
+via `uv run playwright install chromium`. The capture script used to
+refresh the parser fixture lives in `/tmp/capture_indeed.py` (NOT
+committed) and is regenerated from a residential IP when the live
+DOM drifts.
