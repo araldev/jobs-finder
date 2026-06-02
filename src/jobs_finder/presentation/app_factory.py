@@ -6,9 +6,9 @@ Spec: REQ-006, REQ-017..REQ-022, REQ-I-012, REQ-I-013, REQ-I-014.
   - The LinkedIn use case (injected via `use_case=` for tests; default
     builds a real `LinkedInPlaywrightScraper` for production).
   - The Indeed use case (injected via `indeed_use_case=` for tests;
-    default is `None` and the route returns 500 because
-    `app.state.indeed_use_case` is not set — production callers must
-    pass it explicitly via `main.py`, T-008).
+    default builds a real `IndeedPlaywrightScraper` for production —
+    T-008 wired the default branch so `app = build_app()` exposes
+    BOTH sources).
   - `RequestIdMiddleware` (REQ-020).
   - `LogOnRequestMiddleware` (T-012): emits one INFO line per request
     on `jobs_finder.access` with the bound `request_id`. Added INNER
@@ -26,9 +26,15 @@ Spec: REQ-006, REQ-017..REQ-022, REQ-I-012, REQ-I-013, REQ-I-014.
 The LinkedIn use case is exposed to routes via `app.state.use_case`;
 the Indeed use case is exposed via `app.state.indeed_use_case`. Routes
 resolve them through the `get_use_case` and `get_indeed_use_case`
-dependencies. Tests always pass both use cases explicitly; the default
-branches exist for the production `uvicorn` entry point (`main.py`,
-T-008 — wired in batch 4).
+dependencies. Tests pass use cases explicitly when they need to
+short-circuit the default branches; otherwise the default branches
+build real Playwright scrapers from `Settings` so `app = build_app()`
+is the production-ready composition root.
+
+T-008 also extends the lifespan to open BOTH default scrapers on
+startup and close BOTH on shutdown. Each scraper's `__aenter__` /
+`__aexit__` is independent — a test that injects a fake port for one
+source does not affect the other source's lifespan behavior.
 """
 
 from __future__ import annotations
@@ -44,6 +50,11 @@ from jobs_finder.application.usecases.search_linkedin_jobs import (
     SearchLinkedInJobsUseCase,
 )
 from jobs_finder.infrastructure.config import Settings
+from jobs_finder.infrastructure.indeed.scraper import (
+    IndeedPlaywrightScraper,
+    IndeedScraperSettings,
+)
+from jobs_finder.infrastructure.indeed.throttle import IndeedAsyncThrottle
 from jobs_finder.infrastructure.linkedin.scraper import (
     LinkedInPlaywrightScraper,
     ScraperSettings,
@@ -107,18 +118,43 @@ def build_app(
         )
         use_case = SearchLinkedInJobsUseCase(port=scraper)
 
-    # The lifespan only opens the default `LinkedInPlaywrightScraper`.
-    # When tests inject a use case wrapping a non-LinkedIn port (e.g.
-    # `FakeJobSearchPort`), the lifespan is a no-op so the test does
-    # not need Chromium installed. The Indeed scraper is NOT opened
-    # in the lifespan because (a) tests never inject a real Indeed
-    # scraper, and (b) T-008 (composition) will extend the lifespan
-    # to open the Indeed scraper in production. The default branch
-    # for Indeed is intentionally a no-op — see the Indeed route's
-    # `get_indeed_use_case` for the contract.
-    raw_port = getattr(use_case, "_port", None)
+    if indeed_use_case is None:
+        # T-008: the default branch now also builds the Indeed
+        # scraper + use case, so `app = build_app()` wires BOTH
+        # sources. The Indeed scraper uses its OWN `IndeedAsyncThrottle`
+        # (per-instance lock, independent of the LinkedIn throttle)
+        # and its OWN `IndeedScraperSettings` (sourced from the
+        # `effective_settings.indeed_*` fields). The
+        # `SearchJobsUseCase` class is the source-neutral name
+        # (see T-005 deviation) — the file path
+        # `search_indeed_jobs.py` provides the per-source binding.
+        indeed_scraper = IndeedPlaywrightScraper(
+            throttle=IndeedAsyncThrottle(
+                min_interval_seconds=effective_settings.indeed_throttle_seconds,
+            ),
+            settings=IndeedScraperSettings(
+                user_agent=effective_settings.indeed_user_agent,
+                timeout_ms=effective_settings.indeed_timeout_ms,
+                domain=effective_settings.indeed_domain,
+                max_pages=effective_settings.indeed_max_pages,
+            ),
+        )
+        indeed_use_case = SearchJobsUseCase(port=indeed_scraper)
+
+    # The lifespan opens BOTH default scrapers. When tests inject a
+    # use case wrapping a non-LinkedIn port (e.g. `FakeJobSearchPort`),
+    # the lifespan is a no-op for that source so the test does not
+    # need Chromium installed. The pattern mirrors the LinkedIn
+    # pre-T-008 invariant: a use case wrapping a real `*PlaywrightScraper`
+    # is opened on startup and closed on shutdown; a use case wrapping
+    # anything else is left untouched.
+    raw_linkedin_port = getattr(use_case, "_port", None)
     scraper_for_lifespan: LinkedInPlaywrightScraper | None = (
-        raw_port if isinstance(raw_port, LinkedInPlaywrightScraper) else None
+        raw_linkedin_port if isinstance(raw_linkedin_port, LinkedInPlaywrightScraper) else None
+    )
+    raw_indeed_port = getattr(indeed_use_case, "_port", None)
+    indeed_scraper_for_lifespan: IndeedPlaywrightScraper | None = (
+        raw_indeed_port if isinstance(raw_indeed_port, IndeedPlaywrightScraper) else None
     )
 
     @asynccontextmanager
@@ -129,11 +165,22 @@ def build_app(
             # the first request can call `port.search(...)` and use the
             # browser.
             await scraper_for_lifespan.__aenter__()
+        if indeed_scraper_for_lifespan is not None:
+            # Open the Indeed scraper (T-008). Independent of the
+            # LinkedIn one — a failure in one source's startup
+            # ordering does not affect the other. The two scrapers
+            # share a process but each owns its own browser.
+            await indeed_scraper_for_lifespan.__aenter__()
         try:
             yield
         finally:
+            if indeed_scraper_for_lifespan is not None:
+                # Close the Indeed browser and stop its Playwright driver.
+                await indeed_scraper_for_lifespan.__aexit__(None, None, None)
             if scraper_for_lifespan is not None:
-                # Close the browser and stop the Playwright driver.
+                # Close the LinkedIn browser and stop its Playwright driver.
+                # Runs LAST so the Indeed shutdown runs FIRST; the order is
+                # the reverse of startup (LIFO).
                 await scraper_for_lifespan.__aexit__(None, None, None)
 
     app = FastAPI(title="jobs-finder", lifespan=lifespan)
