@@ -39,6 +39,11 @@ from jobs_finder.infrastructure.indeed.scraper import (
 from jobs_finder.infrastructure.indeed.throttle import IndeedAsyncThrottle
 from tests.fixtures.indeed_search import BLOCKED_PAGE_HTML, SEARCH_PAGE_HTML
 
+# Type alias for the per-call selector-timeout hook used by `FakePage`.
+# `True` means every `wait_for_selector` raises; a callable receives the
+# most-recent `goto` URL and returns `True` if that page should time out.
+SelectorTimeout = bool | Callable[[str], bool]
+
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------
@@ -58,10 +63,10 @@ class FakePage:
         self,
         html: str | Callable[[str], str] = "",
         *,
-        selector_timeout: bool = False,
+        selector_timeout: SelectorTimeout = False,
     ) -> None:
         self._html = html
-        self.selector_timeout = selector_timeout
+        self.selector_timeout: SelectorTimeout = selector_timeout
         self.goto_calls: list[str] = []
         self.wait_calls: list[tuple[str, int]] = []
         self.closed = False
@@ -71,7 +76,10 @@ class FakePage:
 
     async def wait_for_selector(self, selector: str, *, timeout: int) -> None:
         self.wait_calls.append((selector, timeout))
-        if self.selector_timeout:
+        if callable(self.selector_timeout):
+            if self.selector_timeout(self.goto_calls[-1]):
+                raise PlaywrightTimeoutError(f"selector {selector!r} not found")
+        elif self.selector_timeout:
             raise PlaywrightTimeoutError(f"selector {selector!r} not found")
 
     async def content(self) -> str:
@@ -394,6 +402,36 @@ async def test_search_stops_at_max_pages() -> None:
         "https://es.indeed.com/jobs?q=python&l=madrid&start=10",
     ]
     assert len(jobs) == 32
+
+
+async def test_search_returns_first_page_results_when_subsequent_page_times_out() -> None:
+    """A timeout on page > 0 (end of results or anti-bot re-challenge) is graceful.
+
+    REQ-I-007: The scraper MUST return what it has if a subsequent
+    pagination page fails. Only a failure on the FIRST page is a real
+    error (raise `IndeedTimeoutError`); pages > 0 are treated as
+    "no more results" and the loop breaks gracefully. This matches the
+    real Indeed behavior: the SERP for `python / madrid` has 16 cards
+    total, so a second page either does not exist or is an anti-bot
+    re-challenge — both of which should not blow up the search.
+    """
+    # First page returns the real 16-card capture; second page's
+    # `wait_for_selector` raises a PlaywrightTimeoutError.
+    page = FakePage(
+        html=lambda url: SEARCH_PAGE_HTML if "start=0" in url else "",
+        selector_timeout=lambda url: "start=10" in url,
+    )
+    scraper, _ = await _make_scraper_with(page)
+    async with scraper:
+        jobs = await scraper.search("python", "madrid", limit=20)
+    # 16 jobs from page 1; loop broke on page 2 timeout (no raise).
+    assert len(jobs) == 16
+    assert jobs[0].id == "dd6cc0f5b0f0cfc9"
+    # Exactly 2 page requests: page 1 succeeded, page 2 timed out.
+    assert page.goto_calls == [
+        "https://es.indeed.com/jobs?q=python&l=madrid&start=0",
+        "https://es.indeed.com/jobs?q=python&l=madrid&start=10",
+    ]
 
 
 # ---------------------------------------------------------------------------

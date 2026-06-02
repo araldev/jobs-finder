@@ -202,7 +202,20 @@ class IndeedPlaywrightScraper(JobSearchPort):
                         # Indeed serves ~10 jobs per page; page 0 starts
                         # at offset 0, page 1 at offset 10, etc.
                         url = self._build_url(keywords, location, page_index * 10)
-                        await self._navigate_and_wait(page, url)
+                        try:
+                            await self._navigate_and_wait(page, url)
+                        except IndeedTimeoutError:
+                            if page_index == 0:
+                                # First page timing out is a real error
+                                # (Cloudflare block, zero results, etc.).
+                                raise
+                            # Subsequent page timed out: end of results
+                            # or anti-bot re-challenge. Return what we
+                            # have rather than failing the whole search.
+                            # The 16-card first page is enough for the
+                            # vast majority of queries; ~limit requests
+                            # never reach a real page 2 anyway.
+                            break
                         content = await page.content()
                         soup = BeautifulSoup(content, "html.parser")
                         if is_indeed_blocked(soup):
