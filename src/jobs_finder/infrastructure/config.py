@@ -1,33 +1,58 @@
-"""Runtime configuration for the jobs-finder service (skeleton).
+"""Runtime configuration for the jobs-finder service.
 
 Spec: REQ-005, REQ-006. Env-driven so the same image can run in dev, CI,
 and prod with different throttles, UAs, and timeouts.
 
-NOTE: this is a plain dataclass skeleton. T-009 finalizes it as a
-`pydantic_settings.BaseSettings` with explicit `LINKEDIN_*` env-var
-overrides and adds a `load_settings()` factory. The fields and defaults
-are intentionally locked here so the rest of the presentation layer can
-type against them in T-008 without depending on the pydantic-settings
-package (which lands with T-009).
+`Settings` is a `pydantic_settings.BaseSettings` subclass. Each field
+maps to a `LINKEDIN_*` env var (case-insensitive, prefix configurable in
+the model config). Defaults are pinned in the field declarations and
+match the design doc.
+
+The T-008 batch landed a plain `@dataclass` skeleton with the same
+fields; T-009 converts it to `BaseSettings` and adds `load_settings()`.
+The dataclass skeleton is intentionally NOT retained — `BaseSettings`
+is the canonical loader for the project from this point on.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# A plausible stealth desktop UA. The exact fingerprint is not load-bearing;
+# any modern Chrome string is enough to bypass the most basic anti-bot
+# filters LinkedIn's public search applies.
+_DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 
 
-@dataclass(frozen=True, slots=True)
-class Settings:
-    """Env-driven runtime configuration (skeleton, finalized in T-009).
+class Settings(BaseSettings):
+    """Env-overridable runtime configuration.
 
-    Fields and defaults are stable; the loader (`load_settings`) and the
-    `BaseSettings` wiring land in T-009.
+    Env vars (case-insensitive, `LINKEDIN_` prefix):
+        - `LINKEDIN_THROTTLE_SECONDS` (float, default 3.0)
+        - `LINKEDIN_USER_AGENT` (str, default modern-Chrome UA)
+        - `LINKEDIN_HEADLESS` (bool, default True)
+        - `LINKEDIN_REQUEST_TIMEOUT_MS` (int, default 10_000)
     """
 
-    throttle_seconds: float = 3.0
-    user_agent: str = (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    model_config = SettingsConfigDict(
+        env_prefix="LINKEDIN_",
+        case_sensitive=False,
+        extra="ignore",
     )
+
+    throttle_seconds: float = 3.0
+    user_agent: str = _DEFAULT_USER_AGENT
     headless: bool = True
     request_timeout_ms: int = 10_000
+
+
+def load_settings() -> Settings:
+    """Read env vars and return a fully-populated `Settings`.
+
+    A thin wrapper that exists so callers (and tests) can refer to a
+    single factory function instead of importing the class directly.
+    """
+    return Settings()
