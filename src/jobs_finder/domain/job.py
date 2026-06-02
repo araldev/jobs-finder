@@ -33,9 +33,7 @@ class Job:
     posted_at: datetime
 
     def __post_init__(self) -> None:
-        if self.posted_at.tzinfo is None or self.posted_at.tzinfo.utcoffset(
-            self.posted_at
-        ) is None:
+        if self.posted_at.tzinfo is None or self.posted_at.tzinfo.utcoffset(self.posted_at) is None:
             raise ValueError("posted_at must be timezone-aware")
 
     @classmethod

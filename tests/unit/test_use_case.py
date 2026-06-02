@@ -129,9 +129,7 @@ async def test_use_case_forwards_input_fields_to_port() -> None:
     port = FakeJobSearchPort(jobs=[])
     use_case = SearchLinkedInJobsUseCase(port=port)
 
-    await use_case.execute(
-        SearchLinkedInInput(keywords="rust", location="barcelona", limit=7)
-    )
+    await use_case.execute(SearchLinkedInInput(keywords="rust", location="barcelona", limit=7))
 
     assert port.calls == [("rust", "barcelona", 7)]
 
@@ -141,9 +139,7 @@ async def test_use_case_returns_empty_list_when_port_returns_empty() -> None:
     port = FakeJobSearchPort(jobs=[])
     use_case = SearchLinkedInJobsUseCase(port=port)
 
-    result = await use_case.execute(
-        SearchLinkedInInput(keywords="nothing", location="nowhere")
-    )
+    result = await use_case.execute(SearchLinkedInInput(keywords="nothing", location="nowhere"))
 
     assert result == []
 
@@ -159,9 +155,7 @@ async def test_use_case_propagates_job_search_error() -> None:
     use_case = SearchLinkedInJobsUseCase(port=port)
 
     with pytest.raises(JobSearchError, match="upstream is down"):
-        await use_case.execute(
-            SearchLinkedInInput(keywords="python", location="madrid")
-        )
+        await use_case.execute(SearchLinkedInInput(keywords="python", location="madrid"))
 
 
 async def test_use_case_propagates_subclass_of_job_search_error() -> None:
@@ -174,9 +168,7 @@ async def test_use_case_propagates_subclass_of_job_search_error() -> None:
     use_case = SearchLinkedInJobsUseCase(port=port)
 
     with pytest.raises(CustomBlockedError, match="auth wall"):
-        await use_case.execute(
-            SearchLinkedInInput(keywords="python", location="madrid")
-        )
+        await use_case.execute(SearchLinkedInInput(keywords="python", location="madrid"))
 
 
 # ---------------------------------------------------------------------------

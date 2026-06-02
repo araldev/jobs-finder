@@ -102,10 +102,7 @@ def test_job_is_frozen() -> None:
 
 def test_from_url_extracts_id_from_canonical_path() -> None:
     """Canonical `https://www.linkedin.com/jobs/view/<id>/` yields the id."""
-    assert (
-        Job.from_url("https://www.linkedin.com/jobs/view/3850000000/")
-        == "3850000000"
-    )
+    assert Job.from_url("https://www.linkedin.com/jobs/view/3850000000/") == "3850000000"
 
 
 def test_from_url_works_with_query_params() -> None:
@@ -116,10 +113,7 @@ def test_from_url_works_with_query_params() -> None:
 
 def test_from_url_works_without_trailing_slash() -> None:
     """A path without the final `/` still yields the id."""
-    assert (
-        Job.from_url("https://www.linkedin.com/jobs/view/3850000000")
-        == "3850000000"
-    )
+    assert Job.from_url("https://www.linkedin.com/jobs/view/3850000000") == "3850000000"
 
 
 def test_from_url_falls_back_to_currentJobId_query_param() -> None:  # noqa: N802
@@ -172,6 +166,7 @@ def test_domain_module_does_not_import_infra_or_presentation() -> None:
     """
     import jobs_finder.domain.exceptions as exc_mod  # noqa: PLC0415
     import jobs_finder.domain.job as job_mod  # noqa: PLC0415
+
     for mod in (job_mod, exc_mod):
         module_file = mod.__file__
         assert module_file is not None

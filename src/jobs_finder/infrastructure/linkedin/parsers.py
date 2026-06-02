@@ -109,9 +109,7 @@ def parse_posted_at(card: str | Tag) -> datetime | None:
     try:
         dt = datetime.fromisoformat(str(raw))
     except ValueError as e:
-        raise _parse_error(
-            "parse_posted_at", f"malformed datetime {raw!r}", tag
-        ) from e
+        raise _parse_error("parse_posted_at", f"malformed datetime {raw!r}", tag) from e
     if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
         raise _parse_error("parse_posted_at", "naive datetime", tag)
     return dt
@@ -125,9 +123,5 @@ def is_block_page(soup: BeautifulSoup) -> bool:
     """
     if soup.select_one("form#login, form.sign-in-form, .auth-wall, .challenge-page"):
         return True
-    title = (
-        soup.title.string.strip().lower()
-        if soup.title and soup.title.string
-        else ""
-    )
+    title = soup.title.string.strip().lower() if soup.title and soup.title.string else ""
     return any(token in title for token in ("sign in", "authenticate", "verify"))

@@ -261,7 +261,7 @@ def test_parsers_accept_string_or_tag() -> None:
         '<li class="result-card" data-entity-urn="urn:li:jobPosting:1">'
         '<a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/1/">'
         '<h3 class="base-card__title">X</h3>'
-        '</a>'
+        "</a>"
         '<h4 class="base-card__subtitle">Y</h4>'
         '<span class="job-search-card__location">Z</span>'
         "</li>"

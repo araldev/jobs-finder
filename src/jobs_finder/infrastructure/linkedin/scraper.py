@@ -163,9 +163,7 @@ class LinkedInPlaywrightScraper(JobSearchPort):
     async def _navigate_and_wait(self, page: Any, url: str) -> None:
         try:
             await page.goto(url)
-            await page.wait_for_selector(
-                RESULTS_SELECTOR, timeout=self._settings.timeout_ms
-            )
+            await page.wait_for_selector(RESULTS_SELECTOR, timeout=self._settings.timeout_ms)
         except PlaywrightTimeoutError as e:
             raise LinkedInTimeoutError(
                 "scraper: timeout waiting for results",
