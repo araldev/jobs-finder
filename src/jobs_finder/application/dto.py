@@ -21,3 +21,19 @@ class SearchLinkedInInput:
     keywords: str
     location: str
     limit: int = 20
+
+
+@dataclass(frozen=True, slots=True)
+class SearchIndeedInput:
+    """Validated input for the Indeed job search use case.
+
+    Spec: REQ-I-004. `limit` defaults to 20 here AND on the Pydantic
+    schema at the presentation boundary; the use case does not
+    re-validate. The shape mirrors `SearchLinkedInInput` 1:1 so the
+    presentation layer can use the same generic binding for both
+    sources.
+    """
+
+    keywords: str
+    location: str
+    limit: int = 20
