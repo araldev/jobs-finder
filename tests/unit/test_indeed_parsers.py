@@ -130,8 +130,15 @@ def _card_no_date() -> str:
 
 
 def test_parse_indeed_job_id_extracts_data_jk() -> None:
-    """The first card's id is the value of its `data-jk` attribute."""
-    assert parse_indeed_job_id(_card(0)) == "100000001"
+    """The first card's id is the value of its `data-jk` attribute.
+
+    The real DOM (observed 2026-06-02 against real es.indeed.com HTML)
+    puts `data-jk` on the title anchor `<a class="jcs-JobTitle">`,
+    NOT on the card div. The first card's `data-jk` is
+    `dd6cc0f5b0f0cfc9` (hex-shaped, not 9-digit decimal — Indeed
+    uses a 16-char hex id in the live SERP).
+    """
+    assert parse_indeed_job_id(_card(0)) == "dd6cc0f5b0f0cfc9"
 
 
 def test_parse_indeed_job_id_works_for_every_fixture_card() -> None:
@@ -143,21 +150,31 @@ def test_parse_indeed_job_id_works_for_every_fixture_card() -> None:
 
 
 def test_parse_indeed_title_extracts_title() -> None:
-    assert parse_indeed_title(_card(0)) == "Senior Python Developer"
+    """The first card's title is the text content of the title anchor.
+
+    Real DOM card 0 renders the title as
+    "Desarrollador Python Junior (Madrid) | Sigma AI" (the
+    `| Sigma AI` is Indeed's SERP rendering quirk for this card;
+    the other 15 cards in the fixture have clean titles without
+    the trailing company).
+    """
+    assert parse_indeed_title(_card(0)) == "Desarrollador Python Junior (Madrid) | Sigma AI"
 
 
 def test_parse_indeed_company_extracts_company() -> None:
-    assert parse_indeed_company(_card(0)) == "Indeed Co 1"
+    """The first card's company comes from `[data-testid="company-name"]`."""
+    assert parse_indeed_company(_card(0)) == "Sigma Group"
 
 
 def test_parse_indeed_location_extracts_location() -> None:
-    assert parse_indeed_location(_card(0)) == "Madrid, Spain"
+    """The first card's location comes from `[data-testid="text-location"]`."""
+    assert parse_indeed_location(_card(0)) == "Madrid, Madrid provincia"
 
 
 def test_parse_indeed_url_builds_canonical_viewjob_url() -> None:
     """`parse_indeed_url` builds the canonical `https://{domain}/viewjob?jk={id}` URL."""
     url = parse_indeed_url(_card(0), domain="es.indeed.com")
-    assert url == "https://es.indeed.com/viewjob?jk=100000001"
+    assert url == "https://es.indeed.com/viewjob?jk=dd6cc0f5b0f0cfc9"
 
 
 def test_parse_indeed_url_respects_supplied_domain() -> None:
@@ -361,14 +378,21 @@ def test_indeed_parsers_module_has_no_playwright_or_async() -> None:
 
 
 def test_indeed_parsers_accept_string_or_tag() -> None:
-    """Helpers accept either an HTML fragment string or a `bs4.element.Tag`."""
+    """Helpers accept either an HTML fragment string or a `bs4.element.Tag`.
+
+    The fragment mirrors the real DOM observed 2026-06-02 against
+    real es.indeed.com HTML: `data-jk` is on the title anchor
+    `<a class="jcs-JobTitle">`; company uses
+    `[data-testid="company-name"]`; location uses
+    `[data-testid="text-location"]`.
+    """
     fragment = """
-    <div class="job_seen_beacon" data-jk="123456789">
-      <h2 class="jobTitle">
-        <a href="/viewjob?jk=123456789">X</a>
-      </h2>
-      <span class="companyName">Y</span>
-      <div class="companyLocation">Z</div>
+    <div class="job_seen_beacon">
+      <h3 class="jobTitle">
+        <a class="jcs-JobTitle" data-jk="123456789">X</a>
+      </h3>
+      <span data-testid="company-name">Y</span>
+      <div data-testid="text-location">Z</div>
     </div>
     """
     assert parse_indeed_job_id(fragment) == "123456789"
@@ -396,16 +420,28 @@ def test_placeholder_fixture_has_at_least_15_cards() -> None:
     assert len(cards) >= 15, f"expected 15+ cards, got {len(cards)}"
 
 
-def test_placeholder_fixture_covers_all_relative_time_strings() -> None:
-    """The placeholder must cover every relative-time string the parser
-    is contracted to handle (`Hoy`, `Hace 2 horas`, `hace 30+ días`,
-    `Hace 3 días`, `Recién publicado`)."""
+def test_real_fixture_has_no_inline_relative_time_strings() -> None:
+    """The real Indeed SERP (observed 2026-06-02) does NOT render
+    an inline `span.date` element per card — the date is loaded
+    asynchronously and is not in the first-page HTML.
+
+    This is documented as a fixture contract: the parser's
+    `parse_indeed_posted_at` returns `None` for every card in the
+    real fixture, and the scraper falls back to `datetime.now(UTC)`
+    for the `posted_at` field. The relative-time grammar in the
+    parser is preserved for backwards-compat with older fixtures
+    and any future DOM that DOES render an inline date; the
+    dedicated `test_parse_indeed_posted_at_*` tests pin the
+    grammar independently of the fixture.
+    """
     soup = BeautifulSoup(SEARCH_PAGE_HTML, "html.parser")
-    dates = [el.get_text(strip=True) for el in soup.select("span.date")]
-    required = {"Hoy", "Hace 2 horas", "hace 30+ días", "Hace 3 días", "Recién publicado"}
-    found = set(dates)
-    missing = required - found
-    assert not missing, f"fixture missing required dates: {missing}"
+    cards = soup.select("div.job_seen_beacon")
+    assert len(cards) >= 15, f"expected 15+ cards, got {len(cards)}"
+    # No card has an inline `span.date`; assert the contract.
+    date_spans = soup.select("div.job_seen_beacon span.date")
+    assert date_spans == [], (
+        f"real fixture should not have inline span.date elements; found {len(date_spans)}"
+    )
 
 
 def test_placeholder_fixture_file_path_is_loadable() -> None:

@@ -162,19 +162,25 @@ def _build_n_cards_html(n: int, *, jk_prefix: int) -> str:
     """Build a search-results page with `n` cards starting at `<jk_prefix>`.
 
     Used to construct a custom second page in the pagination test.
+    The card shape mirrors the real DOM observed 2026-06-02 against
+    real es.indeed.com HTML: `data-jk` is on the title anchor
+    `<a class="jcs-JobTitle">`; company uses
+    `[data-testid="company-name"]`; location uses
+    `[data-testid="text-location"]`. The v1 placeholder shape
+    (`<h2>`, `span.companyName`, `div.companyLocation`) is no longer
+    what the parsers expect.
     """
     cards: list[str] = []
     for i in range(n):
         jk = str(jk_prefix + i)
         cards.append(
             f"""
-      <div class="job_seen_beacon" data-jk="{jk}">
-        <h2 class="jobTitle">
-          <a href="/viewjob?jk={jk}" title="Title {jk}">Title {jk}</a>
-        </h2>
-        <span class="companyName">Co {jk}</span>
-        <div class="companyLocation">City {jk}</div>
-        <span class="date">Hoy</span>
+      <div class="job_seen_beacon">
+        <h3 class="jobTitle">
+          <a class="jcs-JobTitle" data-jk="{jk}">Title {jk}</a>
+        </h3>
+        <span data-testid="company-name">Co {jk}</span>
+        <div data-testid="text-location">City {jk}</div>
       </div>"""
         )
     return "<html><body><main><ul>" + "".join(cards) + "</ul></main></body></html>"
@@ -223,22 +229,35 @@ async def test_search_creates_browser_context_with_user_agent() -> None:
 
 
 async def test_search_returns_one_job_per_card() -> None:
-    """15 cards in the page yield 15 `Job` objects with the right fields."""
+    """16 cards in the page (real es.indeed.com capture) yield 16 `Job` objects.
+
+    The real DOM (observed 2026-06-02 against real es.indeed.com HTML)
+    renders 16 cards on the first page of the Python/Madrid SERP.
+    The first card's fields are pinned to the real capture so the
+    field-mapping contract is verified end-to-end:
+        id     = "dd6cc0f5b0f0cfc9" (16-char hex, not 9-digit decimal)
+        title  = "Desarrollador Python Junior (Madrid) | Sigma AI"
+        company = "Sigma Group" (from `[data-testid="company-name"]`)
+        location = "Madrid, Madrid provincia" (from
+                   `[data-testid="text-location"]`)
+    """
     page = FakePage(SEARCH_PAGE_HTML)
     scraper, _ = await _make_scraper_with(page)
     async with scraper:
-        # `limit=15` keeps the test on a single page so the assertion
-        # isolates field-mapping from pagination.
-        jobs = await scraper.search("python", "madrid", limit=15)
-    assert len(jobs) == 15
-    # First card (id 100000001) fields are populated.
+        # `limit=16` keeps the test on a single page (the real
+        # capture has exactly 16 cards) so the assertion isolates
+        # field-mapping from pagination.
+        jobs = await scraper.search("python", "madrid", limit=16)
+    assert len(jobs) == 16
+    # First card fields are populated from the real capture.
     first = jobs[0]
-    assert first.id == "100000001"
-    assert first.title == "Senior Python Developer"
-    assert first.company == "Indeed Co 1"
-    assert first.location == "Madrid, Spain"
-    assert first.url == "https://es.indeed.com/viewjob?jk=100000001"
-    # `posted_at` is tz-aware UTC (parser returns tz-aware datetime).
+    assert first.id == "dd6cc0f5b0f0cfc9"
+    assert first.title == "Desarrollador Python Junior (Madrid) | Sigma AI"
+    assert first.company == "Sigma Group"
+    assert first.location == "Madrid, Madrid provincia"
+    assert first.url == "https://es.indeed.com/viewjob?jk=dd6cc0f5b0f0cfc9"
+    # `posted_at` is tz-aware UTC (the real DOM has no inline date
+    # so the scraper falls back to `datetime.now(UTC)`).
     assert first.posted_at.tzinfo is not None
 
 
@@ -248,7 +267,7 @@ async def test_search_uses_configured_domain_in_viewjob_url() -> None:
     scraper, _ = await _make_scraper_with(page, domain="fr.indeed.com")
     async with scraper:
         jobs = await scraper.search("python", "paris", limit=1)
-    assert jobs[0].url == "https://fr.indeed.com/viewjob?jk=100000001"
+    assert jobs[0].url == "https://fr.indeed.com/viewjob?jk=dd6cc0f5b0f0cfc9"
 
 
 # ---------------------------------------------------------------------------
@@ -257,13 +276,25 @@ async def test_search_uses_configured_domain_in_viewjob_url() -> None:
 
 
 async def test_search_respects_limit() -> None:
-    """A `limit=5` over 15 cards returns the first 5 jobs only."""
+    """A `limit=5` over 16 cards returns the first 5 jobs only.
+
+    The real DOM (observed 2026-06-02) renders 16 cards per page;
+    the v1 placeholder had 15. The first 5 ids are read from the
+    real capture.
+    """
     page = FakePage(SEARCH_PAGE_HTML)
     scraper, _ = await _make_scraper_with(page)
     async with scraper:
         jobs = await scraper.search("python", "madrid", limit=5)
     assert len(jobs) == 5
-    assert [j.id for j in jobs] == [f"10000000{i}" for i in range(1, 6)]
+    # First 5 ids from the real capture (in document order).
+    assert [j.id for j in jobs] == [
+        "dd6cc0f5b0f0cfc9",
+        "7bc5f5f2d189a262",
+        "b99a18679f8055e5",
+        "789abcdef0123456",
+        "c725861acc9df584",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -305,27 +336,38 @@ async def test_search_raises_timeout_when_results_never_appear() -> None:
 
 
 async def test_search_paginates_with_start_increment_when_limit_exceeds_first_page() -> None:
-    """When `limit > first_page_size`, page 2 is fetched with `start=10`."""
+    """When `limit > first_page_size`, page 2 is fetched with `start=10`.
+
+    The real DOM (observed 2026-06-02) renders 16 cards on the first
+    page. With `limit=26`, the scraper reads the 16 real cards on
+    page 1 and 10 synthetic cards on page 2 (returned by the page
+    stub's lambda).
+    """
     second_page = _build_n_cards_html(10, jk_prefix=200000001)
     page = FakePage(html=lambda url: SEARCH_PAGE_HTML if "start=0" in url else second_page)
     scraper, _ = await _make_scraper_with(page)
     async with scraper:
-        jobs = await scraper.search("python", "madrid", limit=25)
+        jobs = await scraper.search("python", "madrid", limit=26)
 
-    assert len(jobs) == 25
+    assert len(jobs) == 26
     assert page.goto_calls == [
         "https://es.indeed.com/jobs?q=python&l=madrid&start=0",
         "https://es.indeed.com/jobs?q=python&l=madrid&start=10",
     ]
-    # First 15 are from the first page; last 10 are from the second page.
-    assert jobs[0].id == "100000001"
-    assert jobs[14].id == "100000015"
-    assert jobs[15].id == "200000001"
-    assert jobs[24].id == "200000010"
+    # First 16 are from the real first page; last 10 are from the
+    # synthetic second page.
+    assert jobs[0].id == "dd6cc0f5b0f0cfc9"
+    assert jobs[15].id == "148d08d0a96ff485"  # last card on first page
+    assert jobs[16].id == "200000001"  # first card on second page
+    assert jobs[25].id == "200000010"  # last card on second page
 
 
 async def test_search_does_not_paginate_when_first_page_satisfies_limit() -> None:
-    """When `limit <= first_page_size`, only one page is fetched."""
+    """When `limit <= first_page_size`, only one page is fetched.
+
+    The real DOM has 16 cards on the first page; `limit=3` is
+    well below that, so only one page is requested.
+    """
     page = FakePage(SEARCH_PAGE_HTML)
     scraper, _ = await _make_scraper_with(page)
     async with scraper:
@@ -336,9 +378,10 @@ async def test_search_does_not_paginate_when_first_page_satisfies_limit() -> Non
 async def test_search_stops_at_max_pages() -> None:
     """The pagination loop never exceeds `settings.indeed_max_pages`.
 
-    Every page returns the same 15-card HTML, so the loop would otherwise
-    run forever. With `max_pages=2` and `limit=200`, we get exactly 2
-    page requests and 30 jobs (15 per page, capped at limit=200).
+    Every page returns the same 16-card HTML (the real capture),
+    so the loop would otherwise run forever. With `max_pages=2`
+    and `limit=200`, we get exactly 2 page requests and 32 jobs
+    (16 per page, capped at limit=200).
     """
     page = FakePage(SEARCH_PAGE_HTML)
     scraper, _ = await _make_scraper_with(page, max_pages=2)
@@ -350,7 +393,7 @@ async def test_search_stops_at_max_pages() -> None:
         "https://es.indeed.com/jobs?q=python&l=madrid&start=0",
         "https://es.indeed.com/jobs?q=python&l=madrid&start=10",
     ]
-    assert len(jobs) == 30
+    assert len(jobs) == 32
 
 
 # ---------------------------------------------------------------------------

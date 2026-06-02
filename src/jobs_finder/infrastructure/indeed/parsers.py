@@ -1,6 +1,6 @@
 """Pure HTML parsers for Indeed job search results.
 
-Spec: REQ-I-006, REQ-I-009.
+Spec: REQ-I-006, REQ-I-009, REQ-S-003.
 
 Each parser is a pure function on a `bs4.element.Tag` (or a small
 HTML fragment string for tests). No I/O, no Playwright, no async,
@@ -8,30 +8,65 @@ no `Job` construction — those concerns belong to the scraper (T-006).
 
 Selectors are private module constants; a DOM change to one field
 only affects one function. The fixture used by tests lives in
-`tests/fixtures/indeed_search.py` and is a SYNTHETIC placeholder
-until T-010 replaces it with a real Playwright capture of the
-public `es.indeed.com` SERP.
+`tests/fixtures/indeed_search.py` and is a REAL Playwright capture
+of the public `es.indeed.com` SERP (the v1 synthetic placeholder
+was replaced in the `indeed-real-fixture` change, observed
+2026-06-02 against real es.indeed.com HTML).
 
-Card structure (mirrors the public SERP):
-    <div class="job_seen_beacon" data-jk="<id>">
-      <h2 class="jobTitle">
-        <a href="/viewjob?jk=<id>"><title></a>
-      </h2>
-      <span class="companyName"><company></span>
-      <div class="companyLocation"><location></div>
-      <span class="date"><relative-time string></span>
+Card structure (real DOM as of 2026-06-02):
+    <div class="job_seen_beacon">
+      <table class="mainContentTable">
+        <tr><td class="resultContent">
+          <h3 class="jobTitle">
+            <a class="jcs-JobTitle" data-jk="<id>">
+              <span title="<title>"><title></span>
+            </a>
+          </h3>
+          <div class="company_location">
+            <span data-testid="company-name"><company></span>
+            <div data-testid="text-location"><location></div>
+          </div>
+          <div class="jobMetaDataGroup">
+            <ul class="metadataContainer">
+              <li data-testid="attribute_snippet_testid">...</li>
+            </ul>
+          </div>
+        </td></tr>
+      </table>
     </div>
 
+Notable differences from the v1 placeholder:
+- `data-jk` is on the `<a class="jcs-JobTitle">` anchor, NOT on the
+  card div. The `parse_indeed_job_id` parser looks for the anchor
+  first, then falls back to the card div for backward-compat with
+  older fixtures.
+- The job-title heading is `<h3>` (was `<h2>` in the placeholder).
+- The company uses `data-testid="company-name"` (was
+  `span.companyName`).
+- The location uses `data-testid="text-location"` (was
+  `div.companyLocation`).
+- Indeed does NOT render an inline relative-time string on the
+  card anymore (the date is loaded asynchronously). The
+  `parse_indeed_posted_at` parser still looks for `span.date`; when
+  absent, it returns `None` and the scraper falls back to
+  `datetime.now(UTC)`. The grammar is preserved for the date
+  strings Indeed historically used (`Hoy`, `Hace 2 horas`,
+  `hace 30+ días`, `Hace 3 días`, `Recién publicado`) so older
+  fixtures and any future DOM that DOES render an inline date
+  continue to parse correctly.
+
 `parse_indeed_posted_at` is the only non-trivial parser: it maps
-the Spanish relative-time strings Indeed emits to a UTC `datetime`.
-The grammar is small and documented inline; an unparseable string
-raises `IndeedParseError` so the scraper can fail closed.
+the Spanish relative-time strings Indeed historically emitted to a
+UTC `datetime`. The grammar is small and documented inline; an
+unparseable string raises `IndeedParseError` so the scraper can
+fail closed.
 """
 
 from __future__ import annotations
 
 import re
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from bs4 import BeautifulSoup, Tag
 
@@ -39,15 +74,16 @@ from .exceptions import IndeedParseError
 
 # Private selectors. Each function touches exactly one selector, so
 # a DOM change to one field only affects one function. Names match
-# the public Indeed SERP DOM as observed in live captures of
-# `es.indeed.com/jobs` (and mirrored in the placeholder fixture
-# until T-010 lands the real capture).
+# the public Indeed SERP DOM as observed in a real Playwright
+# capture of `es.indeed.com/jobs?q=python&l=madrid` on 2026-06-02
+# (see `tests/fixtures/indeed_search.py` for the captured HTML).
 _CARD_SELECTOR = "div.job_seen_beacon"
+_TITLE_ANCHOR_SELECTOR = "a.jcs-JobTitle"
 _JOB_ID_ATTR = "data-jk"
-_TITLE_SELECTOR = "h2.jobTitle a"
-_COMPANY_SELECTOR = "span.companyName"
-_LOCATION_SELECTOR = "div.companyLocation"
-_URL_SELECTOR = "h2.jobTitle a"
+_TITLE_SELECTOR = "a.jcs-JobTitle"
+_COMPANY_SELECTOR = '[data-testid="company-name"]'
+_LOCATION_SELECTOR = '[data-testid="text-location"]'
+_URL_SELECTOR = "a.jcs-JobTitle"
 _DATE_SELECTOR = "span.date"
 
 
@@ -89,19 +125,40 @@ def _parse_error(parser: str, message: str, tag: Tag) -> IndeedParseError:
 
 
 def parse_indeed_job_id(card: str | Tag) -> str:
-    """Extract the Indeed job id from the card's `data-jk` attribute."""
+    """Extract the Indeed job id from the card's title anchor.
+
+    The real DOM (observed 2026-06-02 against real es.indeed.com HTML)
+    places the `data-jk` attribute on the title anchor
+    `<a class="jcs-JobTitle" data-jk="<id>">`, NOT on the card div.
+    The parser looks for the anchor first; if absent, it falls back
+    to the card div for backward-compat with older fixtures that
+    put `data-jk` on the card div directly.
+    """
     tag = _to_tag(card)
-    jk = tag.get(_JOB_ID_ATTR)
-    if not jk:
+    anchor = tag.select_one(_TITLE_ANCHOR_SELECTOR)
+    raw_jk: Any = None
+    if anchor is not None:
+        raw_jk = anchor.get(_JOB_ID_ATTR)
+    if not raw_jk:
+        raw_jk = tag.get(_JOB_ID_ATTR)
+    if not raw_jk:
         raise _parse_error("parse_indeed_job_id", "missing data-jk attribute", tag)
-    jk_str = str(jk).strip()
+    jk_str = str(raw_jk).strip()
     if not jk_str:
         raise _parse_error("parse_indeed_job_id", "empty data-jk attribute", tag)
     return jk_str
 
 
 def parse_indeed_title(card: str | Tag) -> str:
-    """Extract the job title from `h2.jobTitle a`."""
+    """Extract the job title from the title anchor.
+
+    The real DOM (observed 2026-06-02 against real es.indeed.com HTML)
+    uses `<a class="jcs-JobTitle">` inside `<h3 class="jobTitle">`;
+    the v1 placeholder used `<h2 class="jobTitle"><a>`. The parser
+    uses the class-based anchor selector `a.jcs-JobTitle` so it
+    works against both the real DOM and any older DOM that put the
+    anchor inside the same `jobTitle` class.
+    """
     tag = _to_tag(card)
     el = tag.select_one(_TITLE_SELECTOR)
     if el is None:
@@ -110,7 +167,13 @@ def parse_indeed_title(card: str | Tag) -> str:
 
 
 def parse_indeed_company(card: str | Tag) -> str:
-    """Extract the company name from `span.companyName`."""
+    """Extract the company name from `[data-testid="company-name"]`.
+
+    The real DOM (observed 2026-06-02 against real es.indeed.com HTML)
+    uses `data-testid="company-name"` on a `<span>`; the v1 placeholder
+    used `span.companyName`. The parser uses the data-testid selector
+    so it tracks the live SERP, not the placeholder.
+    """
     tag = _to_tag(card)
     el = tag.select_one(_COMPANY_SELECTOR)
     if el is None:
@@ -119,7 +182,13 @@ def parse_indeed_company(card: str | Tag) -> str:
 
 
 def parse_indeed_location(card: str | Tag) -> str:
-    """Extract the location from `div.companyLocation`."""
+    """Extract the location from `[data-testid="text-location"]`.
+
+    The real DOM (observed 2026-06-02 against real es.indeed.com HTML)
+    uses `data-testid="text-location"` on a `<div>`; the v1 placeholder
+    used `div.companyLocation`. The parser uses the data-testid
+    selector so it tracks the live SERP, not the placeholder.
+    """
     tag = _to_tag(card)
     el = tag.select_one(_LOCATION_SELECTOR)
     if el is None:
@@ -135,12 +204,18 @@ def parse_indeed_url(card: str | Tag, domain: str = "es.indeed.com") -> str:
     so multi-locale deployments don't bake the locale into the
     parser. Per REQ-I-016, the URL is the canonical viewjob link,
     NOT a SERP `/rc/clk` or `vjk=`-pinned URL.
+
+    The job id is read from the title anchor (which carries
+    `data-jk` in the real DOM, observed 2026-06-02 against real
+    es.indeed.com HTML). The presence of the anchor itself is
+    asserted by `_URL_SELECTOR` so a card with `data-jk` but no
+    title link still fails closed.
     """
     tag = _to_tag(card)
     jk = parse_indeed_job_id(tag)
     a = tag.select_one(_URL_SELECTOR)
     if a is None:
-        raise _parse_error("parse_indeed_url", "missing h2.jobTitle a", tag)
+        raise _parse_error("parse_indeed_url", "missing a.jcs-JobTitle", tag)
     return f"https://{domain}/viewjob?jk={jk}"
 
 

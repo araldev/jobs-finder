@@ -92,6 +92,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["PLR2004", "S101"]  # magic numbers, asserts are fine in tests
+"tests/fixtures/**" = ["E501"]  # raw captured HTML has long lines
 
 [tool.ruff.format]
 quote-style = "double"
