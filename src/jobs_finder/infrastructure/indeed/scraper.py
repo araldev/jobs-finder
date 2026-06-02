@@ -39,6 +39,7 @@ from bs4 import BeautifulSoup
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
+from playwright_stealth import Stealth  # type: ignore[import-untyped]
 
 from jobs_finder.application.ports import JobSearchPort
 from jobs_finder.domain.job import Job
@@ -124,13 +125,37 @@ class IndeedPlaywrightScraper(JobSearchPort):
         throttle: IndeedAsyncThrottle,
         settings: IndeedScraperSettings,
         browser_factory: BrowserFactory | None = None,
+        stealth: Stealth | None = None,
     ) -> None:
+        """Construct the scraper.
+
+        Args:
+            throttle: The per-source async throttle that paces
+                consecutive `search()` calls.
+            settings: The scraper settings (user-agent, timeout, etc.).
+            browser_factory: Optional async factory returning a live
+                Playwright `Browser`. When provided, the scraper
+                delegates to it in `__aenter__` and does NOT close
+                the browser in `__aexit__` (caller owns it). When
+                `None`, the scraper launches headless Chromium and
+                owns the browser for its full lifetime.
+            stealth: Optional `playwright_stealth.Stealth` instance.
+                When provided, the scraper calls
+                `await stealth.apply_stealth_async(context)` on the
+                browser context created per `search()` so the live
+                Chromium evades Cloudflare's bot detection. When
+                `None` (the default, used in tests), no stealth is
+                applied. Production wires `Stealth()` in the
+                composition root; tests pass `None` (or a mock) so
+                the suite never touches the real stealth script.
+        """
         self._throttle = throttle
         self._settings = settings
         self._browser_factory = browser_factory
         self._owns_browser: bool = browser_factory is None
         self._browser: Any = None
         self._playwright: Any = None
+        self._stealth: Stealth | None = stealth
 
     async def __aenter__(self) -> Self:
         if self._browser_factory is not None:
@@ -160,6 +185,14 @@ class IndeedPlaywrightScraper(JobSearchPort):
         jobs: list[Job] = []
         async with self._throttle:
             ctx = await self._browser.new_context(user_agent=self._settings.user_agent)
+            # Stealth MUST be applied AFTER `new_context` (per
+            # `playwright_stealth` docs: "Apply Stealth to Playwright
+            # Contexts") and BEFORE `new_page` so the page that follows
+            # inherits the patched navigator/UA. The check is
+            # opt-in: `stealth=None` (the test default) skips the call
+            # entirely, so unit tests never reach the real script.
+            if self._stealth is not None:
+                await self._stealth.apply_stealth_async(ctx)
             try:
                 page = await ctx.new_page()
                 try:

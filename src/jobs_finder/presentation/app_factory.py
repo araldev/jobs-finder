@@ -44,6 +44,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from playwright_stealth import Stealth  # type: ignore[import-untyped]
 
 from jobs_finder.application.usecases.search_indeed_jobs import SearchJobsUseCase
 from jobs_finder.application.usecases.search_linkedin_jobs import (
@@ -138,6 +139,11 @@ def build_app(
                 domain=effective_settings.indeed_domain,
                 max_pages=effective_settings.indeed_max_pages,
             ),
+            # REQ-S-002: production wires `Stealth()` so the live
+            # scraper evades Cloudflare's bot detection. Tests pass
+            # `stealth=None` (the constructor default) and inject
+            # `browser_factory` so the stealth script never runs.
+            stealth=Stealth(),
         )
         indeed_use_case = SearchJobsUseCase(port=indeed_scraper)
 

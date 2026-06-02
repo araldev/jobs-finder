@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -368,3 +369,55 @@ async def test_scraper_is_an_async_context_manager() -> None:
     async with scraper:
         pass
     assert not fake_browser.closed
+
+
+# ---------------------------------------------------------------------------
+# Stealth integration (REQ-S-001, REQ-S-004)
+# ---------------------------------------------------------------------------
+
+
+class TestStealthIntegration:
+    """`playwright-stealth`'s `Stealth().apply_stealth_async` is wired into
+    `search()` so the live scraper can bypass Cloudflare's bot detection.
+
+    REQ-S-001: stealth is opt-in via the `stealth=` constructor parameter.
+    REQ-S-004: a unit test proves the wiring WITHOUT launching Chromium
+    (the `browser_factory` injection pattern isolates the integration).
+    """
+
+    async def test_stealth_is_applied_when_provided(self) -> None:
+        """`stealth.apply_stealth_async` is awaited once with the created context."""
+        page = FakePage(SEARCH_PAGE_HTML)
+        scraper, _ = await _make_scraper_with(page)
+        stealth = MagicMock()
+        stealth.apply_stealth_async = AsyncMock()
+        # The helper used by the existing tests does not expose a
+        # `stealth=` kwarg. We assign `scraper._stealth` directly so
+        # the test stays focused on the integration in `search()`.
+        scraper._stealth = stealth
+        async with scraper:
+            await scraper.search("python", "madrid", limit=5)
+        # Exactly one call, exactly one positional argument, the
+        # context the scraper just created. The mock is `AsyncMock`
+        # so `await_count` records the awaited invocations.
+        assert stealth.apply_stealth_async.await_count == 1
+        assert stealth.apply_stealth_async.await_args is not None
+        args, _ = stealth.apply_stealth_async.await_args
+        assert len(args) == 1
+        # The single argument is the FakeContext the FakeBrowser
+        # produced (a `FakeContext(page)` instance). Identity is the
+        # simplest, most precise assertion.
+        assert isinstance(args[0], FakeContext)
+
+    async def test_stealth_is_not_applied_when_none(self) -> None:
+        """No `apply_stealth_async` call when `stealth=None` (the default)."""
+        page = FakePage(SEARCH_PAGE_HTML)
+        scraper, _ = await _make_scraper_with(page)
+        # `stealth` defaults to None; assert the attribute exists and
+        # no stealth call happens during `search()`.
+        assert scraper._stealth is None
+        async with scraper:
+            await scraper.search("python", "madrid", limit=5)
+        # The test passes if `search()` returns without raising. The
+        # RED state for this test is `AttributeError` on
+        # `scraper._stealth` before the constructor parameter lands.
