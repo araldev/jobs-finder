@@ -273,6 +273,89 @@ def test_is_block_page_true_for_sign_in_title() -> None:
 
 
 # ---------------------------------------------------------------------------
+# is_block_page — must not be fooled by hidden sign-in modals
+# ---------------------------------------------------------------------------
+
+
+def test_is_block_page_false_when_cards_present_even_with_login_modal() -> None:
+    """A SERP page that contains a hidden `<form id="login">` inside a
+    sign-in modal is still the legitimate search results page when
+    real job cards are present.
+
+    Bug (pre-fix): the public SERP always contains a hidden sign-in
+    modal with `form#login`. A naive `is_block_page` that scans for
+    that selector first will misclassify the entire SERP as a
+    blocked page and the route will 502 even when the page has
+    results. The fix is to short-circuit: cards present == not
+    blocked, full stop.
+    """
+    from tests.fixtures.linkedin_malaga_canonical import MALAGA_CANONICAL_HTML  # noqa: PLC0415
+
+    soup = BeautifulSoup(MALAGA_CANONICAL_HTML, "html.parser")
+    # Sanity: the fixture has cards AND a form#login inside a hidden modal.
+    assert soup.select("div[data-entity-urn]"), "fixture should have job cards"
+    assert soup.select_one("form#login"), "fixture should have a hidden login form"
+    # The login form lives inside a modal whose overlay is `invisible`
+    # and `pointer-events-none` — the modal is in the DOM but not
+    # visible to the user. `is_block_page` must NOT take that as a
+    # signal that the page is blocked.
+    assert is_block_page(soup) is False
+
+
+def test_is_block_page_true_for_login_form_without_any_cards() -> None:
+    """When there is a `form#login` and NO job cards, the page IS a
+    real block (the auth wall proper).
+
+    This is the partner of the previous test: cards present -> not
+    blocked; no cards + login form -> blocked. The two tests pin the
+    contract from both sides so a future change cannot flip one
+    without breaking the other.
+    """
+    soup = BeautifulSoup(
+        """
+        <html><head><title>Sign In | LinkedIn</title></head>
+        <body>
+          <form id="login" action="/checkpoint">
+            <input name="session_key" />
+            <input name="session_password" type="password" />
+          </form>
+        </body></html>
+        """,
+        "html.parser",
+    )
+    assert soup.select_one("div[data-entity-urn]") is None
+    assert is_block_page(soup) is True
+
+
+def test_parse_cards_extracts_from_malaga_canonical_fixture() -> None:
+    """The canonical-URL SERP fixture yields 3 fully-populated jobs.
+
+    Exercises the full `_parse_cards` pipeline against a fixture
+    that mirrors the structured-location SERP. Pinning this test
+    prevents future DOM drift from breaking the canonical-URL path
+    silently.
+    """
+    from jobs_finder.infrastructure.linkedin.scraper import _parse_cards  # noqa: PLC0415
+    from tests.fixtures.linkedin_malaga_canonical import MALAGA_CANONICAL_HTML  # noqa: PLC0415
+
+    soup = BeautifulSoup(MALAGA_CANONICAL_HTML, "html.parser")
+    jobs = _parse_cards(soup, limit=10)
+    assert len(jobs) == 3
+    assert [j.id for j in jobs] == ["4354113538", "4391577086", "4417875990"]
+    assert [j.title for j in jobs] == [
+        "Python Developer",
+        "Python Backend Developer",
+        "Senior Backend Python Developer",
+    ]
+    assert [j.company for j in jobs] == ["Version 1", "TransPerfect", "Altia"]
+    assert [j.location for j in jobs] == [
+        "Málaga, Andalusia, Spain",
+        "Málaga, Andalusia, Spain",
+        "Málaga, Andalusia, Spain",
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Module purity
 # ---------------------------------------------------------------------------
 

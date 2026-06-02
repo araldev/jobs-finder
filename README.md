@@ -142,7 +142,20 @@ content-type: application/json
 ```bash
 # 5. Happy path — must return 200 with `{"jobs": [...]}` and a
 #    `X-Request-Id` response header.
+#
+#    NOTE on the `location` parameter: for accurate geo filtering
+#    (no Washington when you search Málaga), use the structured
+#    "city, region, country" format that LinkedIn's canonical URL
+#    uses. The free-form `location=madrid` returns a noisy mix
+#    because LinkedIn falls back to keyword matching.
+#
+#    Free-form (noisy, but supported):
 curl -i "http://localhost:8000/jobs/linkedin?keywords=python&location=madrid"
+#
+#    Structured (recommended for production clients):
+curl -i --get "http://localhost:8000/jobs/linkedin" \
+    --data-urlencode "keywords=python" \
+    --data-urlencode "location=Málaga, Andalucía, Spain"
 ```
 
 ```http

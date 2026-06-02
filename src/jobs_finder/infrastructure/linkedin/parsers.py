@@ -141,12 +141,32 @@ def parse_posted_at(card: str | Tag) -> datetime | None:
 
 
 def is_block_page(soup: BeautifulSoup) -> bool:
-    """Return True if the page is LinkedIn's auth-wall / verification challenge.
+    """Return True ONLY if the page is a true auth-wall with no results.
 
-    Signals: a login form, an `auth-wall` or `challenge-page` class, or a
-    `<title>` whose text contains `sign in`, `authenticate`, or `verify`.
+    The public LinkedIn SERP (search results page) ALWAYS contains
+    a hidden sign-in modal in its HTML — the modal is hidden by
+    CSS (`opacity-0 invisible pointer-events-none`) but its
+    `<form id="login">` element is in the DOM. A naive check that
+    looks for that form will mis-classify the entire SERP as a
+    blocked page and the route will 502 even when the page has
+    legitimate results.
+
+    The fix is a short-circuit: when real job cards are present
+    (`div[data-entity-urn]`) the page is the SERP, not a block
+    page, full stop. We only fall through to the legacy signals
+    (auth-wall class, challenge page, sign-in title) when there
+    are zero cards. The partner test
+    `test_is_block_page_true_for_login_form_without_any_cards`
+    pins the contract from the other side.
     """
-    if soup.select_one("form#login, form.sign-in-form, .auth-wall, .challenge-page"):
+    # Cards present == the page is the SERP, not a block page.
+    if soup.select("div[data-entity-urn]"):
+        return False
+
+    # No cards; check the legacy auth-wall signals.
+    if soup.select_one(".auth-wall, .challenge-page"):
+        return True
+    if soup.select_one("form#login, form.sign-in-form"):
         return True
     title = soup.title.string.strip().lower() if soup.title and soup.title.string else ""
     return any(token in title for token in ("sign in", "authenticate", "verify"))
