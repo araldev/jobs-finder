@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # A plausible stealth desktop UA. The exact fingerprint is not load-bearing;
@@ -43,7 +43,7 @@ _DEFAULT_USER_AGENT = (
 class Settings(BaseSettings):
     """Env-overridable runtime configuration.
 
-    Env vars (case-insensitive, `LINKEDIN_` prefix):
+    LinkedIn env vars (case-insensitive, `LINKEDIN_` prefix — model-level):
         - `LINKEDIN_THROTTLE_SECONDS` (float, default 3.0)
         - `LINKEDIN_USER_AGENT` (str, default modern-Chrome UA)
         - `LINKEDIN_HEADLESS` (bool, default True)
@@ -52,6 +52,13 @@ class Settings(BaseSettings):
           default `*`. Not for production.)
         - `LINKEDIN_LOG_LEVEL` (str, default `INFO`)
         - `LINKEDIN_LOG_FORMAT` (`json`|`plain`, default `json`)
+
+    Indeed env vars (per-field `validation_alias` — see REQ-I-011):
+        - `INDEED_USER_AGENT` (str, default same stealth UA as LinkedIn)
+        - `INDEED_THROTTLE_SECONDS` (float, default 3.0)
+        - `INDEED_TIMEOUT_MS` (int, default 15_000)
+        - `INDEED_DOMAIN` (str, default `es.indeed.com`)
+        - `INDEED_MAX_PAGES` (int, default 10 — hard cap on pagination)
     """
 
     model_config = SettingsConfigDict(
@@ -72,6 +79,43 @@ class Settings(BaseSettings):
     # REQ-006 — structured logging controls.
     log_level: str = "INFO"
     log_format: Literal["json", "plain"] = "json"
+
+    # ------------------------------------------------------------------
+    # Indeed-specific settings (REQ-I-011)
+    #
+    # The model-level `env_prefix="LINKEDIN_"` only applies to fields
+    # that do not declare a `validation_alias`. For each Indeed field
+    # we use `AliasChoices("INDEED_*", "indeed_*")` so that:
+    #
+    #   - Env var lookup reads the `INDEED_*` env var
+    #     (e.g. `INDEED_THROTTLE_SECONDS=6.0`).
+    #   - Programmatic construction (`Settings(indeed_throttle_seconds=6.0)`)
+    #     still works via the second choice in `AliasChoices`.
+    #
+    # The LinkedIn fields above are intentionally left untouched; their
+    # env-var lookup is still driven by the model-level prefix.
+    # ------------------------------------------------------------------
+
+    indeed_user_agent: str = Field(
+        default=_DEFAULT_USER_AGENT,
+        validation_alias=AliasChoices("INDEED_USER_AGENT", "indeed_user_agent"),
+    )
+    indeed_throttle_seconds: float = Field(
+        default=3.0,
+        validation_alias=AliasChoices("INDEED_THROTTLE_SECONDS", "indeed_throttle_seconds"),
+    )
+    indeed_timeout_ms: int = Field(
+        default=15_000,
+        validation_alias=AliasChoices("INDEED_TIMEOUT_MS", "indeed_timeout_ms"),
+    )
+    indeed_domain: str = Field(
+        default="es.indeed.com",
+        validation_alias=AliasChoices("INDEED_DOMAIN", "indeed_domain"),
+    )
+    indeed_max_pages: int = Field(
+        default=10,
+        validation_alias=AliasChoices("INDEED_MAX_PAGES", "indeed_max_pages"),
+    )
 
 
 def load_settings() -> Settings:
