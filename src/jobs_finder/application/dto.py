@@ -37,3 +37,24 @@ class SearchIndeedInput:
     keywords: str
     location: str
     limit: int = 20
+
+
+@dataclass(frozen=True, slots=True)
+class SearchInfoJobsInput:
+    """Validated input for the InfoJobs job search use case.
+
+    Spec: REQ-J-004. `limit` defaults to 20 here AND on the Pydantic
+    schema at the presentation boundary; the use case does not
+    re-validate. The shape mirrors `SearchIndeedInput` 1:1 so the
+    presentation layer can use the same generic binding for all
+    sources.
+
+    The DTO is the per-source marker (the use case class is
+    source-neutral; see `application/usecases/search_infojobs_jobs.py`
+    for the rationale). The route handler converts a Pydantic
+    schema into this DTO before invoking the use case.
+    """
+
+    keywords: str
+    location: str
+    limit: int = 20
