@@ -42,9 +42,10 @@ be added in follow-up changes without rewrites.
 ## Stack
 
 - **Python** 3.12
-- **FastAPI** + **uvicorn** (HTTP layer, planned for T-008/T-009)
-- **Playwright** + Chromium (scraper, planned for T-006)
-- **httpx** (in-process API tests, planned for T-008)
+- **FastAPI** + **uvicorn** (HTTP layer)
+- **Playwright** + Chromium (scraper)
+- **httpx** (in-process API tests)
+- **pydantic-settings** (env-driven configuration)
 - **uv** (package manager and virtualenv)
 - **mypy --strict** (type checking)
 - **ruff** (lint + format)
@@ -56,7 +57,7 @@ be added in follow-up changes without rewrites.
 # 1. Install dependencies into a project-local virtualenv
 uv sync
 
-# 2. Run the bootstrap test suite
+# 2. Run the test suite (no network, no Chromium)
 uv run pytest
 
 # 3. Static type check
@@ -65,15 +66,126 @@ uv run mypy
 # 4. Lint
 uv run ruff check
 
-# 5. (Planned for T-010) Install the Chromium binary used by Playwright.
-#    Not run automatically — the project does not hit LinkedIn during tests.
-uv run playwright install chromium
+# 5. Format check
+uv run ruff format --check
 ```
 
 ## Manual verification
 
-<!-- TODO: T-010 will fill this -->
-The manual live-verification procedure (curl examples, expected 200/422/502
-responses, Playwright install step) will be filled in by task T-010 once the
-HTTP endpoint is implemented. For now, this section is intentionally a
-placeholder.
+> **Re-read the Legal Notice above before proceeding.** Scraping LinkedIn
+> violates LinkedIn's Terms of Service. This procedure exists to confirm
+> the implementation works on a real page; it is **never** executed in
+> CI or in the automated test suite. By running it you accept the legal
+> risk documented at the top of this README.
+
+The automated test suite is hermetic — it never contacts LinkedIn and
+never launches a real browser. The procedure below is the only signal
+that the live code path works against a real page, and it is **expected
+to break** when LinkedIn changes their DOM or anti-bot surface. The
+test suite is not a substitute for this procedure; they verify
+different things.
+
+### Prerequisites
+
+- Python 3.12, `uv` installed.
+- Network access to `linkedin.com` from the host running the service.
+
+### Procedure
+
+```bash
+# 1. Install project dependencies (no Playwright browser yet).
+uv sync
+
+# 2. One-time: download the Chromium binary used by Playwright.
+#    Skipped by the test suite; required only for the live path.
+uv run playwright install chromium
+
+# 3. Start the API. Defaults to 0.0.0.0:8000.
+uv run uvicorn jobs_finder.main:app --reload --port 8000
+```
+
+In a second terminal, exercise the endpoints:
+
+```bash
+# 4. Liveness probe — must return 200 with `{"status":"ok"}` and
+#    MUST NOT trigger a browser launch.
+curl -i "http://localhost:8000/health"
+```
+
+```http
+HTTP/1.1 200 OK
+content-type: application/json
+{"status":"ok"}
+```
+
+```bash
+# 5. Happy path — must return 200 with `{"jobs": [...]}` and a
+#    `X-Request-Id` response header.
+curl -i "http://localhost:8000/jobs/linkedin?keywords=python&location=madrid"
+```
+
+```http
+HTTP/1.1 200 OK
+content-type: application/json
+x-request-id: <uuid-or-your-trace-id>
+
+{
+  "jobs": [
+    {
+      "id": "3850000001",
+      "title": "Senior Python Developer",
+      "company": "Acme Corp",
+      "location": "Madrid, Spain",
+      "url": "https://www.linkedin.com/jobs/view/3850000001/",
+      "posted_at": "2026-05-01T00:00:00+00:00"
+    }
+  ]
+}
+```
+
+```bash
+# 6. Trigger a 502. Two reproducible ways to do it:
+#
+#    a) Temporarily point the scraper at a URL that always returns
+#       the auth wall (e.g. by setting LINKEDIN_REQUEST_TIMEOUT_MS=1
+#       so the wait-for-selector times out and the scraper raises
+#       LinkedInTimeoutError, which is a JobSearchError → 502).
+LINKEDIN_REQUEST_TIMEOUT_MS=1 uv run uvicorn jobs_finder.main:app --port 8000
+curl -i "http://localhost:8000/jobs/linkedin?keywords=python&location=madrid"
+```
+
+```http
+HTTP/1.1 502 Bad Gateway
+content-type: application/json
+x-request-id: <uuid-or-your-trace-id>
+
+{
+  "detail": "upstream source unavailable",
+  "request_id": "<same-uuid-as-x-request-id>"
+}
+```
+
+The body's `request_id` MUST equal the `X-Request-Id` response header.
+The body's `detail` MUST be the literal string
+`"upstream source unavailable"` — the underlying exception type
+(`LinkedInTimeoutError`, `LinkedInBlockedError`, ...) is masked.
+
+### When the live path breaks
+
+If step 5 returns `200 {"jobs": []}` and the HTML is the auth wall, the
+live page structure has changed from the fixture. The maintenance
+burden is yours from this point on:
+
+1. Open `src/jobs_finder/infrastructure/linkedin/parsers.py` and update
+   the private selector constants (`_TITLE_SELECTOR`,
+   `_COMPANY_SELECTOR`, etc.) and any per-field parser that depends on
+   the old DOM.
+2. Open `tests/fixtures/linkedin_search.py` and replace the inline
+   `SEARCH_PAGE_HTML` and `BLOCK_PAGE_HTML` literals with a fresh
+   recording from a real browser session.
+3. Re-run `uv run pytest` — every parser and scraper test must pass
+   against the new fixture.
+4. Retry step 5 above.
+
+The automated test suite cannot catch a live DOM drift; only this
+manual procedure can.
