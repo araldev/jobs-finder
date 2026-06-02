@@ -30,10 +30,11 @@ from __future__ import annotations
 import pytest
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
+from playwright_stealth import Stealth  # type: ignore[import-untyped]
 
 from jobs_finder.infrastructure.config import Settings
-from jobs_finder.infrastructure.infojobs.scraper import InfoJobsPlaywrightScraper
 from jobs_finder.infrastructure.indeed.scraper import IndeedPlaywrightScraper
+from jobs_finder.infrastructure.infojobs.scraper import InfoJobsPlaywrightScraper
 from jobs_finder.infrastructure.linkedin.scraper import LinkedInPlaywrightScraper
 from jobs_finder.presentation.app_factory import build_app
 
@@ -127,8 +128,6 @@ def test_build_app_default_infojobs_stealth_is_wired() -> None:
     most precise assertion: `Stealth()` is the type; the scraper
     holds an instance.
     """
-    from playwright_stealth import Stealth  # type: ignore[import-untyped]
-
     app = build_app()
     infojobs_port = getattr(app.state, "infojobs_job_search_port", None)
     assert infojobs_port is not None

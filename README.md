@@ -1,8 +1,8 @@
 # jobs-finder
 
-> On-demand **LinkedIn** + **Indeed** job search HTTP endpoints, built with
-> FastAPI + Playwright. **Educational / personal use only.** Read the Legal
-> Notices below before running anything.
+> On-demand **LinkedIn** + **Indeed** + **InfoJobs** job search HTTP endpoints,
+> built with FastAPI + Playwright. **Educational / personal use only.** Read
+> the Legal Notices below before running anything.
 
 ## Sources
 
@@ -10,6 +10,7 @@
 | --- | --- | --- |
 | `GET /jobs/linkedin` | `linkedin.com/jobs/search` | `LinkedInPlaywrightScraper` (closed source) |
 | `GET /jobs/indeed`   | `es.indeed.com/jobs`     | `IndeedPlaywrightScraper` (closed source) |
+| `GET /jobs/infojobs` | `www.infojobs.net/ofertas-trabajo` | `InfoJobsPlaywrightScraper` |
 
 Each source has its own Legal Notice and Manual Verification procedure —
 read them both before running.
@@ -77,6 +78,53 @@ accept the following:
 If you are not willing to accept these terms, **do not call
 `/jobs/indeed`**.
 
+## Legal Notice — InfoJobs
+
+> **STOP. InfoJobs's Terms of Service also prohibit scraping, and the
+> service is protected by Distil Networks + Geetest.** This section
+> is a separate warning because the legal and technical exposure to
+> InfoJobs scraping is distinct from LinkedIn's and Indeed's.
+
+This project scrapes InfoJobs's public job search pages. **Scraping
+InfoJobs may violate InfoJobs's Terms of Service and/or their
+`robots.txt` policy** and may expose the operator to civil and/or
+criminal liability depending on jurisdiction (including but not limited
+to the EU's GDPR, Spain's AEPD/LOPDGDD, and the United States' CFAA).
+InfoJobs is also protected by **Distil Networks** (browser
+fingerprinting) and **Geetest** (captcha challenge) — many datacenter
+and VPS IP ranges are blocked at the first request. The live procedure
+below may break at any time without notice.
+
+By using the `/jobs/infojobs` endpoint you additionally acknowledge
+and accept the following:
+
+- You assume **all** legal risk. The authors and contributors of this
+  project accept **no** liability for misuse, account bans, IP blocks,
+  Distil/Geetest challenges, or legal action taken against you.
+- This software does **not** log in to InfoJobs. It does **not** send
+  credentials, proxies, or any other authentication material. It only
+  requests the public, unauthenticated
+  `https://www.infojobs.net/ofertas-trabajo?q=...&l=...` endpoint. The
+  path-based form (`/ofertas-trabajo/{keyword}-en-{location}`) is NOT
+  used by this project because Distil blocks it.
+- The captured data — title, company, location, URL — are fields
+  InfoJobs renders publicly to anonymous users. The scraper does not
+  bypass any paywall, anti-bot measure, or authentication gate. A
+  Distil/Geetest challenge IS treated as a hard stop: the scraper
+  returns 502 and does not retry, solve, or evade.
+- `playwright-stealth` is wired in production to reduce the
+  frequency of anti-bot challenges, but it is not a guarantee. From
+  some IP ranges the live path will return 502 every time; this is
+  the expected failure mode, not a bug.
+- Do not use this software to redistribute InfoJobs data, to bypass
+  rate limits, to evade anti-bot measures, or for any commercial
+  purpose.
+- If you are unsure whether your use case is legal, **consult a
+  lawyer** in your jurisdiction before running this code.
+
+If you are not willing to accept these terms, **do not call
+`/jobs/infojobs`**.
+
 ## What this is
 
 `jobs-finder` is a multi-source job-search engine. On each request, the
@@ -84,8 +132,8 @@ relevant route launches a headless Chromium browser via Playwright,
 navigates to the upstream source's public job search, parses the result
 cards, and returns structured JSON. It is bootstrapped as a hexagonal
 Python project (domain / application / infrastructure / presentation) so
-additional job sources (InfoJobs, etc.) and a frontend can be added in
-follow-up changes without rewrites.
+additional job sources can be added in follow-up changes without
+rewrites.
 
 ### CORS — development default is `*`; override for production
 
@@ -420,5 +468,158 @@ manual procedure can. The scraper uses
 to bypass Cloudflare's bot detection; ensure Chromium is installed
 via `uv run playwright install chromium`. The capture script used to
 refresh the parser fixture lives in `/tmp/capture_indeed.py` (NOT
+committed) and is regenerated from a residential IP when the live
+DOM drifts.
+
+## Manual verification — InfoJobs
+
+> **Re-read the Legal Notice — InfoJobs above before proceeding.**
+> Scraping InfoJobs violates InfoJobs's Terms of Service. This
+> procedure exists to confirm the implementation works on a real
+> page; it is **never** executed in CI or in the automated test
+> suite. By running it you accept the legal risk documented at the
+> top of this README.
+
+The automated test suite is hermetic — it never contacts InfoJobs
+and never launches a real browser. The procedure below is the only
+signal that the live code path works against a real page, and it is
+**expected to break** when InfoJobs changes their DOM, swaps the
+card class name, or serves a Distil/Geetest challenge to your IP.
+The test suite is not a substitute for this procedure; they verify
+different things.
+
+### Prerequisites
+
+- Python 3.12, `uv` installed.
+- Network access to `www.infojobs.net` from the host running the
+  service. InfoJobs is protected by **Distil Networks** (browser
+  fingerprinting) and **Geetest** (captcha challenge); many
+  datacenter and VPS IP ranges are blocked at the first request.
+  If you hit one, the live path returns 502 and there is no
+  in-software bypass by design (see REQ-J-002 + REQ-J-005).
+- The same Chromium binary is shared with the LinkedIn + Indeed
+  live paths.
+
+### Procedure
+
+```bash
+# 1. Install project dependencies (no Playwright browser yet).
+uv sync
+
+# 2. One-time: download the Chromium binary used by Playwright.
+#    Skipped by the test suite; required only for the live path.
+uv run playwright install chromium
+
+# 3. Start the API. Defaults to 0.0.0.0:8000.
+#    The composition root builds ALL THREE scrapers in the default
+#    branch (LinkedIn + Indeed + InfoJobs); the lifespan opens all
+#    three browsers on startup. Stealth is wired for the InfoJobs
+#    scraper (unlike the LinkedIn one).
+uv run uvicorn jobs_finder.main:app --reload --port 8000
+```
+
+In a second terminal, exercise the endpoint:
+
+```bash
+# 4. Liveness probe — must return 200 with `{"status":"ok"}` and
+#    MUST NOT trigger an InfoJobs browser launch.
+curl -i "http://localhost:8000/health"
+```
+
+```http
+HTTP/1.1 200 OK
+content-type: application/json
+{"status":"ok"}
+```
+
+```bash
+# 5. Happy path — must return 200 with `{"jobs": [...]}` and a
+#    `X-Request-Id` response header. InfoJobs's public SERP uses
+#    query-string parameters: `?q=<keywords>&l=<location>&page=<N>`
+#    (1-indexed). The path-based form is blocked by Distil.
+#
+#    If the live page returns a Distil/Geetest challenge (you'll
+#    see a 502 with `{"detail":"upstream source unavailable"}` and
+#    no jobs), the live path is blocked from your IP. `Stealth()`
+#    is already wired in production but it's not a guarantee.
+#    Try from a residential IP, or skip the live verify and rely
+#    on the parser unit tests (which run against a captured HTML
+#    fixture).
+curl -i "http://localhost:8000/jobs/infojobs?keywords=python&location=madrid&limit=20"
+```
+
+```http
+HTTP/1.1 200 OK
+content-type: application/json
+x-request-id: <uuid-or-your-trace-id>
+
+{
+  "jobs": [
+    {
+      "id": "abc123def",
+      "title": "Desarrollador/a Python",
+      "company": "Empresa Demo S.L.",
+      "location": "Madrid, Madrid provincia",
+      "url": "https://www.infojobs.net/ofertas-trabajo/oferta-abc123def",
+      "posted_at": "2026-06-02T17:00:00+00:00"
+    }
+  ]
+}
+```
+
+```bash
+# 6. Trigger a 502 (Distil/Geetest challenge is also a valid
+#    trigger). Two reproducible ways:
+#
+#    a) Force a timeout so the scraper's `wait_for_selector` expires
+#       (the scraper raises `InfoJobsTimeoutError`, which the
+#       exception handler maps to 502).
+INFOJOBS_TIMEOUT_MS=1 uv run uvicorn jobs_finder.main:app --port 8000
+curl -i "http://localhost:8000/jobs/infojobs?keywords=python&location=madrid"
+```
+
+```http
+HTTP/1.1 502 Bad Gateway
+content-type: application/json
+x-request-id: <uuid-or-your-trace-id>
+
+{
+  "detail": "upstream source unavailable",
+  "request_id": "<same-uuid-as-x-request-id>"
+}
+```
+
+The body's `request_id` MUST equal the `X-Request-Id` response header.
+The body's `detail` MUST be the literal string
+`"upstream source unavailable"` — the underlying exception type
+(`InfoJobsTimeoutError`, `InfoJobsBlockedError`, `InfoJobsParseError`)
+is masked.
+
+### When the live path breaks
+
+If step 5 returns `200 {"jobs": []}` and the HTML is a Distil/Geetest
+challenge (page title `"No podemos identificar tu navegador"`), the
+request is being blocked from your IP. The maintenance burden is
+yours from this point on:
+
+1. Open `src/jobs_finder/infrastructure/infojobs/parsers.py` and
+   update the private selector constants (`_CARD_SELECTOR`,
+   `_TITLE_SELECTOR`, etc.) and any per-field parser that depends
+   on the old DOM.
+2. Open `tests/fixtures/infojobs_search.py` and replace the inline
+   `SEARCH_PAGE_HTML` literal with a fresh recording from a real
+   browser session. The `BLOCKED_PAGE_HTML` constant should be
+   kept (it's a synthetic Distil/Geetest challenge for the
+   `is_infojobs_blocked` tests).
+3. Re-run `uv run pytest tests/unit/test_infojobs_parsers.py` —
+   every parser test must pass against the new fixture.
+4. Retry step 5 above.
+
+The automated test suite cannot catch a live DOM drift; only this
+manual procedure can. The scraper uses
+[`playwright-stealth`](https://pypi.org/project/playwright-stealth/)
+to bypass Distil/Geetest; ensure Chromium is installed via
+`uv run playwright install chromium`. The capture script used to
+refresh the parser fixture lives in `/tmp/capture_infojobs.py` (NOT
 committed) and is regenerated from a residential IP when the live
 DOM drifts.

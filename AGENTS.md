@@ -45,14 +45,16 @@ jobs-finder/
 │       │   └── usecases/           # one use case file per source
 │       ├── infrastructure/         # Playwright scrapers, parsers, throttle
 │       │   ├── linkedin/           # LinkedInPlaywrightScraper + parsers
-│       │   └── indeed/             # IndeedPlaywrightScraper + parsers
+│       │   ├── indeed/             # IndeedPlaywrightScraper + parsers
+│       │   └── infojobs/           # InfoJobsPlaywrightScraper + parsers
 │       └── presentation/           # FastAPI app, routes, middleware, schemas
 │           └── routes/             # one route file per source
 └── tests/
     ├── conftest.py
     ├── fixtures/                   # inline HTML for parser tests
     │   ├── linkedin_search.py
-    │   └── indeed_search.py
+    │   ├── indeed_search.py
+    │   └── infojobs_search.py
     ├── unit/                       # parsers, throttle, use case, scraper, exceptions
     └── integration/                # FastAPI app + composition root
 ```
@@ -60,7 +62,7 @@ jobs-finder/
 The dependency rule is
 `presentation → application → domain ← infrastructure`. `application/`
 must not import `infrastructure/` or `presentation/`. Each source
-(`linkedin`, `indeed`) has its own sub-package under
+(`linkedin`, `indeed`, `infojobs`) has its own sub-package under
 `infrastructure/` and its own route file under `presentation/routes/`,
 mirrored by per-source fixtures under `tests/fixtures/`.
 
@@ -94,7 +96,7 @@ if any check fails.
 
 ## Conventions
 
-1. **No live scraping in tests — covers BOTH LinkedIn and Indeed.**
+1. **No live scraping in tests — covers LinkedIn, Indeed, AND InfoJobs.**
    The end-to-end live paths are documented in the README "Manual
    verification" sections (one per source), but they are **never**
    executed in CI or in the automated test suite. Parser tests use
