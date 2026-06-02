@@ -41,18 +41,28 @@ jobs-finder/
 │       ├── __init__.py
 │       ├── main.py                 # composition root + uvicorn entry
 │       ├── domain/                 # Job value object, base exceptions
-│       ├── application/            # JobSearchPort, use case, DTO
-│       ├── infrastructure/         # Playwright scraper, parsers, throttle
+│       ├── application/            # JobSearchPort, use cases, DTOs
+│       │   └── usecases/           # one use case file per source
+│       ├── infrastructure/         # Playwright scrapers, parsers, throttle
+│       │   ├── linkedin/           # LinkedInPlaywrightScraper + parsers
+│       │   └── indeed/             # IndeedPlaywrightScraper + parsers
 │       └── presentation/           # FastAPI app, routes, middleware, schemas
+│           └── routes/             # one route file per source
 └── tests/
     ├── conftest.py
+    ├── fixtures/                   # inline HTML for parser tests
+    │   ├── linkedin_search.py
+    │   └── indeed_search.py
     ├── unit/                       # parsers, throttle, use case, scraper, exceptions
     └── integration/                # FastAPI app + composition root
 ```
 
 The dependency rule is
 `presentation → application → domain ← infrastructure`. `application/`
-must not import `infrastructure/` or `presentation/`.
+must not import `infrastructure/` or `presentation/`. Each source
+(`linkedin`, `indeed`) has its own sub-package under
+`infrastructure/` and its own route file under `presentation/routes/`,
+mirrored by per-source fixtures under `tests/fixtures/`.
 
 ## How to run
 
@@ -84,10 +94,17 @@ if any check fails.
 
 ## Conventions
 
-1. **No live LinkedIn scraping in tests.** The end-to-end live path is
-   documented in the README "Manual verification" section, but it is
-   **never** executed in CI or in the automated test suite. Parser tests
-   use an inline HTML fixture.
+1. **No live scraping in tests — covers BOTH LinkedIn and Indeed.**
+   The end-to-end live paths are documented in the README "Manual
+   verification" sections (one per source), but they are **never**
+   executed in CI or in the automated test suite. Parser tests use
+   inline HTML fixtures (`tests/fixtures/linkedin_search.py` and
+   `tests/fixtures/indeed_search.py`). The only sanctioned exception
+   is the one-time Playwright capture of `es.indeed.com` performed
+   manually during a follow-up test- fixture refresh — that capture
+   is NEVER run in CI; the captured HTML is committed to the fixture
+   file and the rest of the suite re-runs offline against the new
+   capture.
 2. **Use `uv`, not `pip` or `poetry`.** All Python dependency operations
    go through `uv sync` and `uv run ...`.
 3. **Src layout only.** Production code lives under `src/jobs_finder/`.
@@ -101,5 +118,5 @@ if any check fails.
 6. **Conventional commits.** Format: `<type>(<scope>): <subject>`. Do
    **not** add `Co-Authored-By:` or any AI attribution trailer.
 7. **No secrets in the repo.** `li_at` cookies, proxy credentials, or
-   any LinkedIn authentication material are explicitly forbidden by
-   the spec.
+   any LinkedIn / Indeed authentication material are explicitly
+   forbidden by the spec.
