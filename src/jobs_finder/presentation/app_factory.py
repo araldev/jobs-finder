@@ -6,6 +6,16 @@ Spec: REQ-006, REQ-017..REQ-022.
   - The use case (injected via `use_case=` for tests; default builds a
     real `LinkedInPlaywrightScraper` for production).
   - `RequestIdMiddleware` (REQ-020).
+  - `LogOnRequestMiddleware` (T-012): emits one INFO line per request
+    on `jobs_finder.access` with the bound `request_id`. Added INNER
+    of `RequestIdMiddleware` so the `ContextVar` is set when it logs.
+  - `CORSMiddleware` (REQ-006, T-012): open CORS in dev
+    (`settings.cors_allow_origins = ["*"]`); override in production.
+    Added OUTERMOST so OPTIONS preflights get a request_id too.
+  - `configure_logging(settings)` (REQ-006, T-012): installs the JSON
+    (or plain) formatter and the `RequestIdLogFilter` on the root
+    logger BEFORE middleware/route handlers run, so any log emitted
+    during request processing carries the right structure.
   - The exception handlers (`JobSearchError` -> 502, validation -> 422).
   - The routers (`/health`, `/jobs/linkedin`).
 
@@ -19,6 +29,7 @@ entry point (`main.py`, T-009).
 from __future__ import annotations
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from jobs_finder.application.usecases.search_linkedin_jobs import (
     SearchLinkedInJobsUseCase,
@@ -32,7 +43,11 @@ from jobs_finder.infrastructure.linkedin.throttle import AsyncThrottle
 from jobs_finder.presentation.exception_handlers import (
     register_exception_handlers,
 )
-from jobs_finder.presentation.middleware import RequestIdMiddleware
+from jobs_finder.presentation.logging_config import configure_logging
+from jobs_finder.presentation.middleware import (
+    LogOnRequestMiddleware,
+    RequestIdMiddleware,
+)
 from jobs_finder.presentation.routes import health as health_routes
 from jobs_finder.presentation.routes import linkedin as linkedin_routes
 
@@ -50,15 +65,21 @@ def build_app(
             `LinkedInPlaywrightScraper` with a default throttle. Tests
             always pass an explicit `use_case`.
         settings: Optional runtime configuration. Used by the default
-            branch to build the scraper and the throttle. If `None`,
-            the default `Settings()` is loaded.
+            branch to build the scraper and the throttle, and to wire
+            CORS / logging. If `None`, the default `Settings()` is loaded.
 
     Returns:
         A `FastAPI` instance with middleware, exception handlers, and
         routers installed.
     """
+    effective_settings = settings if settings is not None else Settings()
+
+    # Logging MUST be configured before any middleware or route runs
+    # so that log records emitted during request processing are
+    # formatted as JSON (or plain) with the request_id bound.
+    configure_logging(effective_settings)
+
     if use_case is None:
-        effective_settings = settings if settings is not None else Settings()
         scraper = LinkedInPlaywrightScraper(
             throttle=AsyncThrottle(min_interval_seconds=effective_settings.throttle_seconds),
             settings=ScraperSettings(
@@ -73,8 +94,20 @@ def build_app(
     # Expose the underlying port for diagnostics; routes use the use case.
     app.state.job_search_port = getattr(use_case, "_port", None)
 
-    # Middleware (outermost first).
+    # Middleware — order matters. Starlette runs middlewares outermost
+    # first; the LAST `add_middleware` call wraps everything else.
+    # 1. `LogOnRequest` is innermost: it runs inside `RequestId` so
+    #    the `ContextVar` is bound when it logs.
+    # 2. `RequestId` is next: it sets the id and binds the `ContextVar`.
+    # 3. `CORS` is outermost: preflights get a request_id echo too.
+    app.add_middleware(LogOnRequestMiddleware)
     app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=effective_settings.cors_allow_origins,
+        allow_methods=["GET"],
+        allow_headers=["*"],
+    )
 
     # Exception handlers.
     register_exception_handlers(app)

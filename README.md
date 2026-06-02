@@ -39,6 +39,27 @@ as a hexagonal Python project (domain / application / infrastructure /
 presentation) so additional job sources (InfoJobs, etc.) and a frontend can
 be added in follow-up changes without rewrites.
 
+### CORS — development default is `*`; override for production
+
+`Settings.cors_allow_origins` defaults to `["*"]` so a browser-based dev
+client can call the API without extra wiring. **This is NOT safe for
+production.** Set the `LINKEDIN_CORS_ALLOW_ORIGINS` env var to a
+comma-separated allowlist before exposing the service publicly, e.g.
+
+```bash
+LINKEDIN_CORS_ALLOW_ORIGINS="https://app.example.com,https://admin.example.com" \
+  uv run uvicorn jobs_finder.main:app --port 8000
+```
+
+### Structured JSON logs (with `request_id`)
+
+Log lines are emitted as single-line JSON to stderr with the field set
+locked to `{timestamp, level, name, message, request_id}`. The
+`request_id` field is filled from the `X-Request-Id` request header
+(generated if absent) so a single grep can join a request, its
+response, and any error logged during processing. Set
+`LINKEDIN_LOG_FORMAT=plain` for a human-readable fallback.
+
 ## Stack
 
 - **Python** 3.12

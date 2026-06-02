@@ -7,6 +7,11 @@ log records emitted during the request can carry the same id.
 
 Exception handlers read `request.state.request_id` to correlate masked
 error bodies with logs.
+
+`LogOnRequestMiddleware` (T-012) emits one INFO line per request on
+the `jobs_finder.access` logger. It must be installed INNER of
+`RequestIdMiddleware` so the request id is bound to the `ContextVar`
+by the time the access log line is rendered.
 """
 
 from __future__ import annotations
@@ -28,6 +33,18 @@ REQUEST_ID_HEADER = "X-Request-Id"
 # carry the current id. Default is "-" so log records that are NOT
 # inside a request still render a placeholder rather than crashing.
 _request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
+
+
+def get_request_id() -> str:
+    """Return the current request id from the `ContextVar` (or `-`)."""
+    return _request_id_var.get()
+
+
+# Module-level logger for the access log line emitted by
+# `LogOnRequestMiddleware`. Reusing a module-level logger (instead
+# of one per request) is the standard pattern; pytest's `caplog`
+# captures it via propagation to the parent `jobs_finder` logger.
+_access_logger = logging.getLogger("jobs_finder.access")
 
 
 class RequestIdLogFilter(logging.Filter):
@@ -64,4 +81,39 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         finally:
             _request_id_var.reset(token)
         response.headers[self._header] = request_id
+        return response
+
+
+class LogOnRequestMiddleware(BaseHTTPMiddleware):
+    """Emit one INFO line per request once the response status is known.
+
+    The line is emitted on `jobs_finder.access` and includes the bound
+    `request_id` (injected by `RequestIdLogFilter`). The access log
+    proves the REQ-020 log correlation wiring end to end: a downstream
+    operator can grep one id and see the request, the response, and
+    any error logged during processing.
+
+    This middleware MUST be installed INNER of `RequestIdMiddleware`
+    (i.e. added to the app BEFORE it in code). Starlette runs
+    middlewares outermost-first; if `LogOnRequest` were outer, the
+    `ContextVar` would still be unset when it tried to read the id.
+    """
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        response = await call_next(request)
+        # The ContextVar is still bound to the current request at this
+        # point: `RequestIdMiddleware` resets it only in its `finally`,
+        # which runs after this middleware's `call_next` returns.
+        _access_logger.info(
+            "request completed",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+            },
+        )
         return response

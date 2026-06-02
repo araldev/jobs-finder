@@ -12,10 +12,23 @@ The T-008 batch landed a plain `@dataclass` skeleton with the same
 fields; T-009 converts it to `BaseSettings` and adds `load_settings()`.
 The dataclass skeleton is intentionally NOT retained — `BaseSettings`
 is the canonical loader for the project from this point on.
+
+T-012 (CRITICAL fix batch) adds three fields required by the design
+but missing from the previous impl:
+  - `cors_allow_origins` (REQ-006): list of origins the CORS
+    middleware will accept. Default `["*"]` so a browser-based dev
+    client can call the API. **Not for production**: set the env var
+    to a comma-separated allowlist in any non-dev environment.
+  - `log_level` (REQ-006): root logger level. Default `INFO`.
+  - `log_format` (REQ-006): `json` (default, structured) or `plain`
+    (stdlib default formatter, useful for local development).
 """
 
 from __future__ import annotations
 
+from typing import Literal
+
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # A plausible stealth desktop UA. The exact fingerprint is not load-bearing;
@@ -35,6 +48,10 @@ class Settings(BaseSettings):
         - `LINKEDIN_USER_AGENT` (str, default modern-Chrome UA)
         - `LINKEDIN_HEADLESS` (bool, default True)
         - `LINKEDIN_REQUEST_TIMEOUT_MS` (int, default 10_000)
+        - `LINKEDIN_CORS_ALLOW_ORIGINS` (comma-separated str,
+          default `*`. Not for production.)
+        - `LINKEDIN_LOG_LEVEL` (str, default `INFO`)
+        - `LINKEDIN_LOG_FORMAT` (`json`|`plain`, default `json`)
     """
 
     model_config = SettingsConfigDict(
@@ -47,6 +64,14 @@ class Settings(BaseSettings):
     user_agent: str = _DEFAULT_USER_AGENT
     headless: bool = True
     request_timeout_ms: int = 10_000
+
+    # REQ-006 — CORS allowlist. `*` is the dev default; production must
+    # override via `LINKEDIN_CORS_ALLOW_ORIGINS=https://app.example.com`.
+    cors_allow_origins: list[str] = Field(default_factory=lambda: ["*"])
+
+    # REQ-006 — structured logging controls.
+    log_level: str = "INFO"
+    log_format: Literal["json", "plain"] = "json"
 
 
 def load_settings() -> Settings:
