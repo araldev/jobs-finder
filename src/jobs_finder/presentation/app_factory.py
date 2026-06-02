@@ -1,10 +1,14 @@
 """FastAPI app factory — composition root for the presentation layer.
 
-Spec: REQ-006, REQ-017..REQ-022.
+Spec: REQ-006, REQ-017..REQ-022, REQ-I-012, REQ-I-013, REQ-I-014.
 
 `build_app` wires:
-  - The use case (injected via `use_case=` for tests; default builds a
-    real `LinkedInPlaywrightScraper` for production).
+  - The LinkedIn use case (injected via `use_case=` for tests; default
+    builds a real `LinkedInPlaywrightScraper` for production).
+  - The Indeed use case (injected via `indeed_use_case=` for tests;
+    default is `None` and the route returns 500 because
+    `app.state.indeed_use_case` is not set — production callers must
+    pass it explicitly via `main.py`, T-008).
   - `RequestIdMiddleware` (REQ-020).
   - `LogOnRequestMiddleware` (T-012): emits one INFO line per request
     on `jobs_finder.access` with the bound `request_id`. Added INNER
@@ -17,13 +21,14 @@ Spec: REQ-006, REQ-017..REQ-022.
     logger BEFORE middleware/route handlers run, so any log emitted
     during request processing carries the right structure.
   - The exception handlers (`JobSearchError` -> 502, validation -> 422).
-  - The routers (`/health`, `/jobs/linkedin`).
+  - The routers (`/health`, `/jobs/linkedin`, `/jobs/indeed`).
 
-The use case is exposed to routes via `app.state.use_case`; routes
-resolve it through the `get_use_case` dependency defined in
-`presentation/routes/linkedin.py`. Tests always pass `use_case=...`
-explicitly; the default branch exists for the production `uvicorn`
-entry point (`main.py`, T-009).
+The LinkedIn use case is exposed to routes via `app.state.use_case`;
+the Indeed use case is exposed via `app.state.indeed_use_case`. Routes
+resolve them through the `get_use_case` and `get_indeed_use_case`
+dependencies. Tests always pass both use cases explicitly; the default
+branches exist for the production `uvicorn` entry point (`main.py`,
+T-008 — wired in batch 4).
 """
 
 from __future__ import annotations
@@ -34,6 +39,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from jobs_finder.application.usecases.search_indeed_jobs import SearchJobsUseCase
 from jobs_finder.application.usecases.search_linkedin_jobs import (
     SearchLinkedInJobsUseCase,
 )
@@ -52,21 +58,28 @@ from jobs_finder.presentation.middleware import (
     RequestIdMiddleware,
 )
 from jobs_finder.presentation.routes import health as health_routes
+from jobs_finder.presentation.routes import indeed as indeed_routes
 from jobs_finder.presentation.routes import linkedin as linkedin_routes
 
 
 def build_app(
     use_case: SearchLinkedInJobsUseCase | None = None,
     *,
+    indeed_use_case: SearchJobsUseCase | None = None,
     settings: Settings | None = None,
 ) -> FastAPI:
-    """Construct a configured FastAPI app.
+    """Construct a configured FastAPI app with BOTH source routes wired.
 
     Args:
-        use_case: The use case to expose via `app.state.use_case`. If
-            `None`, a default use case is constructed over a
-            `LinkedInPlaywrightScraper` with a default throttle. Tests
-            always pass an explicit `use_case`.
+        use_case: The LinkedIn use case to expose via
+            `app.state.use_case`. If `None`, a default use case is
+            constructed over a `LinkedInPlaywrightScraper` with a
+            default throttle. Tests always pass an explicit `use_case`.
+        indeed_use_case: The Indeed use case to expose via
+            `app.state.indeed_use_case`. If `None`, the `/jobs/indeed`
+            route returns 500 because `app.state.indeed_use_case` is
+            not set. Production callers (T-008) must pass it
+            explicitly.
         settings: Optional runtime configuration. Used by the default
             branch to build the scraper and the throttle, and to wire
             CORS / logging. If `None`, the default `Settings()` is loaded.
@@ -97,7 +110,12 @@ def build_app(
     # The lifespan only opens the default `LinkedInPlaywrightScraper`.
     # When tests inject a use case wrapping a non-LinkedIn port (e.g.
     # `FakeJobSearchPort`), the lifespan is a no-op so the test does
-    # not need Chromium installed.
+    # not need Chromium installed. The Indeed scraper is NOT opened
+    # in the lifespan because (a) tests never inject a real Indeed
+    # scraper, and (b) T-008 (composition) will extend the lifespan
+    # to open the Indeed scraper in production. The default branch
+    # for Indeed is intentionally a no-op — see the Indeed route's
+    # `get_indeed_use_case` for the contract.
     raw_port = getattr(use_case, "_port", None)
     scraper_for_lifespan: LinkedInPlaywrightScraper | None = (
         raw_port if isinstance(raw_port, LinkedInPlaywrightScraper) else None
@@ -122,6 +140,13 @@ def build_app(
     app.state.use_case = use_case
     # Expose the underlying port for diagnostics; routes use the use case.
     app.state.job_search_port = getattr(use_case, "_port", None)
+    # The Indeed use case defaults to `None`; the route raises a
+    # descriptive `RuntimeError` if it's missing so misconfiguration
+    # surfaces in tests rather than as a 500.
+    app.state.indeed_use_case = indeed_use_case
+    app.state.indeed_job_search_port = (
+        getattr(indeed_use_case, "_port", None) if indeed_use_case is not None else None
+    )
 
     # Middleware — order matters. Starlette runs middlewares outermost
     # first; the LAST `add_middleware` call wraps everything else.
@@ -144,5 +169,6 @@ def build_app(
     # Routers.
     app.include_router(health_routes.router)
     app.include_router(linkedin_routes.router)
+    app.include_router(indeed_routes.router)
 
     return app

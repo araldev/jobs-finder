@@ -12,6 +12,12 @@
 #     `JobSearchPort` Protocol (cite REQ-I-003 / REQ-I-005).
 #   - `FakeJobSearchPort` class: shared by both fixtures and by any
 #     future test that wants to construct a fresh port instance.
+#   - `app` (T-007): a FastAPI app whose BOTH use cases (LinkedIn +
+#     Indeed) are wired to fake ports, so the Indeed integration test
+#     can drive the route against a `FakeJobSearchPort` without
+#     launching Chromium. The LinkedIn port is fresh + empty so the
+#     existing LinkedIn integration tests (which define their own
+#     `app` fixture locally) are not affected.
 #
 # The prior `linkedin-endpoint` change defined its `FakeJobSearchPort`
 # and sample `Job` factories inline in each test file. The Indeed
@@ -23,8 +29,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from fastapi import FastAPI
 
+from jobs_finder.application.usecases.search_indeed_jobs import SearchJobsUseCase
+from jobs_finder.application.usecases.search_linkedin_jobs import (
+    SearchLinkedInJobsUseCase,
+)
 from jobs_finder.domain.job import Job
+from jobs_finder.presentation.app_factory import build_app
 
 
 class FakeJobSearchPort:
@@ -33,6 +45,14 @@ class FakeJobSearchPort:
     Records every call so tests can assert the route/use case forwarded
     the input correctly. Can be primed (or mutated) to raise an
     exception on the next call. Cite REQ-I-005.
+
+    NOTE: a structurally-identical `FakeJobSearchPort` is defined
+    inline in `tests/integration/test_api.py` (the LinkedIn
+    integration test). Keeping the duplication is intentional: the
+    LinkedIn file pre-dates the conftest fixture and refactoring it
+    is out of scope for the `indeed_platform` change. When a future
+    change consolidates the integration tests, the two definitions
+    should collapse into the one in this module.
     """
 
     def __init__(
@@ -107,3 +127,27 @@ def fake_indeed_port(sample_indeed_jobs: list[Job]) -> FakeJobSearchPort:
     can assert the route/use case forwarded the input correctly.
     """
     return FakeJobSearchPort(jobs=sample_indeed_jobs)
+
+
+@pytest.fixture
+def app(fake_indeed_port: FakeJobSearchPort) -> FastAPI:
+    """A FastAPI app whose BOTH use cases are wired to fake ports.
+
+    The Indeed use case is wrapped around `fake_indeed_port` (3 sample
+    Indeed jobs). The LinkedIn use case is wrapped around a fresh
+    `FakeJobSearchPort` with NO jobs so the LinkedIn route works but
+    returns an empty list. The existing LinkedIn integration tests
+    (`tests/integration/test_api.py`, etc.) define their own local
+    `app` fixture and so are NOT affected by this conftest fixture.
+
+    The fixture exists to give the new `test_indeed_api.py` a single
+    `app` to drive, with both routes available for the
+    `/health`-independence and per-source cross-check tests.
+    """
+    linkedin_port = FakeJobSearchPort()
+    linkedin_use_case = SearchLinkedInJobsUseCase(port=linkedin_port)
+    indeed_use_case = SearchJobsUseCase(port=fake_indeed_port)
+    return build_app(
+        use_case=linkedin_use_case,
+        indeed_use_case=indeed_use_case,
+    )
