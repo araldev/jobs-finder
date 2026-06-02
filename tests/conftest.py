@@ -151,3 +151,80 @@ def app(fake_indeed_port: FakeJobSearchPort) -> FastAPI:
         use_case=linkedin_use_case,
         indeed_use_case=indeed_use_case,
     )
+
+
+# ---------------------------------------------------------------------------
+# InfoJobs fixtures (added in T-001 of `infojobs_platform`).
+#
+# The fixtures mirror the Indeed pattern: a helper that builds 3
+# deterministic `Job` instances, a `sample_infojobs_jobs` fixture that
+# returns the helper's output, and a `fake_infojobs_port` fixture that
+# wraps a `FakeJobSearchPort` primed with the sample jobs. The
+# `FakeJobSearchPort` class itself is reused from above — InfoJobs
+# doesn't need its own class because the port is source-agnostic
+# (REQ-I-003 / REQ-I-005 analog).
+# ---------------------------------------------------------------------------
+
+
+def _make_infojobs_sample_jobs() -> list[Job]:
+    """Build 3 deterministic, InfoJobs-style `Job` instances.
+
+    The ids are 9-digit numbers mirroring a realistic InfoJobs offer
+    id shape. Each URL is the canonical `https://www.infojobs.net/offer/<id>`
+    form (placeholder for the T-010 real-capture step; the exact URL
+    format will be confirmed by the real InfoJobs DOM in T-010).
+    `posted_at` is tz-aware UTC to satisfy the `Job.__post_init__`
+    invariant.
+    """
+    return [
+        Job(
+            id="200000001",
+            title="InfoJobs Title 1",
+            company="InfoJobs Co 1",
+            location="Madrid, Spain",
+            url="https://www.infojobs.net/offer/200000001",
+            posted_at=datetime(2026, 5, 1, tzinfo=UTC),
+        ),
+        Job(
+            id="200000002",
+            title="InfoJobs Title 2",
+            company="InfoJobs Co 2",
+            location="Barcelona, Spain",
+            url="https://www.infojobs.net/offer/200000002",
+            posted_at=datetime(2026, 5, 2, tzinfo=UTC),
+        ),
+        Job(
+            id="200000003",
+            title="InfoJobs Title 3",
+            company="InfoJobs Co 3",
+            location="Valencia, Spain",
+            url="https://www.infojobs.net/offer/200000003",
+            posted_at=datetime(2026, 5, 3, tzinfo=UTC),
+        ),
+    ]
+
+
+@pytest.fixture
+def sample_infojobs_jobs() -> list[Job]:
+    """3 deterministic, source-agnostic `Job` instances shaped for InfoJobs tests.
+
+    Each job has the canonical `https://www.infojobs.net/offer/<id>`
+    URL (placeholder for the T-010 real-capture step). The 3 jobs
+    have unique ids, titles, companies, and locations so tests that
+    assert field-by-field can identify which one they're looking at.
+    """
+    return _make_infojobs_sample_jobs()
+
+
+@pytest.fixture
+def fake_infojobs_port(sample_infojobs_jobs: list[Job]) -> FakeJobSearchPort:
+    """An in-memory `FakeJobSearchPort` primed with `sample_infojobs_jobs`.
+
+    Returns a fresh port per test. The port records every call so tests
+    can assert the route/use case forwarded the input correctly.
+
+    Note: the `FakeJobSearchPort` class is the same one used by the
+    `fake_indeed_port` fixture (added in T-001 of `indeed_platform`).
+    InfoJobs reuses it because the port is source-agnostic.
+    """
+    return FakeJobSearchPort(jobs=sample_infojobs_jobs)

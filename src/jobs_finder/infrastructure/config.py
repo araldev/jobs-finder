@@ -22,6 +22,12 @@ but missing from the previous impl:
   - `log_level` (REQ-006): root logger level. Default `INFO`.
   - `log_format` (REQ-006): `json` (default, structured) or `plain`
     (stdlib default formatter, useful for local development).
+
+T-001 of `infojobs_platform` adds six InfoJobs-specific fields below
+the Indeed block. The same per-field `validation_alias` pattern is
+used so each `infojobs_*` field reads from its own `INFOJOBS_*` env
+var (the model-level `env_prefix="LINKEDIN_"` is preserved and the
+new fields opt out of the prefix by declaring an alias).
 """
 
 from __future__ import annotations
@@ -63,6 +69,18 @@ class Settings(BaseSettings):
           between pagination pages to reduce Cloudflare re-challenge
           probability. Set to `0.0` to disable. Added as a follow-up to
           the page-2 timeout bug fixed in `fd51ea1`.
+
+    InfoJobs env vars (per-field `validation_alias` — see REQ-J-001,
+    REQ-J-003; added in T-001 of `infojobs_platform`):
+        - `INFOJOBS_USER_AGENT` (str, default same stealth UA as LinkedIn)
+        - `INFOJOBS_THROTTLE_SECONDS` (float, default 3.0)
+        - `INFOJOBS_TIMEOUT_MS` (int, default 15_000)
+        - `INFOJOBS_DOMAIN` (str, default `www.infojobs.net`)
+        - `INFOJOBS_MAX_PAGES` (int, default 10 — hard cap on pagination)
+        - `INFOJOBS_INTER_PAGE_DELAY_SECONDS` (float, default 1.5) —
+          sleep between pagination pages. Stricter than the Indeed
+          default `1.0` because InfoJobs anti-bot (Distil + Geetest) is
+          more aggressive than Cloudflare. Set to `0.0` to disable.
     """
 
     model_config = SettingsConfigDict(
@@ -124,6 +142,51 @@ class Settings(BaseSettings):
         default=1.0,
         validation_alias=AliasChoices(
             "INDEED_INTER_PAGE_DELAY_SECONDS", "indeed_inter_page_delay_seconds"
+        ),
+    )
+
+    # ------------------------------------------------------------------
+    # InfoJobs-specific settings (REQ-J-001, REQ-J-003)
+    #
+    # The model-level `env_prefix="LINKEDIN_"` only applies to fields
+    # that do not declare a `validation_alias`. For each InfoJobs field
+    # we use `AliasChoices("INFOJOBS_*", "infojobs_*")` so that:
+    #
+    #   - Env var lookup reads the `INFOJOBS_*` env var
+    #     (e.g. `INFOJOBS_THROTTLE_SECONDS=6.0`).
+    #   - Programmatic construction (`Settings(infojobs_throttle_seconds=6.0)`)
+    #     still works via the second choice in `AliasChoices`.
+    #
+    # The LinkedIn + Indeed fields above are intentionally left
+    # untouched; their env-var lookup is still driven by their
+    # respective per-field aliases (or the model-level prefix for the
+    # LinkedIn fields).
+    # ------------------------------------------------------------------
+
+    infojobs_user_agent: str = Field(
+        default=_DEFAULT_USER_AGENT,
+        validation_alias=AliasChoices("INFOJOBS_USER_AGENT", "infojobs_user_agent"),
+    )
+    infojobs_throttle_seconds: float = Field(
+        default=3.0,
+        validation_alias=AliasChoices("INFOJOBS_THROTTLE_SECONDS", "infojobs_throttle_seconds"),
+    )
+    infojobs_timeout_ms: int = Field(
+        default=15_000,
+        validation_alias=AliasChoices("INFOJOBS_TIMEOUT_MS", "infojobs_timeout_ms"),
+    )
+    infojobs_domain: str = Field(
+        default="www.infojobs.net",
+        validation_alias=AliasChoices("INFOJOBS_DOMAIN", "infojobs_domain"),
+    )
+    infojobs_max_pages: int = Field(
+        default=10,
+        validation_alias=AliasChoices("INFOJOBS_MAX_PAGES", "infojobs_max_pages"),
+    )
+    infojobs_inter_page_delay_seconds: float = Field(
+        default=1.5,
+        validation_alias=AliasChoices(
+            "INFOJOBS_INTER_PAGE_DELAY_SECONDS", "infojobs_inter_page_delay_seconds"
         ),
     )
 
