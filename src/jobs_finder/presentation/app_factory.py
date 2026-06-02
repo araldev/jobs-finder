@@ -28,6 +28,9 @@ entry point (`main.py`, T-009).
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -69,8 +72,10 @@ def build_app(
             CORS / logging. If `None`, the default `Settings()` is loaded.
 
     Returns:
-        A `FastAPI` instance with middleware, exception handlers, and
-        routers installed.
+        A `FastAPI` instance with a `lifespan` that opens the default
+        `LinkedInPlaywrightScraper` (when the default use case is in
+        effect) at startup and closes it at shutdown, plus the
+        middleware, exception handlers, and routers.
     """
     effective_settings = settings if settings is not None else Settings()
 
@@ -89,7 +94,31 @@ def build_app(
         )
         use_case = SearchLinkedInJobsUseCase(port=scraper)
 
-    app = FastAPI(title="jobs-finder")
+    # The lifespan only opens the default `LinkedInPlaywrightScraper`.
+    # When tests inject a use case wrapping a non-LinkedIn port (e.g.
+    # `FakeJobSearchPort`), the lifespan is a no-op so the test does
+    # not need Chromium installed.
+    raw_port = getattr(use_case, "_port", None)
+    scraper_for_lifespan: LinkedInPlaywrightScraper | None = (
+        raw_port if isinstance(raw_port, LinkedInPlaywrightScraper) else None
+    )
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        if scraper_for_lifespan is not None:
+            # Enter the async context manager: launches Chromium and
+            # sets `scraper_for_lifespan._browser`. After this returns,
+            # the first request can call `port.search(...)` and use the
+            # browser.
+            await scraper_for_lifespan.__aenter__()
+        try:
+            yield
+        finally:
+            if scraper_for_lifespan is not None:
+                # Close the browser and stop the Playwright driver.
+                await scraper_for_lifespan.__aexit__(None, None, None)
+
+    app = FastAPI(title="jobs-finder", lifespan=lifespan)
     app.state.use_case = use_case
     # Expose the underlying port for diagnostics; routes use the use case.
     app.state.job_search_port = getattr(use_case, "_port", None)

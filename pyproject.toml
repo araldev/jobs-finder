@@ -32,6 +32,7 @@ dev = [
     "pytest-asyncio>=0.23,<1.0",
     "mypy>=1.10,<2.0",
     "ruff>=0.5,<1.0",
+    "asgi-lifespan>=2.0,<3.0",
 ]
 
 [dependency-groups]
@@ -40,6 +41,7 @@ dev = [
     "pytest-asyncio>=0.23,<1.0",
     "mypy>=1.10,<2.0",
     "ruff>=0.5,<1.0",
+    "asgi-lifespan>=2.0,<3.0",
 ]
 
 [project.scripts]
