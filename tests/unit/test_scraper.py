@@ -104,31 +104,43 @@ class FakeBrowser:
 def _three_card_html() -> str:
     return """
     <html><body>
-      <ul class="jobs-search__results-list">
-        <li class="result-card" data-entity-urn="urn:li:jobPosting:3850000001">
-          <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/3850000001/">
-            <h3 class="base-card__title">Senior Python Developer</h3>
+      <ul>
+        <div class="base-card base-search-card job-search-card"
+             data-entity-urn="urn:li:jobPosting:3850000001">
+          <a class="base-card__full-link"
+             href="https://es.linkedin.com/jobs/view/senior-python-developer-at-acme-3850000001">
+            <span class="sr-only">Senior Python Developer</span>
           </a>
-          <h4 class="base-card__subtitle">Acme Corp</h4>
+          <h3 class="base-search-card__title">Senior Python Developer</h3>
+          <h4 class="base-search-card__subtitle">Acme Corp</h4>
           <span class="job-search-card__location">Madrid, Spain</span>
-          <time datetime="2026-05-01T00:00:00+00:00">1 day ago</time>
-        </li>
-        <li class="result-card" data-entity-urn="urn:li:jobPosting:3850000002">
-          <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/3850000002/">
-            <h3 class="base-card__title">Backend Engineer</h3>
+          <time class="job-search-card__listdate"
+                datetime="2026-05-01T00:00:00+00:00">1 day ago</time>
+        </div>
+        <div class="base-card base-search-card job-search-card"
+             data-entity-urn="urn:li:jobPosting:3850000002">
+          <a class="base-card__full-link"
+             href="https://es.linkedin.com/jobs/view/backend-engineer-at-globex-3850000002">
+            <span class="sr-only">Backend Engineer</span>
           </a>
-          <h4 class="base-card__subtitle">Globex Inc</h4>
+          <h3 class="base-search-card__title">Backend Engineer</h3>
+          <h4 class="base-search-card__subtitle">Globex Inc</h4>
           <span class="job-search-card__location">Barcelona, Spain</span>
-          <time datetime="2026-05-02T00:00:00+00:00">2 days ago</time>
-        </li>
-        <li class="result-card" data-entity-urn="urn:li:jobPosting:3850000003">
-          <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/3850000003/">
-            <h3 class="base-card__title">Data Scientist</h3>
+          <time class="job-search-card__listdate"
+                datetime="2026-05-02T00:00:00+00:00">2 days ago</time>
+        </div>
+        <div class="base-card base-search-card job-search-card"
+             data-entity-urn="urn:li:jobPosting:3850000003">
+          <a class="base-card__full-link"
+             href="https://es.linkedin.com/jobs/view/data-scientist-at-initech-3850000003">
+            <span class="sr-only">Data Scientist</span>
           </a>
-          <h4 class="base-card__subtitle">Initech</h4>
+          <h3 class="base-search-card__title">Data Scientist</h3>
+          <h4 class="base-search-card__subtitle">Initech</h4>
           <span class="job-search-card__location">Valencia, Spain</span>
-          <time datetime="2026-05-03T00:00:00+00:00">3 days ago</time>
-        </li>
+          <time class="job-search-card__listdate"
+                datetime="2026-05-03T00:00:00+00:00">3 days ago</time>
+        </div>
       </ul>
     </body></html>
     """
@@ -139,20 +151,20 @@ def _five_card_html() -> str:
     for i in range(1, 6):
         cards.append(
             f"""
-        <li class="result-card" data-entity-urn="urn:li:jobPosting:385000000{i}">
-          <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/385000000{i}/">
-            <h3 class="base-card__title">Title {i}</h3>
+        <div class="base-card base-search-card job-search-card"
+             data-entity-urn="urn:li:jobPosting:385000000{i}">
+          <a class="base-card__full-link"
+             href="https://es.linkedin.com/jobs/view/title-{i}-at-company-{i}-385000000{i}">
+            <span class="sr-only">Title {i}</span>
           </a>
-          <h4 class="base-card__subtitle">Company {i}</h4>
+          <h3 class="base-search-card__title">Title {i}</h3>
+          <h4 class="base-search-card__subtitle">Company {i}</h4>
           <span class="job-search-card__location">Madrid</span>
-          <time datetime="2026-05-0{i}T00:00:00+00:00">{i}d ago</time>
-        </li>"""
+          <time class="job-search-card__listdate"
+                datetime="2026-05-0{i}T00:00:00+00:00">{i}d ago</time>
+        </div>"""
         )
-    return (
-        '<html><body><ul class="jobs-search__results-list">'
-        + "".join(cards)
-        + "</ul></body></html>"
-    )
+    return "<html><body><ul>" + "".join(cards) + "</ul></body></html>"
 
 
 def _settings() -> ScraperSettings:
@@ -202,7 +214,7 @@ async def test_search_waits_for_results_selector_with_configured_timeout() -> No
     scraper, _ = await _make_scraper_with(page)
     async with scraper:
         await scraper.search("python", "Madrid")
-    assert page.wait_calls == [("li[data-entity-urn]", 10_000)]
+    assert page.wait_calls == [("div[data-entity-urn]", 10_000)]
 
 
 # ---------------------------------------------------------------------------

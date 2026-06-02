@@ -61,7 +61,7 @@ DEFAULT_USER_AGENT = (
 
 DEFAULT_TIMEOUT_MS = 10_000
 
-RESULTS_SELECTOR = "li[data-entity-urn]"
+RESULTS_SELECTOR = "div[data-entity-urn]"
 
 VIEWPORT: dict[str, int] = {"width": 1280, "height": 800}
 

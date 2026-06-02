@@ -1,8 +1,12 @@
 """Unit tests for the LinkedIn HTML parsers.
 
 Spec: REQ-015, REQ-024.
-The fixture in `tests/fixtures/linkedin_search.py` is best-effort; live
-verification in T-010 confirms whether it matches the real DOM.
+The fixture in `tests/fixtures/linkedin_search.py` is the recorded
+real-DOM shape of LinkedIn's public job search results page. It uses
+`<div data-entity-urn="urn:li:jobPosting:<id>">` cards with
+`base-search-card__title` / `base-search-card__subtitle` /
+`job-search-card__location` / `job-search-card__listdate` children.
+The `slug + numeric-id` URL format is exercised here too.
 """
 
 from __future__ import annotations
@@ -25,63 +29,81 @@ from jobs_finder.infrastructure.linkedin.parsers import (
 from tests.fixtures.linkedin_search import BLOCK_PAGE_HTML, SEARCH_PAGE_HTML
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers — load cards out of the shared fixture
 # ---------------------------------------------------------------------------
 
 
 def _first_card() -> Tag:
     soup = BeautifulSoup(SEARCH_PAGE_HTML, "html.parser")
-    card = soup.select_one("li[data-entity-urn]")
+    card = soup.select_one("div[data-entity-urn]")
     assert card is not None, "fixture is missing the first result card"
     return card
 
 
 def _second_card() -> Tag:
     soup = BeautifulSoup(SEARCH_PAGE_HTML, "html.parser")
-    cards = soup.select("li[data-entity-urn]")
+    cards = soup.select("div[data-entity-urn]")
     assert len(cards) >= 2, "fixture is missing the second result card"
     return cards[1]
 
 
+def _third_card() -> Tag:
+    """The third card in the fixture intentionally has no `<time>` element
+    so `parse_posted_at` exercises the missing-field path."""
+    soup = BeautifulSoup(SEARCH_PAGE_HTML, "html.parser")
+    cards = soup.select("div[data-entity-urn]")
+    assert len(cards) >= 3, "fixture is missing the third result card"
+    return cards[2]
+
+
 def _card_missing_title() -> str:
     return """
-    <li class="result-card" data-entity-urn="urn:li:jobPosting:9999">
-      <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/9999/"></a>
-      <h4 class="base-card__subtitle">Acme</h4>
+    <div data-entity-urn="urn:li:jobPosting:9999">
+      <a class="base-card__full-link"
+         href="https://es.linkedin.com/jobs/view/no-title-9999"></a>
+      <h4 class="base-search-card__subtitle">Acme</h4>
       <span class="job-search-card__location">Madrid</span>
-    </li>
+    </div>
     """
 
 
 def _card_missing_company() -> str:
     return """
-    <li class="result-card" data-entity-urn="urn:li:jobPosting:9999">
-      <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/9999/">
-        <h3 class="base-card__title">Title</h3>
+    <div data-entity-urn="urn:li:jobPosting:9999">
+      <a class="base-card__full-link"
+         href="https://es.linkedin.com/jobs/view/no-company-9999">
+        <h3 class="base-search-card__title">Title</h3>
       </a>
       <span class="job-search-card__location">Madrid</span>
-    </li>
+    </div>
     """
 
 
 def _card_missing_location() -> str:
     return """
-    <li class="result-card" data-entity-urn="urn:li:jobPosting:9999">
-      <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/9999/">
-        <h3 class="base-card__title">Title</h3>
+    <div data-entity-urn="urn:li:jobPosting:9999">
+      <a class="base-card__full-link"
+         href="https://es.linkedin.com/jobs/view/no-location-9999">
+        <h3 class="base-search-card__title">Title</h3>
       </a>
-      <h4 class="base-card__subtitle">Acme</h4>
-    </li>
+      <h4 class="base-search-card__subtitle">Acme</h4>
+    </div>
     """
 
 
-def _card_missing_url() -> str:
+def _card_missing_url_and_urn() -> str:
+    """A card with no URN AND no link — the only path that should fail.
+
+    `parse_job_id` first tries the URN, then falls back to the URL
+    link, so removing both is the only way to force the parser to
+    raise.
+    """
     return """
-    <li class="result-card" data-entity-urn="urn:li:jobPosting:9999">
-      <h3 class="base-card__title">Title</h3>
-      <h4 class="base-card__subtitle">Acme</h4>
+    <div>
+      <h3 class="base-search-card__title">Title</h3>
+      <h4 class="base-search-card__subtitle">Acme</h4>
       <span class="job-search-card__location">Madrid</span>
-    </li>
+    </div>
     """
 
 
@@ -90,41 +112,50 @@ def _card_missing_url() -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_parse_job_id_extracts_id_from_card() -> None:
-    """The first card's id is `3850000001`."""
-    assert parse_job_id(_first_card()) == "3850000001"
+def test_parse_job_id_extracts_id_from_urn() -> None:
+    """The first card's id is the trailing numeric segment of the URN."""
+    assert parse_job_id(_first_card()) == "4217873836"
+
+
+def test_parse_job_id_works_for_each_fixture_card() -> None:
+    """Each card in the fixture has a distinct URN — all parse correctly."""
+    soup = BeautifulSoup(SEARCH_PAGE_HTML, "html.parser")
+    expected = ["4217873836", "4349673400", "4414091381"]
+    actual = [parse_job_id(c) for c in soup.select("div[data-entity-urn]")]
+    assert actual == expected
 
 
 def test_parse_title_extracts_title_from_card() -> None:
-    assert parse_title(_first_card()) == "Senior Python Developer"
+    assert parse_title(_first_card()) == "Developer Python/AWS"
 
 
 def test_parse_company_extracts_company_from_card() -> None:
-    assert parse_company(_first_card()) == "Acme Corp"
+    assert parse_company(_first_card()) == "Plexus Tech"
 
 
 def test_parse_location_extracts_location_from_card() -> None:
-    assert parse_location(_first_card()) == "Madrid, Spain"
+    assert parse_location(_first_card()) == "Madrid, Community of Madrid, Spain"
 
 
 def test_parse_url_extracts_url_from_card() -> None:
     url = parse_url(_first_card())
-    assert "linkedin.com/jobs/view/3850000001" in url
+    assert "linkedin.com/jobs/view/developer-python-aws-at-plexus-tech-4217873836" in url
     assert url.startswith("https://")
 
 
 def test_parse_posted_at_extracts_datetime_from_card() -> None:
+    """The first card has `datetime="2025-04-29"` (a date, not a full ISO)."""
     result = parse_posted_at(_first_card())
-    assert result == datetime(2026, 5, 1, tzinfo=UTC)
+    assert result == datetime(2025, 4, 29, tzinfo=UTC)
 
 
 def test_parse_posted_at_accepts_iso_offset() -> None:
     """The parser accepts a tz-aware ISO datetime (the common LinkedIn shape)."""
     fragment = """
-    <li class="result-card" data-entity-urn="urn:li:jobPosting:1">
+    <div data-entity-urn="urn:li:jobPosting:1">
       <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/1/"></a>
-      <time datetime="2026-05-01T12:34:56+02:00">yesterday</time>
-    </li>
+      <time class="job-search-card__listdate" datetime="2026-05-01T12:34:56+02:00">yesterday</time>
+    </div>
     """
     result = parse_posted_at(fragment)
     assert result is not None
@@ -155,13 +186,31 @@ def test_parse_location_raises_on_missing_location() -> None:
 
 
 def test_parse_url_raises_on_missing_url() -> None:
+    """No `<a class="base-card__full-link">` link in the card."""
     with pytest.raises(LinkedInParseError, match="parse_url"):
-        parse_url(_card_missing_url())
+        parse_url(_card_missing_url_and_urn())
 
 
-def test_parse_job_id_raises_on_missing_link() -> None:
+def test_parse_job_id_raises_on_missing_urn_and_url() -> None:
+    """A card with no URN and no link is the only way to force a raise."""
     with pytest.raises(LinkedInParseError, match="parse_job_id"):
-        parse_job_id(_card_missing_url())
+        parse_job_id(_card_missing_url_and_urn())
+
+
+def test_parse_job_id_falls_back_to_url_when_urn_missing() -> None:
+    """When the URN is missing, the URL is used as a fallback.
+
+    A card with a link but no URN is rare in production but legal per
+    the parser contract: the URL still carries the id via the
+    `slug-id` pattern.
+    """
+    fragment = """
+    <div>
+      <a class="base-card__full-link"
+         href="https://es.linkedin.com/jobs/view/no-urn-but-has-id-1234567890"></a>
+    </div>
+    """
+    assert parse_job_id(fragment) == "1234567890"
 
 
 # ---------------------------------------------------------------------------
@@ -169,18 +218,18 @@ def test_parse_job_id_raises_on_missing_link() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_parse_posted_at_returns_none_when_missing() -> None:
-    """Cards without `<time>` return None; the other parsers still work."""
-    assert parse_posted_at(_second_card()) is None
+def test_parse_posted_at_returns_none_when_time_element_missing() -> None:
+    """The third fixture card has no `<time>` element; parser returns None."""
+    assert parse_posted_at(_third_card()) is None
 
 
 def test_parse_posted_at_returns_none_when_datetime_attr_missing() -> None:
     """A `<time>` without a `datetime` attribute also yields None."""
     fragment = """
-    <li class="result-card" data-entity-urn="urn:li:jobPosting:1">
+    <div data-entity-urn="urn:li:jobPosting:1">
       <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/1/"></a>
-      <time>2 days ago</time>
-    </li>
+      <time class="job-search-card__listdate">2 days ago</time>
+    </div>
     """
     assert parse_posted_at(fragment) is None
 
@@ -188,10 +237,10 @@ def test_parse_posted_at_returns_none_when_datetime_attr_missing() -> None:
 def test_parse_posted_at_raises_on_malformed_datetime() -> None:
     """A `<time datetime="not-a-date">` raises LinkedInParseError."""
     fragment = """
-    <li class="result-card" data-entity-urn="urn:li:jobPosting:1">
+    <div data-entity-urn="urn:li:jobPosting:1">
       <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/1/"></a>
-      <time datetime="not-a-date">whenever</time>
-    </li>
+      <time class="job-search-card__listdate" datetime="not-a-date">whenever</time>
+    </div>
     """
     with pytest.raises(LinkedInParseError, match="parse_posted_at"):
         parse_posted_at(fragment)
@@ -258,17 +307,18 @@ def test_parsers_module_has_no_playwright_or_async() -> None:
 def test_parsers_accept_string_or_tag() -> None:
     """Helpers accept either an HTML fragment string or a `bs4.element.Tag`."""
     fragment = (
-        '<li class="result-card" data-entity-urn="urn:li:jobPosting:1">'
-        '<a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/1/">'
-        '<h3 class="base-card__title">X</h3>'
+        '<div data-entity-urn="urn:li:jobPosting:1234567890">'
+        '<a class="base-card__full-link" '
+        'href="https://es.linkedin.com/jobs/view/x-at-y-1234567890">'
+        '<h3 class="base-search-card__title">X</h3>'
         "</a>"
-        '<h4 class="base-card__subtitle">Y</h4>'
+        '<h4 class="base-search-card__subtitle">Y</h4>'
         '<span class="job-search-card__location">Z</span>'
-        "</li>"
+        "</div>"
     )
     # All "required" parsers work on a string.
-    assert parse_job_id(fragment) == "1"
+    assert parse_job_id(fragment) == "1234567890"
     assert parse_title(fragment) == "X"
     assert parse_company(fragment) == "Y"
     assert parse_location(fragment) == "Z"
-    assert "linkedin.com/jobs/view/1/" in parse_url(fragment)
+    assert "linkedin.com/jobs/view/x-at-y-1234567890" in parse_url(fragment)

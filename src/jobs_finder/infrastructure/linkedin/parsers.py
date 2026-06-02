@@ -7,12 +7,16 @@ no `Job` construction — those concerns belong to the scraper (T-006).
 Selectors are private module constants; a DOM change to one field only
 affects one function. The fixture used by tests lives in
 `tests/fixtures/linkedin_search.py` and is best-effort — live verification
-in T-010 is the only signal that confirms the fixture matches the real DOM.
+is the only signal that confirms the fixture matches the real DOM.
+The current selectors match the structure observed in live captures of
+the public LinkedIn job search (cards rendered inside an `<ul>` of
+`<div class="base-card ... base-search-card ... job-search-card"
+data-entity-urn="urn:li:jobPosting:<id>">` elements).
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from bs4 import BeautifulSoup, Tag
 
@@ -20,14 +24,15 @@ from jobs_finder.domain.job import Job
 
 from .exceptions import LinkedInParseError
 
-# Private selectors. The fixture uses these class names; live verification
-# may force adjustments. Each function touches exactly one selector, so a
-# DOM change to one field only affects one function.
-_TITLE_SELECTOR = ".base-card__title"
-_COMPANY_SELECTOR = ".base-card__subtitle"
+# Private selectors. Each function touches exactly one selector, so a
+# DOM change to one field only affects one function. Names match the
+# real LinkedIn DOM as captured from the public job search page.
+_TITLE_SELECTOR = ".base-search-card__title"
+_COMPANY_SELECTOR = ".base-search-card__subtitle"
 _LOCATION_SELECTOR = ".job-search-card__location"
 _URL_SELECTOR = "a.base-card__full-link"
-_TIME_SELECTOR = "time"
+_TIME_SELECTOR = "time.job-search-card__listdate"
+_URN_ATTR = "data-entity-urn"
 
 
 def _ensure_tag(fragment: str | Tag) -> Tag:
@@ -46,14 +51,23 @@ def _parse_error(parser: str, message: str, tag: Tag) -> LinkedInParseError:
 
 
 def parse_job_id(card: str | Tag) -> str:
-    """Extract the LinkedIn job id from the card's link element.
+    """Extract the LinkedIn job id from the card's `data-entity-urn`.
 
-    Reuses `Job.from_url` so the id extraction logic is not duplicated.
+    The URN format (`urn:li:jobPosting:<id>`) is more stable than the
+    URL slug. Falls back to URL extraction only if the URN is missing,
+    which should not happen on LinkedIn's public job search.
     """
     tag = _ensure_tag(card)
+    urn = tag.get(_URN_ATTR)
+    if urn:
+        try:
+            return Job.from_urn(str(urn))
+        except ValueError:
+            # URN present but malformed; fall through to URL fallback.
+            pass
     a = tag.select_one(_URL_SELECTOR)
     if a is None or not a.get("href"):
-        raise _parse_error("parse_job_id", "no /jobs/view/ link in card", tag)
+        raise _parse_error("parse_job_id", "no URN or /jobs/view/ link in card", tag)
     try:
         return Job.from_url(str(a["href"]))
     except ValueError as e:
@@ -97,7 +111,15 @@ def parse_posted_at(card: str | Tag) -> datetime | None:
 
     A `<time>` element with a `datetime` attribute that does not parse
     raises `LinkedInParseError` — that is "malformed", not "missing".
-    A naive datetime is also rejected (matches the `Job` invariant).
+
+    Real LinkedIn cards emit a DATE-only value (e.g. `2025-04-29`) with
+    no time and no timezone. We coerce date-only and naive datetimes
+    to UTC, because LinkedIn does not expose a per-card timezone and
+    treating the absence as a hard error would mark every real card
+    as malformed. The coercion is documented as a parser-level
+    convention: the domain layer still rejects naive datetimes that
+    flow in from other sources, so the invariant is preserved at
+    the boundary.
     """
     tag = _ensure_tag(card)
     el = tag.select_one(_TIME_SELECTOR)
@@ -111,7 +133,10 @@ def parse_posted_at(card: str | Tag) -> datetime | None:
     except ValueError as e:
         raise _parse_error("parse_posted_at", f"malformed datetime {raw!r}", tag) from e
     if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
-        raise _parse_error("parse_posted_at", "naive datetime", tag)
+        # Date-only (`2025-04-29`) or naive datetime — interpret as UTC.
+        # This is the parser-level convention; callers MUST NOT pass a
+        # naive datetime into `Job(...)` from anywhere else.
+        dt = dt.replace(tzinfo=UTC)
     return dt
 
 

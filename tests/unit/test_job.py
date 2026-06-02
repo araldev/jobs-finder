@@ -116,6 +116,23 @@ def test_from_url_works_without_trailing_slash() -> None:
     assert Job.from_url("https://www.linkedin.com/jobs/view/3850000000") == "3850000000"
 
 
+def test_from_url_extracts_id_from_slugged_path() -> None:
+    """LinkedIn's current URL format is `/jobs/view/<slug>-<id>`.
+
+    The slug is a SEO-friendly rewrite; the trailing numeric segment
+    is the actual id. Example seen on the public job search:
+    `/jobs/view/developer-python-aws-at-plexus-tech-4217873836`.
+    """
+    url = "https://es.linkedin.com/jobs/view/developer-python-aws-at-plexus-tech-4217873836?position=1&pageNum=0"
+    assert Job.from_url(url) == "4217873836"
+
+
+def test_from_url_slugged_path_works_with_locale_subdomain() -> None:
+    """The slug regex must work for `es.linkedin.com`, `www.linkedin.com`, etc."""
+    url = "https://es.linkedin.com/jobs/view/python-developer-at-statkraft-4414091381"
+    assert Job.from_url(url) == "4414091381"
+
+
 def test_from_url_falls_back_to_currentJobId_query_param() -> None:  # noqa: N802
     """When the path has no id, `currentJobId=<id>` in the query is used."""
     url = "https://www.linkedin.com/jobs/search/?currentJobId=3850000000&trk=foo"
@@ -131,6 +148,27 @@ def test_from_url_raises_on_unrecognized_url() -> None:
     """A URL with neither a path id nor a currentJobId query param raises."""
     with pytest.raises(ValueError):
         Job.from_url("https://example.com/not-linkedin/123")
+
+
+# ---------------------------------------------------------------------------
+# from_urn — the primary id extraction path
+# ---------------------------------------------------------------------------
+
+
+def test_from_urn_extracts_id_from_standard_urn() -> None:
+    """A `urn:li:jobPosting:<id>` string yields the numeric id."""
+    assert Job.from_urn("urn:li:jobPosting:4217873836") == "4217873836"
+
+
+def test_from_urn_works_when_surrounded_by_other_text() -> None:
+    """`from_urn` is permissive about surrounding whitespace / text."""
+    assert Job.from_urn("  urn:li:jobPosting:4217873836  ") == "4217873836"
+
+
+def test_from_urn_raises_on_unrecognized_urn() -> None:
+    """A URN that does not match the `urn:li:jobPosting:<id>` shape raises."""
+    with pytest.raises(ValueError):
+        Job.from_urn("urn:li:fsd_profile:abc123")
 
 
 # ---------------------------------------------------------------------------
