@@ -131,12 +131,14 @@ def _settings(
     domain: str = "es.indeed.com",
     timeout_ms: int = 10_000,
     max_pages: int = 10,
+    inter_page_delay_seconds: float = 0.0,
 ) -> IndeedScraperSettings:
     return IndeedScraperSettings(
         user_agent="test-agent/1.0",
         timeout_ms=timeout_ms,
         domain=domain,
         max_pages=max_pages,
+        inter_page_delay_seconds=inter_page_delay_seconds,
     )
 
 
@@ -146,11 +148,15 @@ async def _make_scraper_with(
     domain: str = "es.indeed.com",
     timeout_ms: int = 10_000,
     max_pages: int = 10,
+    inter_page_delay_seconds: float = 0.0,
 ) -> tuple[IndeedPlaywrightScraper, FakeBrowser]:
     """Build a scraper whose browser is the given fake page's parent.
 
     The throttle is configured with `min_interval_seconds=0.0` so the
-    tests don't actually sleep between calls.
+    tests don't actually sleep between calls. The inter-page delay
+    defaults to `0.0` for the same reason; tests that exercise the
+    pacing behavior pass a non-zero value and monkeypatch
+    `asyncio.sleep`.
     """
     fake_browser = FakeBrowser(page)
     throttle = IndeedAsyncThrottle(min_interval_seconds=0.0)
@@ -160,7 +166,12 @@ async def _make_scraper_with(
 
     scraper = IndeedPlaywrightScraper(
         throttle=throttle,
-        settings=_settings(domain=domain, timeout_ms=timeout_ms, max_pages=max_pages),
+        settings=_settings(
+            domain=domain,
+            timeout_ms=timeout_ms,
+            max_pages=max_pages,
+            inter_page_delay_seconds=inter_page_delay_seconds,
+        ),
         browser_factory=factory,
     )
     return scraper, fake_browser
@@ -381,6 +392,97 @@ async def test_search_does_not_paginate_when_first_page_satisfies_limit() -> Non
     async with scraper:
         await scraper.search("python", "madrid", limit=3)
     assert page.goto_calls == ["https://es.indeed.com/jobs?q=python&l=madrid&start=0"]
+
+
+async def test_search_sleeps_inter_page_delay_between_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`asyncio.sleep(inter_page_delay_seconds)` is called between pages.
+
+    Follow-up to `fd51ea1` (the page-2 timeout bug). The first page is
+    never delayed; the second and subsequent pages are each preceded
+    by an `asyncio.sleep` of the configured duration. This reduces
+    Cloudflare re-challenge probability when paginating.
+
+    The test monkeypatches `asyncio.sleep` so the assertions run
+    without any real wall-clock delay. A 3-page search with the
+    default 1.5-second delay → exactly 2 inter-page sleeps, each
+    called with `(1.5,)`.
+    """
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr("asyncio.sleep", sleep_mock)
+
+    second_page = _build_n_cards_html(10, jk_prefix=200000001)
+    page = FakePage(
+        html=lambda url: SEARCH_PAGE_HTML if "start=0" in url else second_page,
+    )
+    scraper, _ = await _make_scraper_with(
+        page,
+        max_pages=3,
+        inter_page_delay_seconds=1.5,
+    )
+    async with scraper:
+        await scraper.search("python", "madrid", limit=30)
+
+    # 3 page requests → 2 inter-page sleeps (page 0 is never delayed).
+    assert sleep_mock.await_count == 2
+    # Both sleeps were called with the configured delay as a positional arg.
+    assert sleep_mock.await_args_list[0].args == (1.5,)
+    assert sleep_mock.await_args_list[1].args == (1.5,)
+
+
+async def test_search_does_not_sleep_when_delay_is_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`inter_page_delay_seconds=0.0` disables the inter-page sleep entirely."""
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr("asyncio.sleep", sleep_mock)
+
+    second_page = _build_n_cards_html(10, jk_prefix=200000001)
+    page = FakePage(
+        html=lambda url: SEARCH_PAGE_HTML if "start=0" in url else second_page,
+    )
+    scraper, _ = await _make_scraper_with(
+        page,
+        max_pages=3,
+        inter_page_delay_seconds=0.0,
+    )
+    async with scraper:
+        await scraper.search("python", "madrid", limit=30)
+
+    # The throttle is also `min_interval_seconds=0.0`, so no sleeps
+    # happen at all when the inter-page delay is disabled.
+    assert sleep_mock.await_count == 0
+
+
+async def test_search_does_not_sleep_after_final_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The inter-page sleep fires BEFORE the next page, not AFTER the last one.
+
+    A 2-page search with `inter_page_delay_seconds=1.0` → exactly
+    1 sleep (before page 1), NOT 2.
+    """
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr("asyncio.sleep", sleep_mock)
+
+    page = FakePage(SEARCH_PAGE_HTML)  # every page returns 16 cards
+    scraper, _ = await _make_scraper_with(
+        page,
+        max_pages=2,
+        inter_page_delay_seconds=1.0,
+    )
+    async with scraper:
+        # `limit=20` forces 2 page requests (page 0 yields 16 < 20,
+        # so the loop continues; page 1 is the LAST one because the
+        # total hits 32 >= 20). The assertion below proves the sleep
+        # is BETWEEN pages, not AFTER the last one — 2 page requests
+        # yield exactly 1 sleep, not 2.
+        await scraper.search("python", "madrid", limit=20)
+
+    # 2 page requests → 1 inter-page sleep (before the second page).
+    assert sleep_mock.await_count == 1
+    assert sleep_mock.await_args_list[0].args == (1.0,)
 
 
 async def test_search_stops_at_max_pages() -> None:

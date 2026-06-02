@@ -58,6 +58,19 @@ def test_indeed_max_pages_default_is_ten() -> None:
     assert settings.indeed_max_pages == 10
 
 
+def test_indeed_inter_page_delay_seconds_default_is_one() -> None:
+    """`indeed_inter_page_delay_seconds` defaults to `1.0` (follow-up to fd51ea1).
+
+    The 1.0-second default is a sweet spot: short enough that a typical
+    search of 2-3 pages adds only 1-2 seconds of latency, long enough
+    that Cloudflare's anti-bot heuristics don't re-challenge the second
+    request. Set to `0.0` via `INDEED_INTER_PAGE_DELAY_SECONDS=0` to
+    disable (NOT recommended in production).
+    """
+    settings = Settings()
+    assert settings.indeed_inter_page_delay_seconds == 1.0
+
+
 def test_indeed_user_agent_default_is_a_modern_chrome_fingerprint() -> None:
     """`indeed_user_agent` defaults to the same stealth desktop Chrome UA
     the LinkedIn field uses (per REQ-I-011).
@@ -120,6 +133,15 @@ def test_indeed_max_pages_env_var_overrides_default(
     monkeypatch.setenv("INDEED_MAX_PAGES", "5")
     settings = Settings()
     assert settings.indeed_max_pages == 5
+
+
+def test_indeed_inter_page_delay_seconds_env_var_overrides_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`INDEED_INTER_PAGE_DELAY_SECONDS=2.5` overrides the default `1.0`."""
+    monkeypatch.setenv("INDEED_INTER_PAGE_DELAY_SECONDS", "2.5")
+    settings = Settings()
+    assert settings.indeed_inter_page_delay_seconds == 2.5
 
 
 def test_indeed_user_agent_env_var_overrides_default(

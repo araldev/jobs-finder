@@ -138,6 +138,9 @@ def build_app(
                 timeout_ms=effective_settings.indeed_timeout_ms,
                 domain=effective_settings.indeed_domain,
                 max_pages=effective_settings.indeed_max_pages,
+                # Follow-up to fd51ea1: pace pagination to avoid
+                # Cloudflare re-challenges on the 2nd+ request.
+                inter_page_delay_seconds=effective_settings.indeed_inter_page_delay_seconds,
             ),
             # REQ-S-002: production wires `Stealth()` so the live
             # scraper evades Cloudflare's bot detection. Tests pass

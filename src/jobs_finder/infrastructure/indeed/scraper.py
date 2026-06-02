@@ -30,6 +30,7 @@ Errors:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Self
@@ -80,7 +81,7 @@ class IndeedScraperSettings:
     `Settings` is structured.
     """
 
-    __slots__ = ("domain", "max_pages", "timeout_ms", "user_agent")
+    __slots__ = ("domain", "inter_page_delay_seconds", "max_pages", "timeout_ms", "user_agent")
 
     def __init__(
         self,
@@ -89,17 +90,20 @@ class IndeedScraperSettings:
         timeout_ms: int,
         domain: str = "es.indeed.com",
         max_pages: int = 10,
+        inter_page_delay_seconds: float = 0.0,
     ) -> None:
         self.user_agent = user_agent
         self.timeout_ms = timeout_ms
         self.domain = domain
         self.max_pages = max_pages
+        self.inter_page_delay_seconds = inter_page_delay_seconds
 
     def __repr__(self) -> str:
         return (
             f"IndeedScraperSettings(user_agent={self.user_agent!r}, "
             f"timeout_ms={self.timeout_ms}, domain={self.domain!r}, "
-            f"max_pages={self.max_pages})"
+            f"max_pages={self.max_pages}, "
+            f"inter_page_delay_seconds={self.inter_page_delay_seconds})"
         )
 
     def __eq__(self, other: object) -> bool:
@@ -110,10 +114,19 @@ class IndeedScraperSettings:
             and self.timeout_ms == other.timeout_ms
             and self.domain == other.domain
             and self.max_pages == other.max_pages
+            and self.inter_page_delay_seconds == other.inter_page_delay_seconds
         )
 
     def __hash__(self) -> int:
-        return hash((self.user_agent, self.timeout_ms, self.domain, self.max_pages))
+        return hash(
+            (
+                self.user_agent,
+                self.timeout_ms,
+                self.domain,
+                self.max_pages,
+                self.inter_page_delay_seconds,
+            )
+        )
 
 
 class IndeedPlaywrightScraper(JobSearchPort):
@@ -199,6 +212,17 @@ class IndeedPlaywrightScraper(JobSearchPort):
                     for page_index in range(self._settings.max_pages):
                         if len(jobs) >= limit:
                             break
+                        # Inter-page pacing (follow-up to fd51ea1): sleep
+                        # before navigating to the NEXT page to reduce the
+                        # probability of Cloudflare re-challenges on the
+                        # second and subsequent requests. The first page
+                        # (page_index=0) is never delayed. A delay of `0.0`
+                        # skips the call entirely (no event-loop yield,
+                        # no wall-clock wait). The default
+                        # `Settings.indeed_inter_page_delay_seconds = 1.0`
+                        # is sourced from env; tests pass `0.0` to disable.
+                        if page_index > 0 and self._settings.inter_page_delay_seconds > 0:
+                            await asyncio.sleep(self._settings.inter_page_delay_seconds)
                         # Indeed serves ~10 jobs per page; page 0 starts
                         # at offset 0, page 1 at offset 10, etc.
                         url = self._build_url(keywords, location, page_index * 10)

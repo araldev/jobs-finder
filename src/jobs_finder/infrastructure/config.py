@@ -59,6 +59,10 @@ class Settings(BaseSettings):
         - `INDEED_TIMEOUT_MS` (int, default 15_000)
         - `INDEED_DOMAIN` (str, default `es.indeed.com`)
         - `INDEED_MAX_PAGES` (int, default 10 — hard cap on pagination)
+        - `INDEED_INTER_PAGE_DELAY_SECONDS` (float, default 1.0) — sleep
+          between pagination pages to reduce Cloudflare re-challenge
+          probability. Set to `0.0` to disable. Added as a follow-up to
+          the page-2 timeout bug fixed in `fd51ea1`.
     """
 
     model_config = SettingsConfigDict(
@@ -115,6 +119,12 @@ class Settings(BaseSettings):
     indeed_max_pages: int = Field(
         default=10,
         validation_alias=AliasChoices("INDEED_MAX_PAGES", "indeed_max_pages"),
+    )
+    indeed_inter_page_delay_seconds: float = Field(
+        default=1.0,
+        validation_alias=AliasChoices(
+            "INDEED_INTER_PAGE_DELAY_SECONDS", "indeed_inter_page_delay_seconds"
+        ),
     )
 
 
