@@ -1,11 +1,11 @@
 """Pydantic schemas at the API edge.
 
-Spec: REQ-009, REQ-017, REQ-I-012, REQ-I-013.
+Spec: REQ-009, REQ-017, REQ-I-012, REQ-I-013, REQ-J-001..REQ-J-006.
 Pydantic lives ONLY at this boundary; the application layer uses plain
-dataclasses (`SearchLinkedInInput`, `SearchIndeedInput`). The route
-handler is the only place where Pydantic models are constructed from
-raw user input and where domain objects (`Job`) are mapped back into
-API responses (`JobResponse`).
+dataclasses (`SearchLinkedInInput`, `SearchIndeedInput`,
+`SearchInfoJobsInput`). The route handler is the only place where
+Pydantic models are constructed from raw user input and where domain
+objects (`Job`) are mapped back into API responses (`JobResponse`).
 """
 
 from __future__ import annotations
@@ -45,13 +45,29 @@ class IndeedJobsQuery(BaseModel):
     limit: int = Field(20, ge=1, le=100)
 
 
+class InfoJobsJobsQuery(BaseModel):
+    """Validated query parameters for `GET /jobs/infojobs`.
+
+    Spec: REQ-J-005, REQ-J-006. The field set is identical to the
+    LinkedIn / Indeed query schemas; the per-source wrapper is
+    intentional so the source name is part of the API contract and
+    a future refactor can consolidate. The default `limit=20` lives
+    ONLY here — the application's `SearchInfoJobsInput` does not
+    redefine it.
+    """
+
+    keywords: str = Field(..., min_length=1, max_length=200)
+    location: str = Field(..., min_length=1, max_length=200)
+    limit: int = Field(20, ge=1, le=100)
+
+
 class JobResponse(BaseModel):
     """One job in the API response.
 
-    Spec: REQ-017, REQ-I-012. Exactly the six documented fields, no
-    more, no less. `posted_at` is nullable at the API contract boundary;
-    the `Job` domain object currently requires it, so the conversion is
-    one-way.
+    Spec: REQ-017, REQ-I-012, REQ-J-005. Exactly the six documented
+    fields, no more, no less. `posted_at` is nullable at the API
+    contract boundary; the `Job` domain object currently requires it,
+    so the conversion is one-way.
     """
 
     id: str
@@ -85,14 +101,28 @@ class IndeedJobsResponse(BaseModel):
     jobs: list[JobResponse]
 
 
+class InfoJobsJobsResponse(BaseModel):
+    """`GET /jobs/infojobs` response shape.
+
+    Spec: REQ-J-005. Mirrors `IndeedJobsResponse` and
+    `LinkedInJobsResponse`; the wrapper is per-source so the source
+    name is part of the contract. All three wrappers share the same
+    source-agnostic `JobResponse` for the job items — the per-source
+    marker is at the QUERY (input) and RESPONSE (output wrapper)
+    levels, not at the individual job item level.
+    """
+
+    jobs: list[JobResponse]
+
+
 def to_response(job: Job) -> JobResponse:
     """Convert a `Job` value object into a `JobResponse` for the API.
 
     `Job.posted_at` is currently a required `datetime`; the API contract
     types it as `datetime | None`. A non-None `datetime` is a valid
-    `datetime | None`, so the conversion is loss-free. Shared by both
-    the LinkedIn and Indeed route handlers — a future refactor can
-    colocate this helper if the duplication bothers.
+    `datetime | None`, so the conversion is loss-free. Shared by all
+    three route handlers (LinkedIn + Indeed + InfoJobs) — a future
+    refactor can colocate this helper if the duplication bothers.
     """
     return JobResponse(
         id=job.id,

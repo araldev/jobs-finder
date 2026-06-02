@@ -12,12 +12,13 @@
 #     `JobSearchPort` Protocol (cite REQ-I-003 / REQ-I-005).
 #   - `FakeJobSearchPort` class: shared by both fixtures and by any
 #     future test that wants to construct a fresh port instance.
-#   - `app` (T-007): a FastAPI app whose BOTH use cases (LinkedIn +
-#     Indeed) are wired to fake ports, so the Indeed integration test
-#     can drive the route against a `FakeJobSearchPort` without
-#     launching Chromium. The LinkedIn port is fresh + empty so the
-#     existing LinkedIn integration tests (which define their own
-#     `app` fixture locally) are not affected.
+#   - `app` (T-007): a FastAPI app whose ALL THREE use cases
+#     (LinkedIn + Indeed + InfoJobs) are wired to fake ports, so
+#     each per-source integration test can drive its route against
+#     a `FakeJobSearchPort` without launching Chromium. The LinkedIn
+#     port is fresh + empty so the existing LinkedIn integration
+#     tests (which define their own `app` fixture locally) are not
+#     affected.
 #
 # The prior `linkedin-endpoint` change defined its `FakeJobSearchPort`
 # and sample `Job` factories inline in each test file. The Indeed
@@ -31,7 +32,12 @@ from datetime import UTC, datetime
 import pytest
 from fastapi import FastAPI
 
-from jobs_finder.application.usecases.search_indeed_jobs import SearchJobsUseCase
+from jobs_finder.application.usecases.search_indeed_jobs import (
+    SearchJobsUseCase as IndeedSearchJobsUseCase,
+)
+from jobs_finder.application.usecases.search_infojobs_jobs import (
+    SearchJobsUseCase as InfoJobsSearchJobsUseCase,
+)
 from jobs_finder.application.usecases.search_linkedin_jobs import (
     SearchLinkedInJobsUseCase,
 )
@@ -130,26 +136,35 @@ def fake_indeed_port(sample_indeed_jobs: list[Job]) -> FakeJobSearchPort:
 
 
 @pytest.fixture
-def app(fake_indeed_port: FakeJobSearchPort) -> FastAPI:
-    """A FastAPI app whose BOTH use cases are wired to fake ports.
+def app(
+    fake_indeed_port: FakeJobSearchPort,
+    fake_infojobs_port: FakeJobSearchPort,
+) -> FastAPI:
+    """A FastAPI app whose ALL THREE use cases are wired to fake ports.
 
-    The Indeed use case is wrapped around `fake_indeed_port` (3 sample
-    Indeed jobs). The LinkedIn use case is wrapped around a fresh
+    The LinkedIn use case is wrapped around a fresh
     `FakeJobSearchPort` with NO jobs so the LinkedIn route works but
-    returns an empty list. The existing LinkedIn integration tests
+    returns an empty list. The Indeed use case is wrapped around
+    `fake_indeed_port` (3 sample Indeed jobs). The InfoJobs use case
+    is wrapped around `fake_infojobs_port` (3 sample InfoJobs jobs
+    with the canonical `/ofertas-trabajo/oferta-{id}` URL format).
+    The existing LinkedIn integration tests
     (`tests/integration/test_api.py`, etc.) define their own local
     `app` fixture and so are NOT affected by this conftest fixture.
 
-    The fixture exists to give the new `test_indeed_api.py` a single
-    `app` to drive, with both routes available for the
-    `/health`-independence and per-source cross-check tests.
+    The fixture exists to give the per-source integration tests
+    (`test_indeed_api.py`, `test_infojobs_api.py`) a single `app` to
+    drive, with all routes available for the `/health`-independence
+    and per-source cross-check tests.
     """
     linkedin_port = FakeJobSearchPort()
     linkedin_use_case = SearchLinkedInJobsUseCase(port=linkedin_port)
-    indeed_use_case = SearchJobsUseCase(port=fake_indeed_port)
+    indeed_use_case = IndeedSearchJobsUseCase(port=fake_indeed_port)
+    infojobs_use_case = InfoJobsSearchJobsUseCase(port=fake_infojobs_port)
     return build_app(
         use_case=linkedin_use_case,
         indeed_use_case=indeed_use_case,
+        infojobs_use_case=infojobs_use_case,
     )
 
 
@@ -169,36 +184,37 @@ def app(fake_indeed_port: FakeJobSearchPort) -> FastAPI:
 def _make_infojobs_sample_jobs() -> list[Job]:
     """Build 3 deterministic, InfoJobs-style `Job` instances.
 
-    The ids are 9-digit numbers mirroring a realistic InfoJobs offer
-    id shape. Each URL is the canonical `https://www.infojobs.net/offer/<id>`
-    form (placeholder for the T-010 real-capture step; the exact URL
-    format will be confirmed by the real InfoJobs DOM in T-010).
-    `posted_at` is tz-aware UTC to satisfy the `Job.__post_init__`
-    invariant.
+    The ids are 7-character alphanumeric slugs (matching the parser's
+    `/oferta-<id>` href format — see
+    `jobs_finder.infrastructure.infojobs.parsers.parse_infojobs_job_id`).
+    Each URL is the canonical
+    `https://www.infojobs.net/ofertas-trabajo/oferta-<id>` form
+    (REQ-J-001). `posted_at` is tz-aware UTC to satisfy the
+    `Job.__post_init__` invariant.
     """
     return [
         Job(
-            id="200000001",
+            id="abc123def",
             title="InfoJobs Title 1",
             company="InfoJobs Co 1",
             location="Madrid, Spain",
-            url="https://www.infojobs.net/offer/200000001",
+            url="https://www.infojobs.net/ofertas-trabajo/oferta-abc123def",
             posted_at=datetime(2026, 5, 1, tzinfo=UTC),
         ),
         Job(
-            id="200000002",
+            id="def456ghi",
             title="InfoJobs Title 2",
             company="InfoJobs Co 2",
             location="Barcelona, Spain",
-            url="https://www.infojobs.net/offer/200000002",
+            url="https://www.infojobs.net/ofertas-trabajo/oferta-def456ghi",
             posted_at=datetime(2026, 5, 2, tzinfo=UTC),
         ),
         Job(
-            id="200000003",
+            id="ghi789jkl",
             title="InfoJobs Title 3",
             company="InfoJobs Co 3",
             location="Valencia, Spain",
-            url="https://www.infojobs.net/offer/200000003",
+            url="https://www.infojobs.net/ofertas-trabajo/oferta-ghi789jkl",
             posted_at=datetime(2026, 5, 3, tzinfo=UTC),
         ),
     ]
@@ -208,10 +224,11 @@ def _make_infojobs_sample_jobs() -> list[Job]:
 def sample_infojobs_jobs() -> list[Job]:
     """3 deterministic, source-agnostic `Job` instances shaped for InfoJobs tests.
 
-    Each job has the canonical `https://www.infojobs.net/offer/<id>`
-    URL (placeholder for the T-010 real-capture step). The 3 jobs
-    have unique ids, titles, companies, and locations so tests that
-    assert field-by-field can identify which one they're looking at.
+    Each job has the canonical
+    `https://www.infojobs.net/ofertas-trabajo/oferta-<id>` URL
+    (REQ-J-001). The 3 jobs have unique ids, titles, companies, and
+    locations so tests that assert field-by-field can identify which
+    one they're looking at.
     """
     return _make_infojobs_sample_jobs()
 

@@ -1,6 +1,7 @@
 """FastAPI app factory — composition root for the presentation layer.
 
-Spec: REQ-006, REQ-017..REQ-022, REQ-I-012, REQ-I-013, REQ-I-014.
+Spec: REQ-006, REQ-017..REQ-022, REQ-I-012, REQ-I-013, REQ-I-014,
+REQ-J-001..REQ-J-006.
 
 `build_app` wires:
   - The LinkedIn use case (injected via `use_case=` for tests; default
@@ -9,6 +10,9 @@ Spec: REQ-006, REQ-017..REQ-022, REQ-I-012, REQ-I-013, REQ-I-014.
     default builds a real `IndeedPlaywrightScraper` for production —
     T-008 wired the default branch so `app = build_app()` exposes
     BOTH sources).
+  - The InfoJobs use case (injected via `infojobs_use_case=` for
+    tests; default builds a real `InfoJobsPlaywrightScraper` with
+    `Stealth()` wired — REQ-J-002 — for production).
   - `RequestIdMiddleware` (REQ-020).
   - `LogOnRequestMiddleware` (T-012): emits one INFO line per request
     on `jobs_finder.access` with the bound `request_id`. Added INNER
@@ -21,20 +25,23 @@ Spec: REQ-006, REQ-017..REQ-022, REQ-I-012, REQ-I-013, REQ-I-014.
     logger BEFORE middleware/route handlers run, so any log emitted
     during request processing carries the right structure.
   - The exception handlers (`JobSearchError` -> 502, validation -> 422).
-  - The routers (`/health`, `/jobs/linkedin`, `/jobs/indeed`).
+  - The routers (`/health`, `/jobs/linkedin`, `/jobs/indeed`,
+    `/jobs/infojobs`).
 
 The LinkedIn use case is exposed to routes via `app.state.use_case`;
-the Indeed use case is exposed via `app.state.indeed_use_case`. Routes
-resolve them through the `get_use_case` and `get_indeed_use_case`
-dependencies. Tests pass use cases explicitly when they need to
-short-circuit the default branches; otherwise the default branches
-build real Playwright scrapers from `Settings` so `app = build_app()`
-is the production-ready composition root.
+the Indeed use case is exposed via `app.state.indeed_use_case`; the
+InfoJobs use case is exposed via `app.state.infojobs_use_case`. Routes
+resolve them through the `get_use_case`, `get_indeed_use_case`, and
+`get_infojobs_use_case` dependencies. Tests pass use cases explicitly
+when they need to short-circuit the default branches; otherwise the
+default branches build real Playwright scrapers from `Settings` so
+`app = build_app()` is the production-ready composition root.
 
-T-008 also extends the lifespan to open BOTH default scrapers on
-startup and close BOTH on shutdown. Each scraper's `__aenter__` /
-`__aexit__` is independent — a test that injects a fake port for one
-source does not affect the other source's lifespan behavior.
+T-007 also extends the lifespan to open ALL THREE default scrapers on
+startup and close ALL THREE on shutdown (LIFO). Each scraper's
+`__aenter__` / `__aexit__` is independent — a test that injects a
+fake port for one source does not affect the other source's lifespan
+behavior.
 """
 
 from __future__ import annotations
@@ -46,7 +53,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from playwright_stealth import Stealth  # type: ignore[import-untyped]
 
-from jobs_finder.application.usecases.search_indeed_jobs import SearchJobsUseCase
+from jobs_finder.application.usecases.search_indeed_jobs import (
+    SearchJobsUseCase as IndeedSearchJobsUseCase,
+)
+from jobs_finder.application.usecases.search_infojobs_jobs import (
+    SearchJobsUseCase as InfoJobsSearchJobsUseCase,
+)
 from jobs_finder.application.usecases.search_linkedin_jobs import (
     SearchLinkedInJobsUseCase,
 )
@@ -56,6 +68,11 @@ from jobs_finder.infrastructure.indeed.scraper import (
     IndeedScraperSettings,
 )
 from jobs_finder.infrastructure.indeed.throttle import IndeedAsyncThrottle
+from jobs_finder.infrastructure.infojobs.scraper import (
+    InfoJobsPlaywrightScraper,
+    InfoJobsScraperSettings,
+)
+from jobs_finder.infrastructure.infojobs.throttle import InfoJobsAsyncThrottle
 from jobs_finder.infrastructure.linkedin.scraper import (
     LinkedInPlaywrightScraper,
     ScraperSettings,
@@ -71,16 +88,18 @@ from jobs_finder.presentation.middleware import (
 )
 from jobs_finder.presentation.routes import health as health_routes
 from jobs_finder.presentation.routes import indeed as indeed_routes
+from jobs_finder.presentation.routes import infojobs as infojobs_routes
 from jobs_finder.presentation.routes import linkedin as linkedin_routes
 
 
 def build_app(
     use_case: SearchLinkedInJobsUseCase | None = None,
     *,
-    indeed_use_case: SearchJobsUseCase | None = None,
+    indeed_use_case: IndeedSearchJobsUseCase | None = None,
+    infojobs_use_case: InfoJobsSearchJobsUseCase | None = None,
     settings: Settings | None = None,
 ) -> FastAPI:
-    """Construct a configured FastAPI app with BOTH source routes wired.
+    """Construct a configured FastAPI app with ALL THREE source routes wired.
 
     Args:
         use_case: The LinkedIn use case to expose via
@@ -92,15 +111,20 @@ def build_app(
             route returns 500 because `app.state.indeed_use_case` is
             not set. Production callers (T-008) must pass it
             explicitly.
+        infojobs_use_case: The InfoJobs use case to expose via
+            `app.state.infojobs_use_case`. If `None`, the
+            `/jobs/infojobs` route returns 500 because
+            `app.state.infojobs_use_case` is not set. Production
+            callers (T-008) must pass it explicitly.
         settings: Optional runtime configuration. Used by the default
             branch to build the scraper and the throttle, and to wire
             CORS / logging. If `None`, the default `Settings()` is loaded.
 
     Returns:
         A `FastAPI` instance with a `lifespan` that opens the default
-        `LinkedInPlaywrightScraper` (when the default use case is in
-        effect) at startup and closes it at shutdown, plus the
-        middleware, exception handlers, and routers.
+        scrapers (when the default use cases are in effect) at
+        startup and closes them at shutdown, plus the middleware,
+        exception handlers, and routers.
     """
     effective_settings = settings if settings is not None else Settings()
 
@@ -148,15 +172,50 @@ def build_app(
             # `browser_factory` so the stealth script never runs.
             stealth=Stealth(),
         )
-        indeed_use_case = SearchJobsUseCase(port=indeed_scraper)
+        indeed_use_case = IndeedSearchJobsUseCase(port=indeed_scraper)
 
-    # The lifespan opens BOTH default scrapers. When tests inject a
-    # use case wrapping a non-LinkedIn port (e.g. `FakeJobSearchPort`),
-    # the lifespan is a no-op for that source so the test does not
-    # need Chromium installed. The pattern mirrors the LinkedIn
-    # pre-T-008 invariant: a use case wrapping a real `*PlaywrightScraper`
-    # is opened on startup and closed on shutdown; a use case wrapping
-    # anything else is left untouched.
+    if infojobs_use_case is None:
+        # T-007: the default branch builds the InfoJobs scraper +
+        # use case. The InfoJobs scraper uses its OWN
+        # `InfoJobsAsyncThrottle` (per-instance lock, independent of
+        # the LinkedIn + Indeed throttles) and its OWN
+        # `InfoJobsScraperSettings` (sourced from the
+        # `effective_settings.infojobs_*` fields). The
+        # `SearchJobsUseCase` class is the source-neutral name
+        # (REQ-J-004) — the file path
+        # `search_infojobs_jobs.py` provides the per-source binding.
+        infojobs_scraper = InfoJobsPlaywrightScraper(
+            throttle=InfoJobsAsyncThrottle(
+                min_interval_seconds=effective_settings.infojobs_throttle_seconds,
+            ),
+            settings=InfoJobsScraperSettings(
+                user_agent=effective_settings.infojobs_user_agent,
+                timeout_ms=effective_settings.infojobs_timeout_ms,
+                domain=effective_settings.infojobs_domain,
+                max_pages=effective_settings.infojobs_max_pages,
+                # REQ-J-003: inter-page pacing is part of v1 (unlike
+                # the Indeed v1 which added it later).
+                inter_page_delay_seconds=effective_settings.infojobs_inter_page_delay_seconds,
+            ),
+            # REQ-J-002: production wires `Stealth()` from T-007
+            # onward (unlike the Indeed v1 which deferred stealth to
+            # a follow-up change). The InfoJobs anti-bot surface
+            # (Distil + Geetest) is stricter than Cloudflare, so
+            # stealth is required from day 1. Tests pass
+            # `stealth=None` (the constructor default) and inject
+            # `browser_factory` so the stealth script never runs.
+            stealth=Stealth(),
+        )
+        infojobs_use_case = InfoJobsSearchJobsUseCase(port=infojobs_scraper)
+
+    # The lifespan opens ALL THREE default scrapers. When tests
+    # inject a use case wrapping a non-`*PlaywrightScraper` port
+    # (e.g. `FakeJobSearchPort`), the lifespan is a no-op for that
+    # source so the test does not need Chromium installed. The
+    # pattern mirrors the LinkedIn pre-T-008 invariant: a use case
+    # wrapping a real `*PlaywrightScraper` is opened on startup and
+    # closed on shutdown; a use case wrapping anything else is left
+    # untouched.
     raw_linkedin_port = getattr(use_case, "_port", None)
     scraper_for_lifespan: LinkedInPlaywrightScraper | None = (
         raw_linkedin_port if isinstance(raw_linkedin_port, LinkedInPlaywrightScraper) else None
@@ -164,6 +223,10 @@ def build_app(
     raw_indeed_port = getattr(indeed_use_case, "_port", None)
     indeed_scraper_for_lifespan: IndeedPlaywrightScraper | None = (
         raw_indeed_port if isinstance(raw_indeed_port, IndeedPlaywrightScraper) else None
+    )
+    raw_infojobs_port = getattr(infojobs_use_case, "_port", None)
+    infojobs_scraper_for_lifespan: InfoJobsPlaywrightScraper | None = (
+        raw_infojobs_port if isinstance(raw_infojobs_port, InfoJobsPlaywrightScraper) else None
     )
 
     @asynccontextmanager
@@ -180,16 +243,28 @@ def build_app(
             # ordering does not affect the other. The two scrapers
             # share a process but each owns its own browser.
             await indeed_scraper_for_lifespan.__aenter__()
+        if infojobs_scraper_for_lifespan is not None:
+            # Open the InfoJobs scraper (T-007). Independent of the
+            # LinkedIn + Indeed ones — a failure in one source's
+            # startup ordering does not affect the other. The three
+            # scrapers share a process but each owns its own
+            # browser.
+            await infojobs_scraper_for_lifespan.__aenter__()
         try:
             yield
         finally:
+            if infojobs_scraper_for_lifespan is not None:
+                # Close the InfoJobs browser and stop its Playwright
+                # driver. Runs FIRST so the InfoJobs shutdown is the
+                # first to fire; the order is the reverse of startup
+                # (LIFO).
+                await infojobs_scraper_for_lifespan.__aexit__(None, None, None)
             if indeed_scraper_for_lifespan is not None:
                 # Close the Indeed browser and stop its Playwright driver.
                 await indeed_scraper_for_lifespan.__aexit__(None, None, None)
             if scraper_for_lifespan is not None:
                 # Close the LinkedIn browser and stop its Playwright driver.
-                # Runs LAST so the Indeed shutdown runs FIRST; the order is
-                # the reverse of startup (LIFO).
+                # Runs LAST so the LinkedIn shutdown is the last to fire.
                 await scraper_for_lifespan.__aexit__(None, None, None)
 
     app = FastAPI(title="jobs-finder", lifespan=lifespan)
@@ -202,6 +277,13 @@ def build_app(
     app.state.indeed_use_case = indeed_use_case
     app.state.indeed_job_search_port = (
         getattr(indeed_use_case, "_port", None) if indeed_use_case is not None else None
+    )
+    # The InfoJobs use case defaults to `None`; the route raises a
+    # descriptive `RuntimeError` if it's missing so misconfiguration
+    # surfaces in tests rather than as a 500.
+    app.state.infojobs_use_case = infojobs_use_case
+    app.state.infojobs_job_search_port = (
+        getattr(infojobs_use_case, "_port", None) if infojobs_use_case is not None else None
     )
 
     # Middleware — order matters. Starlette runs middlewares outermost
@@ -226,5 +308,6 @@ def build_app(
     app.include_router(health_routes.router)
     app.include_router(linkedin_routes.router)
     app.include_router(indeed_routes.router)
+    app.include_router(infojobs_routes.router)
 
     return app
