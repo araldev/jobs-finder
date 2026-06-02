@@ -52,10 +52,10 @@ _FIXTURE_PATH = Path("tests/fixtures/infojobs_search.py")
 
 
 def _card(idx: int) -> Tag:
-    """Return the `idx`-th (0-based) job card from the placeholder fixture."""
+    """Return the `idx`-th (0-based) job card from the real-capture fixture."""
     soup = BeautifulSoup(SEARCH_PAGE_HTML, "html.parser")
     cards = soup.select("li.ij-OfferList-offerCardItem")
-    assert len(cards) >= 15, f"placeholder fixture must have 15+ cards; got {len(cards)}"
+    assert len(cards) >= 10, f"real-capture fixture must have 10+ cards; got {len(cards)}"
     assert idx < len(cards), f"fixture does not have card index {idx}"
     return cards[idx]
 
@@ -187,41 +187,65 @@ def _card_no_date() -> str:
 
 
 def test_parse_infojobs_job_id_extracts_offer_id_from_href() -> None:
-    """The first card's id is the slug extracted from its title-anchor `href`.
+    """The first card's id is the slug extracted from its media-link `href`.
 
-    The placeholder uses `href="/ofertas-trabajo/oferta-{id}"` and the
-    parser strips the `/oferta-` prefix to return the bare id.
+    The real InfoJobs DOM (observed 2026-06-02) embeds the id in the
+    media link's `href` shaped as `https://www.infojobs.net/{slug}/em-{id}`.
+    The parser strips the `/em-` prefix to return the bare id. The
+    title anchor has NO `href` in the real DOM (the title is wrapped
+    in an `<h2>` without an anchor), so the parser targets the
+    media link instead.
     """
-    assert parse_infojobs_job_id(_card(0)) == "abc123001"
+    assert parse_infojobs_job_id(_card(0)) == "i98495453525856678980690018195550513554"
 
 
 def test_parse_infojobs_job_id_works_for_every_fixture_card() -> None:
-    """Every card in the 15+ fixture has a distinct `oferta-` id — all parse correctly."""
+    """Every REAL offer card in the real-capture fixture has a distinct `em-` id.
+
+    The InfoJobs SERP embeds promoted ad banners inside `<li>` elements
+    that ALSO carry the `ij-OfferList-offerCardItem` class but are NOT
+    real offer cards (they have no title heading, no media link, etc.).
+    The parser's `_CARD_SELECTOR` requires the title heading
+    (`h2.ij-OfferCardContent-description-title`) to disambiguate. The
+    test mirrors that filter to verify the contract: every real offer
+    card parses to a distinct id.
+    """
     soup = BeautifulSoup(SEARCH_PAGE_HTML, "html.parser")
-    cards = soup.select("li.ij-OfferList-offerCardItem")
+    cards = [
+        c
+        for c in soup.select("li.ij-OfferList-offerCardItem")
+        if c.select_one("h2.ij-OfferCardContent-description-title") is not None
+    ]
     ids = [parse_infojobs_job_id(c) for c in cards]
+    assert len(ids) >= 1, "fixture must have at least one real offer card"
     assert len(ids) == len(set(ids)), "fixture has duplicate job ids"
 
 
 def test_parse_infojobs_title_extracts_title() -> None:
     """The first card's title is the text content of the title heading."""
-    assert parse_infojobs_title(_card(0)) == "Senior Python Developer"
+    assert (
+        parse_infojobs_title(_card(0))
+        == "Camarero/a, Ayudante Camarero/a - Hotel Es Figueral Nou 4* Sup"
+    )
 
 
 def test_parse_infojobs_company_extracts_company() -> None:
-    """The first card's company comes from `.ij-OfferCardContent-description-subtitle`."""
-    assert parse_infojobs_company(_card(0)) == "InfoJobs Co 1"
+    """The first card's company comes from `.ij-OfferCardContent-description-subtitle-link`."""
+    assert parse_infojobs_company(_card(0)) == "NYBAU HOTELS & RESTAURANTS"
 
 
 def test_parse_infojobs_location_extracts_location() -> None:
     """The first card's location is the FIRST list-item in `.ij-OfferCardContent-description-list`."""
-    assert parse_infojobs_location(_card(0)) == "Madrid, Spain"
+    assert parse_infojobs_location(_card(0)) == "Montuïri"
 
 
 def test_parse_infojobs_url_builds_canonical_ofertas_url() -> None:
     """`parse_infojobs_url` builds the canonical `https://{domain}/ofertas-trabajo/oferta-{id}` URL."""
     url = parse_infojobs_url(_card(0), domain="www.infojobs.net")
-    assert url == "https://www.infojobs.net/ofertas-trabajo/oferta-abc123001"
+    assert (
+        url
+        == "https://www.infojobs.net/ofertas-trabajo/oferta-i98495453525856678980690018195550513554"
+    )
 
 
 def test_parse_infojobs_url_respects_supplied_domain() -> None:
@@ -294,21 +318,34 @@ def test_parse_infojobs_posted_at_missing_date_returns_none() -> None:
 
 
 def test_parse_infojobs_posted_at_garbage_date_raises_parse_error() -> None:
-    """A `.ij-OfferCardContent-date` with an unparseable string raises `InfoJobsParseError`."""
+    """A `<span data-testid="sincedate-tag">` with an unparseable string raises `InfoJobsParseError`."""
     fragment = """
     <li class="ij-List-item ij-OfferList-offerCardItem sui-PrimitiveLinkBox">
-      <div class="ij-OfferCardContent">
-        <div class="ij-OfferCardContent-description">
-          <div class="ij-OfferCardContent-description-head">
-            <a class="ij-OfferCardContent-description-title-link" href="/ofertas-trabajo/oferta-999900099">
-              <h2 class="ij-OfferCardContent-description-title">Title</h2>
-            </a>
+      <div class="sui-AtomCard-Wrapper">
+        <div class="sui-AtomCard">
+          <div class="ij-OfferCard">
+            <div class="ij-OfferCardContent">
+              <div class="ij-OfferCardContent-media">
+                <a class="ij-OfferCardContent-media-link" href="https://www.infojobs.net/acme/em-999900099">
+                  <img alt="Acme" />
+                </a>
+              </div>
+              <div class="ij-OfferCardContent-description">
+                <div class="ij-OfferCardContent-description-head">
+                  <h2 class="ij-OfferCardContent-description-title">Title</h2>
+                </div>
+                <div class="ij-OfferCardContent-description-subtitle">
+                  <a class="ij-OfferCardContent-description-subtitle-link">Acme</a>
+                </div>
+                <ul class="ij-OfferCardContent-description-list">
+                  <li class="ij-OfferCardContent-description-list-item">Madrid</li>
+                  <li class="ij-OfferCardContent-description-list-item">
+                    <span data-testid="sincedate-tag">whenever the wind blows</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
           </div>
-          <div class="ij-OfferCardContent-description-subtitle">Acme</div>
-          <ul class="ij-OfferCardContent-description-list">
-            <li class="ij-OfferCardContent-description-list-item">Madrid</li>
-          </ul>
-          <div class="ij-OfferCardContent-date">whenever the wind blows</div>
         </div>
       </div>
     </li>
@@ -323,21 +360,41 @@ def test_parse_infojobs_posted_at_garbage_date_raises_parse_error() -> None:
 
 
 def _card_with_date(date_text: str) -> str:
-    """Wrap a relative-time string into a minimal valid card fragment."""
+    """Wrap a relative-time string into a minimal valid card fragment.
+
+    The fragment mirrors the real InfoJobs DOM (observed 2026-06-02):
+    the date lives in `<span data-testid="sincedate-tag">` inside a
+    list-item, NOT in a separate `.ij-OfferCardContent-date` div.
+    The id is in the media-link's `href`, not the title anchor.
+    """
     return f"""
     <li class="ij-List-item ij-OfferList-offerCardItem sui-PrimitiveLinkBox">
-      <div class="ij-OfferCardContent">
-        <div class="ij-OfferCardContent-description">
-          <div class="ij-OfferCardContent-description-head">
-            <a class="ij-OfferCardContent-description-title-link" href="/ofertas-trabajo/oferta-999900200">
-              <h2 class="ij-OfferCardContent-description-title">Title</h2>
-            </a>
+      <div class="sui-AtomCard-Wrapper">
+        <div class="sui-AtomCard">
+          <div class="ij-OfferCard">
+            <div class="ij-OfferCardContent">
+              <div class="ij-OfferCardContent-media">
+                <a class="ij-OfferCardContent-media-link" href="https://www.infojobs.net/acme/em-999900200">
+                  <img alt="Acme" />
+                </a>
+              </div>
+              <div class="ij-OfferCardContent-description">
+                <div class="ij-OfferCardContent-description-head">
+                  <h2 class="ij-OfferCardContent-description-title">Title</h2>
+                </div>
+                <div class="ij-OfferCardContent-description-subtitle">
+                  <a class="ij-OfferCardContent-description-subtitle-link">Acme</a>
+                </div>
+                <ul class="ij-OfferCardContent-description-list">
+                  <li class="ij-OfferCardContent-description-list-item">Madrid</li>
+                  <li class="ij-OfferCardContent-description-list-item">
+                    <span data-testid="sincedate-tag">{date_text}</span>
+                    <span>Nueva</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
           </div>
-          <div class="ij-OfferCardContent-description-subtitle">Acme</div>
-          <ul class="ij-OfferCardContent-description-list">
-            <li class="ij-OfferCardContent-description-list-item">Madrid</li>
-          </ul>
-          <div class="ij-OfferCardContent-date">{date_text}</div>
         </div>
       </div>
     </li>
@@ -455,23 +512,35 @@ def test_infojobs_parsers_module_has_no_playwright_or_async() -> None:
 def test_infojobs_parsers_accept_string_or_tag() -> None:
     """Helpers accept either an HTML fragment string or a `bs4.element.Tag`.
 
-    The fragment mirrors the placeholder DOM: id is in the title
-    anchor's `href`, title is the `<h2>`, company is the subtitle
-    div, location is the first list item.
+    The fragment mirrors the real InfoJobs DOM (observed 2026-06-02):
+    id is in the media-link's `href` (shaped as `.../em-{id}`), title
+    is the `<h2>`, company is the inner subtitle anchor, location is
+    the first list item.
     """
     fragment = """
     <li class="ij-List-item ij-OfferList-offerCardItem sui-PrimitiveLinkBox">
-      <div class="ij-OfferCardContent">
-        <div class="ij-OfferCardContent-description">
-          <div class="ij-OfferCardContent-description-head">
-            <a class="ij-OfferCardContent-description-title-link" href="/ofertas-trabajo/oferta-123456789">
-              <h2 class="ij-OfferCardContent-description-title">X</h2>
-            </a>
+      <div class="sui-AtomCard-Wrapper">
+        <div class="sui-AtomCard">
+          <div class="ij-OfferCard">
+            <div class="ij-OfferCardContent">
+              <div class="ij-OfferCardContent-media">
+                <a class="ij-OfferCardContent-media-link" href="https://www.infojobs.net/acme/em-123456789">
+                  <img alt="Acme" />
+                </a>
+              </div>
+              <div class="ij-OfferCardContent-description">
+                <div class="ij-OfferCardContent-description-head">
+                  <h2 class="ij-OfferCardContent-description-title">X</h2>
+                </div>
+                <div class="ij-OfferCardContent-description-subtitle">
+                  <a class="ij-OfferCardContent-description-subtitle-link">Y</a>
+                </div>
+                <ul class="ij-OfferCardContent-description-list">
+                  <li class="ij-OfferCardContent-description-list-item">Z</li>
+                </ul>
+              </div>
+            </div>
           </div>
-          <div class="ij-OfferCardContent-description-subtitle">Y</div>
-          <ul class="ij-OfferCardContent-description-list">
-            <li class="ij-OfferCardContent-description-list-item">Z</li>
-          </ul>
         </div>
       </div>
     </li>
@@ -491,14 +560,19 @@ def test_infojobs_parsers_accept_string_or_tag() -> None:
 
 
 def test_placeholder_fixture_has_at_least_15_cards() -> None:
-    """The placeholder must have 15+ cards per the design's REQ-J-005.
+    """The real-capture fixture has 10+ cards (was 15+ in the v1 placeholder).
 
-    Real InfoJobs SERPs return 10-15 cards per page; the placeholder
-    overshoots so the test exercises pagination later (T-006).
+    The v1 placeholder was synthetic with 15 cards (3 per date string).
+    The T-010 real capture against `?q=python&l=madrid` returned
+    exactly 10 cards on the first page (InfoJobs's default page
+    size for this query). The parser contract is unchanged: any
+    number of cards ≥ 1 must parse correctly. The lower bound is
+    raised here only as a sanity check that the fixture is not
+    empty.
     """
     soup = BeautifulSoup(SEARCH_PAGE_HTML, "html.parser")
     cards = soup.select("li.ij-OfferList-offerCardItem")
-    assert len(cards) >= 15, f"expected 15+ cards, got {len(cards)}"
+    assert len(cards) >= 10, f"expected 10+ cards, got {len(cards)}"
 
 
 def test_placeholder_fixture_file_path_is_loadable() -> None:
@@ -510,21 +584,38 @@ def test_placeholder_fixture_contains_required_markers() -> None:
     """The rendered fixture HTML contains the markers the parsers rely on.
 
     This pins the contract end-to-end at the rendered-HTML level: a
-    refactor that removes (or renames) the placeholder's CSS classes
+    refactor that removes (or renames) the fixture's CSS classes
     will fail here before the parser tests get a chance to surface
     cryptic BeautifulSoup `NoneType` errors.
+
+    Markers updated for the T-010 real DOM:
+    - `ij-OfferList-offerCardItem` (the card class — unchanged)
+    - `ij-OfferCardContent-description-title` (the title heading)
+    - `ij-OfferCardContent-description-subtitle-link` (the company
+      anchor; the v1 placeholder had `description-subtitle` as a
+      plain div, but the real DOM has an inner `<a>`)
+    - `ij-OfferCardContent-description-list-item` (the list items —
+      unchanged)
+    - `data-testid="sincedate-tag"` (the relative-time span; the v1
+      placeholder had `ij-OfferCardContent-date` as a separate div,
+      but the real DOM nests the date in a list-item)
+    - `ij-OfferCardContent-media-link` (the media link whose `href`
+      contains the offer id; the v1 placeholder had the id on the
+      title anchor, but the real DOM has the title without `href`
+      and the id on the media link)
+    - `/em-` (the URL pattern in the media-link `href`)
     """
     text = SEARCH_PAGE_HTML
     for marker in (
         "ij-OfferList-offerCardItem",
-        "ij-OfferCardContent-description-title-link",
         "ij-OfferCardContent-description-title",
-        "ij-OfferCardContent-description-subtitle",
+        "ij-OfferCardContent-description-subtitle-link",
         "ij-OfferCardContent-description-list-item",
-        "ij-OfferCardContent-date",
-        "oferta-abc123",
+        'data-testid="sincedate-tag"',
+        "ij-OfferCardContent-media-link",
+        "/em-",
     ):
-        assert marker in text, f"placeholder missing required marker {marker!r}"
+        assert marker in text, f"fixture missing required marker {marker!r}"
 
 
 # ---------------------------------------------------------------------------

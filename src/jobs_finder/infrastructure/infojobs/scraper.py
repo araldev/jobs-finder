@@ -80,7 +80,13 @@ from .throttle import InfoJobsAsyncThrottle
 # private module constant in `parsers.py` (kept in sync). If InfoJobs
 # changes the card class name in the future, both this line and the
 # one in `parsers.py` need to change.
-RESULTS_SELECTOR = ".ij-OfferList-offerCardItem"
+#
+# The selector requires the offer-title heading (`:has(h2...)`) to
+# disambiguate real offer cards from promoted ad banners, which
+# also carry the `ij-OfferList-offerCardItem` class but do NOT
+# have a title heading. The same filter is applied in `parsers.py`
+# and in the test suite — all three stay in sync.
+RESULTS_SELECTOR = ".ij-OfferList-offerCardItem:has(h2.ij-OfferCardContent-description-title)"
 
 # `browser_factory` returns the live `Browser` to drive in `__aenter__`.
 # In production this is `None` and the scraper launches Chromium itself.

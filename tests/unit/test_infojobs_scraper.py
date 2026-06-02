@@ -194,11 +194,13 @@ async def _make_scraper_with(
 
 
 def _build_n_cards_html(n: int, *, id_prefix: str) -> str:
-    """Build a search-results page with `n` cards starting at `<id_prefix>000`.
+    """Build a search-results page with `n` cards starting at `<id_prefix>001`.
 
-    Used to construct a custom second page in the pagination test. The
-    card shape mirrors the placeholder fixture (T-004): the id is in
-    the title anchor's `href` as `/ofertas-trabajo/oferta-<id>`.
+    Used to construct a custom second page in the pagination test.
+    The card shape mirrors the real InfoJobs SERP DOM (T-010 real
+    capture, 2026-06-02): the id is in the media-link's `href` as
+    `https://www.infojobs.net/{slug}/em-{id}` (Pattern A — the
+    canonical pattern for non-promoted cards).
     """
     cards: list[str] = []
     for i in range(1, n + 1):
@@ -206,19 +208,31 @@ def _build_n_cards_html(n: int, *, id_prefix: str) -> str:
         cards.append(
             f"""
       <li class="ij-List-item ij-OfferList-offerCardItem sui-PrimitiveLinkBox">
-        <div class="ij-OfferCardContent">
-          <div class="ij-OfferCardContent-description">
-            <div class="ij-OfferCardContent-description-head">
-              <a class="ij-OfferCardContent-description-title-link"
-                 href="/ofertas-trabajo/oferta-{job_id}">
-                <h2 class="ij-OfferCardContent-description-title">Title {job_id}</h2>
-              </a>
+        <div class="sui-AtomCard-Wrapper">
+          <div class="sui-AtomCard">
+            <div class="ij-OfferCard">
+              <div class="ij-OfferCardContent">
+                <div class="ij-OfferCardContent-media">
+                  <a class="ij-OfferCardContent-media-link" href="https://www.infojobs.net/acme/em-{job_id}">
+                    <img alt="Acme" />
+                  </a>
+                </div>
+                <div class="ij-OfferCardContent-description">
+                  <div class="ij-OfferCardContent-description-head">
+                    <h2 class="ij-OfferCardContent-description-title">Title {job_id}</h2>
+                  </div>
+                  <div class="ij-OfferCardContent-description-subtitle">
+                    <a class="ij-OfferCardContent-description-subtitle-link">Co {job_id}</a>
+                  </div>
+                  <ul class="ij-OfferCardContent-description-list">
+                    <li class="ij-OfferCardContent-description-list-item">City {job_id}</li>
+                    <li class="ij-OfferCardContent-description-list-item">
+                      <span data-testid="sincedate-tag">Hoy</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
             </div>
-            <div class="ij-OfferCardContent-description-subtitle">Co {job_id}</div>
-            <ul class="ij-OfferCardContent-description-list">
-              <li class="ij-OfferCardContent-description-list-item">City {job_id}</li>
-            </ul>
-            <div class="ij-OfferCardContent-date">Hoy</div>
           </div>
         </div>
       </li>"""
@@ -238,7 +252,7 @@ async def test_search_navigates_to_infojobs_ofertas_trabajo() -> None:
     async with scraper:
         # `limit=10` keeps the test on a single page so the assertion
         # isolates the URL contract from the pagination contract.
-        await scraper.search(keywords="python", location="madrid", limit=10)
+        await scraper.search(keywords="python", location="madrid", limit=5)
     assert page.goto_calls == ["https://www.infojobs.net/ofertas-trabajo?q=python&l=madrid&page=1"]
 
 
@@ -247,7 +261,7 @@ async def test_search_uses_one_indexed_page_param_on_first_page() -> None:
     page = FakePage(SEARCH_PAGE_HTML)
     scraper, _ = await _make_scraper_with(page)
     async with scraper:
-        await scraper.search("python", "madrid", limit=10)
+        await scraper.search("python", "madrid", limit=5)
     assert "page=1" in page.goto_calls[0]
     assert "page=0" not in page.goto_calls[0]
 
@@ -257,8 +271,13 @@ async def test_search_waits_for_results_selector_with_configured_timeout() -> No
     page = FakePage(SEARCH_PAGE_HTML)
     scraper, _ = await _make_scraper_with(page, timeout_ms=12_345)
     async with scraper:
-        await scraper.search("python", "madrid", limit=10)
-    assert page.wait_calls == [(".ij-OfferList-offerCardItem", 12_345)]
+        await scraper.search("python", "madrid", limit=5)
+    assert page.wait_calls == [
+        (
+            ".ij-OfferList-offerCardItem:has(h2.ij-OfferCardContent-description-title)",
+            12_345,
+        )
+    ]
 
 
 async def test_search_creates_browser_context_with_user_agent() -> None:
@@ -266,7 +285,7 @@ async def test_search_creates_browser_context_with_user_agent() -> None:
     page = FakePage(SEARCH_PAGE_HTML)
     scraper, fake_browser = await _make_scraper_with(page)
     async with scraper:
-        await scraper.search("python", "madrid", limit=10)
+        await scraper.search("python", "madrid", limit=5)
     assert len(fake_browser.new_context_calls) == 1
     assert fake_browser.new_context_calls[0]["user_agent"] == "test-agent/1.0"
 
@@ -277,28 +296,37 @@ async def test_search_creates_browser_context_with_user_agent() -> None:
 
 
 async def test_search_returns_one_job_per_card_on_placeholder_fixture() -> None:
-    """The placeholder fixture has 15+ cards (per the parser test contract) and
-    each yields a `Job` with the 6 spec fields populated.
+    """The T-010 real-capture fixture has 5 real offer cards and each
+    yields a `Job` with the 6 spec fields populated.
+
+    The real DOM (observed 2026-06-02 against `?q=python&l=madrid`)
+    embeds 5 real offer cards (after filtering out the promoted ad
+    banners which also carry the `ij-OfferList-offerCardItem` class
+    but lack a title heading). The other 5 li elements in the
+    capture are promoted ad banners, not real offers.
     """
     page = FakePage(SEARCH_PAGE_HTML)
     scraper, _ = await _make_scraper_with(page)
     async with scraper:
-        # `limit=15` matches the placeholder's first-page size so the
+        # `limit=5` matches the real-capture first-page size so the
         # test stays on a single page and the assertion isolates
         # field-mapping from pagination. The default `page.content()`
         # returns `SEARCH_PAGE_HTML` for every navigation, so a
         # higher `limit` would paginate and double-count.
-        jobs = await scraper.search("python", "madrid", limit=15)
-    assert len(jobs) == 15
-    # First card fields are populated from the placeholder fixture.
+        jobs = await scraper.search("python", "madrid", limit=5)
+    assert len(jobs) == 5
+    # First card fields are populated from the real-capture fixture.
     first = jobs[0]
-    assert first.id == "abc123001"
-    assert first.title == "Senior Python Developer"
-    assert first.company == "InfoJobs Co 1"
-    assert first.location == "Madrid, Spain"
-    assert first.url == "https://www.infojobs.net/ofertas-trabajo/oferta-abc123001"
-    # `posted_at` is tz-aware UTC (the placeholder uses relative
-    # date strings which the parser maps to UTC `datetime`s).
+    assert first.id == "i98495453525856678980690018195550513554"
+    assert first.title == "Camarero/a, Ayudante Camarero/a - Hotel Es Figueral Nou 4* Sup"
+    assert first.company == "NYBAU HOTELS & RESTAURANTS"
+    assert first.location == "Montuïri"
+    assert (
+        first.url
+        == "https://www.infojobs.net/ofertas-trabajo/oferta-i98495453525856678980690018195550513554"
+    )
+    # `posted_at` is tz-aware UTC (the real DOM has no inline
+    # date; the scraper falls back to `datetime.now(UTC)`).
     assert first.posted_at.tzinfo is not None
 
 
@@ -308,7 +336,10 @@ async def test_search_uses_configured_domain_in_oferta_url() -> None:
     scraper, _ = await _make_scraper_with(page, domain="br.infojobs.net")
     async with scraper:
         jobs = await scraper.search("python", "sao-paulo", limit=1)
-    assert jobs[0].url == "https://br.infojobs.net/ofertas-trabajo/oferta-abc123001"
+    assert (
+        jobs[0].url
+        == "https://br.infojobs.net/ofertas-trabajo/oferta-i98495453525856678980690018195550513554"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -317,19 +348,19 @@ async def test_search_uses_configured_domain_in_oferta_url() -> None:
 
 
 async def test_search_respects_limit() -> None:
-    """A `limit=5` over 15 cards returns the first 5 jobs only."""
+    """A `limit=5` over 5 real cards returns the first 5 jobs only."""
     page = FakePage(SEARCH_PAGE_HTML)
     scraper, _ = await _make_scraper_with(page)
     async with scraper:
         jobs = await scraper.search("python", "madrid", limit=5)
     assert len(jobs) == 5
-    # First 5 ids from the placeholder fixture (in document order).
+    # The 5 real-capture ids in document order.
     assert [j.id for j in jobs] == [
-        "abc123001",
-        "abc123002",
-        "abc123003",
-        "abc123004",
-        "abc123005",
+        "i98495453525856678980690018195550513554",
+        "i53515057515712074971181024164219803726",
+        "ifa64e5d5c648baa02dc36400656c9f",
+        "i83b836d94a4076bbd7eddf85410991",
+        "i98505552525049841011146014033783404222",
     ]
 
 
@@ -374,9 +405,10 @@ async def test_search_raises_timeout_when_results_never_appear() -> None:
 async def test_search_paginates_with_page_increment_when_limit_exceeds_first_page() -> None:
     """When `limit > first_page_size`, page 2 is fetched with `page=2`.
 
-    The placeholder fixture has 15 cards on the first page. With
-    `limit=20`, the scraper reads 15 cards on page 1 and 5 synthetic
-    cards on page 2 (returned by the page stub's lambda).
+    The T-010 real-capture fixture has 5 real offer cards on the
+    first page. With `limit=10`, the scraper reads 5 real cards on
+    page 1 and 5 synthetic cards on page 2 (returned by the page
+    stub's lambda).
     """
     second_page = _build_n_cards_html(5, id_prefix="xyz")
     page = FakePage(
@@ -384,19 +416,19 @@ async def test_search_paginates_with_page_increment_when_limit_exceeds_first_pag
     )
     scraper, _ = await _make_scraper_with(page)
     async with scraper:
-        jobs = await scraper.search("python", "madrid", limit=20)
+        jobs = await scraper.search("python", "madrid", limit=10)
 
-    assert len(jobs) == 20
+    assert len(jobs) == 10
     assert page.goto_calls == [
         "https://www.infojobs.net/ofertas-trabajo?q=python&l=madrid&page=1",
         "https://www.infojobs.net/ofertas-trabajo?q=python&l=madrid&page=2",
     ]
-    # First 15 are from the placeholder first page; last 5 are from
-    # the synthetic second page.
-    assert jobs[0].id == "abc123001"
-    assert jobs[14].id == "abc123015"  # last card on first page
-    assert jobs[15].id == "xyz001"  # first card on second page
-    assert jobs[19].id == "xyz005"  # last card on second page
+    # First 5 are from the real first page; last 5 are from the
+    # synthetic second page.
+    assert jobs[0].id == "i98495453525856678980690018195550513554"
+    assert jobs[4].id == "i98505552525049841011146014033783404222"  # last card on first page
+    assert jobs[5].id == "xyz001"  # first card on second page
+    assert jobs[9].id == "xyz005"  # last card on second page
 
 
 async def test_search_does_not_paginate_when_first_page_satisfies_limit() -> None:
@@ -416,7 +448,7 @@ async def test_search_returns_first_page_results_when_subsequent_page_times_out(
     error (raise `InfoJobsTimeoutError`); pages > 0 are treated as
     "no more results" and the loop breaks gracefully.
     """
-    # First page returns the placeholder 15-card capture; second
+    # First page returns the real-capture 5-card capture; second
     # page's `wait_for_selector` raises a PlaywrightTimeoutError.
     page = FakePage(
         html=lambda url: SEARCH_PAGE_HTML if "page=1" in url else "",
@@ -425,9 +457,9 @@ async def test_search_returns_first_page_results_when_subsequent_page_times_out(
     scraper, _ = await _make_scraper_with(page)
     async with scraper:
         jobs = await scraper.search("python", "madrid", limit=20)
-    # 15 jobs from page 1; loop broke on page 2 timeout (no raise).
-    assert len(jobs) == 15
-    assert jobs[0].id == "abc123001"
+    # 5 jobs from page 1; loop broke on page 2 timeout (no raise).
+    assert len(jobs) == 5
+    assert jobs[0].id == "i98495453525856678980690018195550513554"
     # Exactly 2 page requests: page 1 succeeded, page 2 timed out.
     assert page.goto_calls == [
         "https://www.infojobs.net/ofertas-trabajo?q=python&l=madrid&page=1",
@@ -447,7 +479,7 @@ async def test_search_stops_at_max_pages() -> None:
         "https://www.infojobs.net/ofertas-trabajo?q=python&l=madrid&page=1",
         "https://www.infojobs.net/ofertas-trabajo?q=python&l=madrid&page=2",
     ]
-    assert len(jobs) == 30  # 15 per page, capped at limit=200
+    assert len(jobs) == 10  # 5 per page on the real-capture fixture, capped at limit=200
 
 
 # ---------------------------------------------------------------------------
