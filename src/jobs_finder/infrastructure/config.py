@@ -190,6 +190,30 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ------------------------------------------------------------------
+    # Cache TTL (REQ-C-002)
+    #
+    # Default 60.0 seconds — the same value Cloudflare's free tier
+    # uses for browser cache hits; long enough to absorb typical
+    # burst traffic (a frontend dashboard refreshing every 5s
+    # collapses 12 requests into 1), short enough that stale data
+    # is rare.
+    #
+    # Set `CACHE_TTL_SECONDS=0` to disable the cache entirely (every
+    # call becomes a miss, so the scraper is invoked every time).
+    #
+    # The model-level `env_prefix="LINKEDIN_"` does not apply to
+    # this field because it has its own `validation_alias`. The
+    # env var lookup reads `CACHE_TTL_SECONDS`; programmatic
+    # construction (`Settings(cache_ttl_seconds=120.0)`) works via
+    # the second choice in `AliasChoices`.
+    # ------------------------------------------------------------------
+
+    cache_ttl_seconds: float = Field(
+        default=60.0,
+        validation_alias=AliasChoices("CACHE_TTL_SECONDS", "cache_ttl_seconds"),
+    )
+
 
 def load_settings() -> Settings:
     """Read env vars and return a fully-populated `Settings`.
