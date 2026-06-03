@@ -234,6 +234,97 @@ uv run ruff check
 uv run ruff format --check
 ```
 
+## Aggregator endpoint
+
+`GET /jobs` is a thin composition layer over the 3 per-source routes.
+It accepts `q`, `location`, `limit`, and a comma-separated `sources`
+parameter (default `linkedin,indeed,infojobs`), invokes the
+selected cached use cases in parallel via `asyncio.gather`,
+deduplicates identical job postings across sources, and returns a
+single aggregated `list[AggregatedJobResponse]`.
+
+**The aggregator automatically inherits the cache-ttl behavior**
+(REQ-C-001..REQ-C-006) — it calls the same 3 cached use cases that
+the per-source routes use, so a cache hit on LinkedIn from a prior
+`/jobs/linkedin?keywords=python&location=madrid` call is ALSO a cache
+hit when the aggregator invokes LinkedIn. Two aggregator calls
+within the TTL window do N+1=3 → 1 scraper round-trip.
+
+**Dedup is by `(title, company, location)` heuristic** (case-insensitive,
+whitespace-stripped). A job from 2+ sources is returned once with
+`sources: list[str]` listing where it appeared (in source-priority
+order: `linkedin` > `indeed` > `infojobs`).
+
+**Per-source error isolation** (REQ-A-003) — a `JobSearchError`
+from one source is caught and logged; the aggregator continues with
+the other sources' results. A 502 from one source does NOT take down
+the aggregator. The `X-Aggregator-Errors` response header lists
+the errored sources.
+
+### Response shape
+
+```json
+{
+  "jobs": [
+    {
+      "id": "dd6cc0f5b0f0cfc9",
+      "title": "Senior Python Developer",
+      "company": "Acme Corp",
+      "location": "Madrid, Spain",
+      "url": "https://es.indeed.com/viewjob?jk=dd6cc0f5b0f0cfc9",
+      "posted_at": "2026-06-01T00:00:00+00:00",
+      "sources": ["linkedin", "indeed"]
+    },
+    {
+      "id": "i53515057515712074971181024164219803726",
+      "title": "Senior Python",
+      "company": "Acme",
+      "location": "Madrid",
+      "url": "https://www.infojobs.net/acme/em-i53515057515712074971181024164219803726",
+      "posted_at": "2026-06-01T00:00:00+00:00",
+      "sources": ["infojobs"]
+    }
+  ]
+}
+```
+
+The `sources` field is a sorted list in source-priority order
+(`linkedin` > `indeed` > `infojobs`). The 6 other fields are the
+canonical `JobResponse` shape (identical to the per-source routes).
+
+### Aggregator response headers (in addition to `X-Request-Id`)
+
+| Header | Description |
+| --- | --- |
+| `X-Cache` | Comma-separated per-source cache status in the caller's `sources` order. E.g. `MISS,MISS,HIT` for a 3-source call where Indeed was a cache hit. **Note**: the values are in the caller's order, not source-priority order, so a request with `sources=indeed,linkedin` returns `MISS,HIT` (Indeed first, then LinkedIn). The route preserves caller order in the joined header for transparency. |
+| `X-Aggregator-Sources` | The sources that were queried, in the caller's `sources` order. E.g. `linkedin,infojobs` when only those 2 are queried. |
+| `X-Aggregator-Errors` | ABSENT when all sources succeed; set to the comma-separated list of errored sources (in caller order) when at least one fails. E.g. `indeed` if only Indeed raised a `JobSearchError`. |
+
+### Examples
+
+```bash
+# Default: aggregate all 3 sources, deduped
+curl -i "http://localhost:8000/jobs?q=python&location=madrid&limit=20"
+# X-Cache: MISS,MISS,MISS (first call)
+# X-Aggregator-Sources: linkedin,indeed,infojobs
+# X-Aggregator-Errors: (absent)
+
+# 1-source: only LinkedIn
+curl -i "http://localhost:8000/jobs?q=python&location=madrid&sources=linkedin"
+# X-Cache: MISS (no commas)
+# X-Aggregator-Sources: linkedin
+
+# 2 sources: LinkedIn + InfoJobs (Indeed skipped)
+curl -i "http://localhost:8000/jobs?q=python&location=madrid&sources=linkedin,infojobs"
+# X-Cache: MISS,MISS (only 2 values)
+# X-Aggregator-Sources: linkedin,infojobs
+
+# Invalid source
+curl -i "http://localhost:8000/jobs?q=python&location=madrid&sources=glassdoor"
+# HTTP/1.1 422
+# {"detail": "unknown sources: ['glassdoor']; valid: ['indeed', 'infojobs', 'linkedin']"}
+```
+
 ## Manual verification
 
 > **Re-read the Legal Notice above before proceeding.** Scraping LinkedIn

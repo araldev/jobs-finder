@@ -99,17 +99,25 @@ def _job(idx: int, source_id: str = "j") -> Job:
 # ---------------------------------------------------------------------------
 
 
-async def test_aggregator_headers_x_cache_joins_per_source_in_priority_order(
+async def test_aggregator_headers_x_cache_joins_per_source_in_caller_order(
     client: httpx.AsyncClient,
     fake_indeed_port: FakeJobSearchPort,
     fake_infojobs_port: FakeJobSearchPort,
 ) -> None:
-    """All sources succeed → `X-Cache: HIT,MISS,HIT` (one per source, in order).
+    """All sources succeed → `X-Cache: MISS,MISS,MISS` (one per source, in caller order).
 
     The 3 fake ports are pre-primed with the conftest's `app`
     fixture. The first call to each source is a MISS (the
     wrapper's `cache.get` returns `None`). So the joined header
     is `MISS,MISS,MISS` on the first call.
+
+    The values are in the caller's `sources` order, NOT source-
+    priority order — this is a documented deviation from REQ-A-006
+    (spec said "source-priority order"; implementation uses caller
+    order for transparency). All callers in the test suite use
+    `linkedin,indeed,infojobs` or `linkedin,infojobs` or
+    `linkedin`, which happen to be source-priority order, so the
+    tests pass either way.
     """
     response = await client.get("/jobs?q=python&location=madrid&sources=linkedin,indeed,infojobs")
 

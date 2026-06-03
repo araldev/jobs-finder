@@ -159,8 +159,12 @@ async def aggregate_jobs(
     # the caller provided (NOT necessarily source-priority order);
     # this matches the user's mental model — they asked for
     # `sources=linkedin,infojobs` and the headers reflect that
-    # exact order. The route uses `result.per_source` to look up
-    # the cache status and errored flag for each requested source.
+    # exact order. **Deviation from REQ-A-006 literal**: the spec
+    # said "source-priority order" but the implementation uses
+    # caller order for transparency. See `sdd/jobs-aggregator-
+    # endpoint/spec-deviation-xcache-order` for the rationale. The
+    # route uses `result.per_source` to look up the cache status
+    # and errored flag for each requested source.
     response.headers["X-Cache"] = ",".join(result.cache_statuses[s] for s in source_list)
     response.headers["X-Aggregator-Sources"] = ",".join(source_list)
 
