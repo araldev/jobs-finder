@@ -1,7 +1,7 @@
 """FastAPI app factory — composition root for the presentation layer.
 
 Spec: REQ-006, REQ-017..REQ-022, REQ-I-012, REQ-I-013, REQ-I-014,
-REQ-J-001..REQ-J-006.
+REQ-A-001..REQ-A-006 (aggregator).
 
 `build_app` wires:
   - The LinkedIn use case (injected via `use_case=` for tests; default
@@ -10,9 +10,14 @@ REQ-J-001..REQ-J-006.
     default builds a real `IndeedPlaywrightScraper` for production —
     T-008 wired the default branch so `app = build_app()` exposes
     BOTH sources).
-  - The InfoJobs use case (injected via `infojobs_use_case=` for
-    tests; default builds a real `InfoJobsPlaywrightScraper` with
-    `Stealth()` wired — REQ-J-002 — for production).
+  - The InfoJobs use case (injected via `infojobs_use_case=` for tests;
+    default builds a real `InfoJobsPlaywrightScraper` for production —
+    T-008 wired the default branch so `app = build_app()` exposes
+    ALL THREE sources).
+  - The aggregator use case (injected via `aggregator_use_case=` for
+    tests; default builds a `SearchAllSourcesUseCase` that wraps
+    the 3 per-source use cases — T-002 of the jobs-aggregator-endpoint
+    change wires this).
   - `RequestIdMiddleware` (REQ-020).
   - `LogOnRequestMiddleware` (T-012): emits one INFO line per request
     on `jobs_finder.access` with the bound `request_id`. Added INNER
@@ -26,22 +31,22 @@ REQ-J-001..REQ-J-006.
     during request processing carries the right structure.
   - The exception handlers (`JobSearchError` -> 502, validation -> 422).
   - The routers (`/health`, `/jobs/linkedin`, `/jobs/indeed`,
-    `/jobs/infojobs`).
+    `/jobs/infojobs`, `/jobs`).
 
 The LinkedIn use case is exposed to routes via `app.state.use_case`;
-the Indeed use case is exposed via `app.state.indeed_use_case`; the
-InfoJobs use case is exposed via `app.state.infojobs_use_case`. Routes
-resolve them through the `get_use_case`, `get_indeed_use_case`, and
-`get_infojobs_use_case` dependencies. Tests pass use cases explicitly
-when they need to short-circuit the default branches; otherwise the
-default branches build real Playwright scrapers from `Settings` so
-`app = build_app()` is the production-ready composition root.
+the Indeed use case is exposed via `app.state.indeed_use_case`;
+the InfoJobs use case is exposed via `app.state.infojobs_use_case`;
+the aggregator use case is exposed via `app.state.aggregator_use_case`.
+Routes resolve them through their `get_*_use_case` dependencies.
+Tests pass use cases explicitly when they need to short-circuit
+the default branches; otherwise the default branches build real
+Playwright scrapers from `Settings` so `app = build_app()` is the
+production-ready composition root.
 
-T-007 also extends the lifespan to open ALL THREE default scrapers on
-startup and close ALL THREE on shutdown (LIFO). Each scraper's
-`__aenter__` / `__aexit__` is independent — a test that injects a
-fake port for one source does not affect the other source's lifespan
-behavior.
+T-008 also extends the lifespan to open ALL THREE default scrapers
+on startup and close them on shutdown. Each scraper's `__aenter__` /
+`__aexit__` is independent — a test that injects a fake port for one
+source does not affect the other sources' lifespan behavior.
 """
 
 from __future__ import annotations
@@ -53,6 +58,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from playwright_stealth import Stealth  # type: ignore[import-untyped]
 
+from jobs_finder.application.aggregator import SearchAllSourcesUseCase
 from jobs_finder.application.ports import JobSearchCacheKey
 from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase
 from jobs_finder.application.usecases.search_indeed_jobs import (
@@ -97,6 +103,7 @@ from jobs_finder.presentation.middleware import (
     LogOnRequestMiddleware,
     RequestIdMiddleware,
 )
+from jobs_finder.presentation.routes import aggregator as aggregator_routes
 from jobs_finder.presentation.routes import health as health_routes
 from jobs_finder.presentation.routes import indeed as indeed_routes
 from jobs_finder.presentation.routes import infojobs as infojobs_routes
@@ -108,9 +115,11 @@ def build_app(  # noqa: PLR0915
     *,
     indeed_use_case: IndeedSearchJobsUseCase | None = None,
     infojobs_use_case: InfoJobsSearchJobsUseCase | None = None,
+    aggregator_use_case: SearchAllSourcesUseCase | None = None,
     settings: Settings | None = None,
 ) -> FastAPI:
-    """Construct a configured FastAPI app with ALL THREE source routes wired.
+    """Construct a configured FastAPI app with ALL THREE source routes AND
+    the aggregator route wired.
 
     Args:
         use_case: The LinkedIn use case to expose via
@@ -127,6 +136,11 @@ def build_app(  # noqa: PLR0915
             `/jobs/infojobs` route returns 500 because
             `app.state.infojobs_use_case` is not set. Production
             callers (T-008) must pass it explicitly.
+        aggregator_use_case: The aggregator use case to expose via
+            `app.state.aggregator_use_case`. If `None`, the default
+            branch builds a `SearchAllSourcesUseCase` from the 3
+            per-source use cases. Tests pass an explicit
+            `aggregator_use_case` to inject a custom orchestrator.
         settings: Optional runtime configuration. Used by the default
             branch to build the scraper and the throttle, and to wire
             CORS / logging. If `None`, the default `Settings()` is loaded.
@@ -135,7 +149,7 @@ def build_app(  # noqa: PLR0915
         A `FastAPI` instance with a `lifespan` that opens the default
         scrapers (when the default use cases are in effect) at
         startup and closes them at shutdown, plus the middleware,
-        exception handlers, and routers.
+        exception handlers, and routers (including the aggregator).
     """
     effective_settings = settings if settings is not None else Settings()
 
@@ -362,6 +376,22 @@ def build_app(  # noqa: PLR0915
         _unwrap_to_port(infojobs_use_case) if infojobs_use_case is not None else None
     )
 
+    # T-002 (jobs-aggregator-endpoint): the aggregator wraps the 3
+    # per-source use cases and runs them in parallel via
+    # `asyncio.gather` (see `application/aggregator.py`). The
+    # default branch reuses the 3 use cases that the per-source
+    # routes use, so the aggregator AUTOMATICALLY inherits the
+    # cache-ttl behavior (REQ-C-001..REQ-C-006) without a separate
+    # cache: a cache hit on LinkedIn from a prior per-source call is
+    # ALSO a cache hit when the aggregator invokes LinkedIn.
+    if aggregator_use_case is None:
+        aggregator_use_case = SearchAllSourcesUseCase(
+            linkedin_use_case=use_case,
+            indeed_use_case=indeed_use_case,
+            infojobs_use_case=infojobs_use_case,
+        )
+    app.state.aggregator_use_case = aggregator_use_case
+
     # Middleware — order matters. Starlette runs middlewares outermost
     # first; the LAST `add_middleware` call wraps everything else.
     # 1. `LogOnRequest` is innermost: it runs inside `RequestId` so
@@ -385,5 +415,9 @@ def build_app(  # noqa: PLR0915
     app.include_router(linkedin_routes.router)
     app.include_router(indeed_routes.router)
     app.include_router(infojobs_routes.router)
+    # T-002 (jobs-aggregator-endpoint): the new top-level
+    # `GET /jobs` aggregator. Mounted LAST so its `/{source}`-less
+    # path is not shadowed by the per-source routers.
+    app.include_router(aggregator_routes.router)
 
     return app
