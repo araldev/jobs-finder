@@ -92,7 +92,7 @@ from jobs_finder.infrastructure.infojobs.scraper import (
 from jobs_finder.infrastructure.infojobs.throttle import InfoJobsAsyncThrottle
 from jobs_finder.infrastructure.linkedin.scraper import (
     LinkedInPlaywrightScraper,
-    ScraperSettings,
+    LinkedInScraperSettings,
 )
 from jobs_finder.infrastructure.linkedin.throttle import AsyncThrottle
 from jobs_finder.presentation.exception_handlers import (
@@ -161,9 +161,15 @@ def build_app(  # noqa: PLR0915
     if use_case is None:
         scraper = LinkedInPlaywrightScraper(
             throttle=AsyncThrottle(min_interval_seconds=effective_settings.throttle_seconds),
-            settings=ScraperSettings(
+            # REQ-L-008: `LinkedInScraperSettings` was renamed from the
+            # in-module `ScraperSettings`; the two new env-driven
+            # fields (`linkedin_max_pages`, `linkedin_inter_page_delay_seconds`)
+            # are the pagination knobs (REQ-L-007, REQ-L-009).
+            settings=LinkedInScraperSettings(
                 user_agent=effective_settings.user_agent,
                 timeout_ms=effective_settings.request_timeout_ms,
+                max_pages=effective_settings.linkedin_max_pages,
+                inter_page_delay_seconds=effective_settings.linkedin_inter_page_delay_seconds,
             ),
         )
         raw_use_case = RawLinkedInJobsUseCase(port=scraper)

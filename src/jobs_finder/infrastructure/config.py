@@ -214,6 +214,38 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("CACHE_TTL_SECONDS", "cache_ttl_seconds"),
     )
 
+    # ------------------------------------------------------------------
+    # LinkedIn-pagination settings (REQ-L-008)
+    #
+    # Two new LinkedIn-specific fields opt out of the model-level
+    # `env_prefix="LINKEDIN_"` by declaring their own
+    # `validation_alias` (the same pattern used by `indeed_*` and
+    # `infojobs_*` above). Each field reads from a `LINKEDIN_*` env
+    # var that the prefix would emit anyway, so the env-var contract
+    # for the existing LinkedIn fields is unchanged.
+    #
+    # `linkedin_max_pages` (default 10) caps the pagination loop in
+    # `LinkedInPlaywrightScraper.search()` (REQ-L-007). Set to a
+    # larger value to fetch deeper result streams; set to 1 to keep
+    # the v0 single-page behavior.
+    #
+    # `linkedin_inter_page_delay_seconds` (default 1.0) paces
+    # successive page navigations (REQ-L-009) to reduce the chance
+    # of LinkedIn's anti-bot re-challenging the 2nd+ request. Set to
+    # 0.0 to disable the call entirely (no event-loop yield).
+    # ------------------------------------------------------------------
+
+    linkedin_max_pages: int = Field(
+        default=10,
+        validation_alias=AliasChoices("LINKEDIN_MAX_PAGES", "linkedin_max_pages"),
+    )
+    linkedin_inter_page_delay_seconds: float = Field(
+        default=1.0,
+        validation_alias=AliasChoices(
+            "LINKEDIN_INTER_PAGE_DELAY_SECONDS", "linkedin_inter_page_delay_seconds"
+        ),
+    )
+
 
 def load_settings() -> Settings:
     """Read env vars and return a fully-populated `Settings`.

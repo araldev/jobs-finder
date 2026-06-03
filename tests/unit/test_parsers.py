@@ -339,7 +339,7 @@ def test_parse_cards_extracts_from_malaga_canonical_fixture() -> None:
     from tests.fixtures.linkedin_malaga_canonical import MALAGA_CANONICAL_HTML  # noqa: PLC0415
 
     soup = BeautifulSoup(MALAGA_CANONICAL_HTML, "html.parser")
-    jobs = _parse_cards(soup, limit=10)
+    jobs = _parse_cards(soup, remaining=10)
     assert len(jobs) == 3
     assert [j.id for j in jobs] == ["4354113538", "4391577086", "4417875990"]
     assert [j.title for j in jobs] == [
