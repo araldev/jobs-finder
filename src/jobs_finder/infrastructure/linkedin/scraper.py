@@ -1,6 +1,6 @@
 """LinkedIn Playwright scraper — the live adapter behind `JobSearchPort`.
 
-Spec: REQ-013, REQ-024, REQ-L-007..REQ-L-010.
+Spec: REQ-013, REQ-024, REQ-L-007..REQ-L-010, REQ-PAG-001..PAG-003.
 
 Lifecycle: `async with scraper:` launches a headless Chromium with a
 stealth-ish user-agent and a 1280x800 viewport (or accepts an injected
@@ -9,24 +9,34 @@ through the injected `AsyncThrottle`, opens a new page, navigates to the
 LinkedIn search URL, waits for the results selector, parses the cards via
 the pure parsers, and returns a `list[Job]` sliced to `limit`.
 
-Auto-pagination (REQ-L-007): after the first page is parsed, the
-scraper navigates to `&start=25`, then `&start=50`, ..., up to
-`settings.max_pages` total requests. The loop terminates early when
-the requested `limit` is reached OR when a page yields zero new cards
-OR when a `wait_for_selector` timeout occurs on page > 0 (end of
-results / anti-bot re-challenge — break gracefully). A timeout on
-page 0 is a real error and raises `LinkedInTimeoutError`.
+Auto-pagination (REQ-L-007, REQ-PAG-001..PAG-003): the loop is owned
+by the canonical `paginated_search` helper at
+`jobs_finder.infrastructure.pagination`. The scraper contributes a
+`_make_fetch_one_page(keywords, location)` closure that captures
+LinkedIn's URL formula (`start=page_index*25`), `is_block_page`
+check, the 2-arg `_parse_cards(soup, remaining)` (no `domain`),
+and LinkedIn's silent-break semantic on page-0 zero-cards (the
+closure does NOT raise a `LinkedInParseError`; the helper's
+zero-cards break handles it). The loop terminates early when the
+requested `limit` is reached OR when a page yields zero new cards
+OR when a per-page `wait_for_selector` timeout occurs on page > 0
+(end of results / anti-bot re-challenge — break gracefully). A
+timeout on page 0 is a real error and propagates as
+`LinkedInTimeoutError`.
 
-Inter-page pacing (REQ-L-009): before each page request with
-`page_index > 0`, the scraper awaits `asyncio.sleep` for
-`settings.inter_page_delay_seconds` seconds. The check `> 0` skips
-the call entirely when the delay is `0.0` (no needless event-loop
-yield, no wall-clock wait). The first page is never delayed.
+Inter-page pacing (REQ-L-009, REQ-PAG-002): the helper awaits
+`asyncio.sleep(inter_page_delay_seconds)` BEFORE the next page
+request; page 0 is never delayed. The `> 0` guard skips the call
+entirely when the delay is `0.0` (no needless event-loop yield, no
+wall-clock wait). The default
+`Settings.linkedin_inter_page_delay_seconds = 1.0` is sourced
+from env; tests pass `0.0` to disable.
 
-Throttle scope (REQ-L-010): the `AsyncThrottle` is acquired ONCE
-around the whole pagination loop (per `search()` call) so consecutive
-`search()` calls are paced by `min_interval_seconds` while the page
-requests within a single search happen back-to-back.
+Throttle scope (REQ-L-010, REQ-PAG-002): the `AsyncThrottle` is
+acquired ONCE around the whole pagination loop (per `search()`
+call) by the helper so consecutive `search()` calls are paced by
+`min_interval_seconds` while the page requests within a single
+search happen back-to-back.
 
 Errors:
 - `playwright.async_api.TimeoutError` -> `LinkedInTimeoutError`
@@ -39,7 +49,6 @@ Errors:
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Self
@@ -58,6 +67,7 @@ from playwright.async_api import (
 
 from jobs_finder.application.ports import JobSearchPort
 from jobs_finder.domain.job import Job
+from jobs_finder.infrastructure.pagination import paginated_search
 
 from .exceptions import LinkedInBlockedError, LinkedInParseError, LinkedInTimeoutError
 from .parsers import (
@@ -182,80 +192,84 @@ class LinkedInPlaywrightScraper(JobSearchPort):
     async def search(self, keywords: str, location: str, limit: int = 20) -> list[Job]:
         """Run a single search; paginate until `limit` is reached or `max_pages` exhausted.
 
-        The throttle is acquired ONCE per `search()` (around the whole
-        loop) so consecutive `search()` calls are paced by
-        `min_interval_seconds`, while the page requests within a single
-        search happen back-to-back (one HTTP call per page). Per-page
-        pacing is then applied INSIDE the loop via
-        `await asyncio.sleep(inter_page_delay_seconds)` BEFORE pages
-        1, 2, 3, ... (page 0 is never delayed) — this is REQ-L-009.
-        The `> 0` check skips the call entirely when the delay is
-        `0.0` (no event-loop yield, no wall-clock wait).
+        The pagination loop is owned by `paginated_search`
+        (REQ-PAG-001..PAG-003). This method is the composition seam:
+        it opens a fresh context + page (with the LinkedIn-specific
+        `VIEWPORT` constant), then hands control to the helper with
+        a LinkedIn-specific `_make_fetch_one_page` closure. The
+        helper acquires the throttle (REQ-L-010 / REQ-PAG-002) ONCE
+        around the whole loop and owns the limit / max_pages /
+        inter-page-delay / timeout / zero-cards control flow.
 
-        REQ-L-007: a `wait_for_selector` timeout on page > 0 breaks
-        the loop gracefully and returns the first page's results. A
-        timeout on page 0 raises `LinkedInTimeoutError`.
+        Per-page pacing (REQ-L-009) is applied INSIDE the helper:
+        `await asyncio.sleep(inter_page_delay_seconds)` BEFORE
+        pages 1, 2, 3, ... (page 0 is never delayed). The `> 0`
+        check skips the call entirely when the delay is `0.0` (no
+        event-loop yield, no wall-clock wait).
+
+        REQ-L-007: a `wait_for_selector` timeout on page > 0
+        breaks the loop gracefully and returns the first page's
+        results. A timeout on page 0 raises `LinkedInTimeoutError`.
         """
-        jobs: list[Job] = []
-        async with self._throttle:
-            ctx = await self._browser.new_context(
-                user_agent=self._settings.user_agent,
-                viewport=VIEWPORT,
-            )
+        ctx = await self._browser.new_context(
+            user_agent=self._settings.user_agent,
+            viewport=VIEWPORT,
+        )
+        try:
+            page = await ctx.new_page()
             try:
-                page = await ctx.new_page()
-                try:
-                    for page_index in range(self._settings.max_pages):
-                        if len(jobs) >= limit:
-                            break
-                        # Inter-page pacing (REQ-L-009): sleep before
-                        # navigating to the NEXT page to reduce the
-                        # probability of LinkedIn anti-bot re-challenges
-                        # on the 2nd+ request. The first page
-                        # (page_index=0) is never delayed. A delay of
-                        # `0.0` skips the call entirely (no event-loop
-                        # yield, no wall-clock wait). The default
-                        # `Settings.linkedin_inter_page_delay_seconds = 1.0`
-                        # is sourced from env; tests pass `0.0` to disable.
-                        if page_index > 0 and self._settings.inter_page_delay_seconds > 0:
-                            await asyncio.sleep(self._settings.inter_page_delay_seconds)
-                        # LinkedIn serves ~25 jobs per page; page 0 starts
-                        # at offset 0, page 1 at offset 25, etc.
-                        url = self._build_url(keywords, location, page_index * 25)
-                        try:
-                            await self._navigate_and_wait(page, url)
-                        except LinkedInTimeoutError:
-                            if page_index == 0:
-                                # First page timing out is a real error
-                                # (LinkedIn auth-wall, zero results, etc.).
-                                raise
-                            # Subsequent page timed out: end of results
-                            # or anti-bot re-challenge. Return what we
-                            # have rather than failing the whole search.
-                            # The ~25-card first page is enough for the
-                            # vast majority of queries; ~limit requests
-                            # never reach a real page 2 anyway.
-                            break
-                        content = await page.content()
-                        soup = BeautifulSoup(content, "html.parser")
-                        if is_block_page(soup):
-                            raise LinkedInBlockedError(
-                                "LinkedIn returned an auth-wall / verification page"
-                            )
-                        remaining = limit - len(jobs)
-                        new_jobs = _parse_cards(soup, remaining)
-                        jobs.extend(new_jobs)
-                        if not new_jobs:
-                            # Zero new cards on any page = end of the
-                            # SERP. Break gracefully; the partner test
-                            # `test_zero_cards_on_page_one_breaks_loop`
-                            # pins this contract.
-                            break
-                finally:
-                    await page.close()
+                return await paginated_search(
+                    page=page,
+                    throttle=self._throttle,
+                    fetch_one_page=self._make_fetch_one_page(keywords, location),
+                    limit=limit,
+                    max_pages=self._settings.max_pages,
+                    inter_page_delay_seconds=self._settings.inter_page_delay_seconds,
+                    timeout_exc_type=LinkedInTimeoutError,
+                )
             finally:
-                await ctx.close()
-        return jobs
+                await page.close()
+        finally:
+            await ctx.close()
+
+    def _make_fetch_one_page(
+        self, keywords: str, location: str
+    ) -> Callable[[Any, int, int], Awaitable[list[Job]]]:
+        """Build a per-page closure that captures LinkedIn-specific concerns.
+
+        The closure passed to `paginated_search` is called once per
+        page with `(page, page_index, remaining)`. It navigates the
+        page, checks for an auth-wall / verification page, parses
+        the cards via the 2-arg `_parse_cards(soup, remaining)`,
+        and returns the per-page job list. It does NOT raise on
+        page-0 zero-cards (LinkedIn's current contract is "break
+        silently" per REQ-L-007; the helper's zero-cards break
+        handles it).
+
+        All LinkedIn-specific behavior that the canonical loop
+        helper must NOT know about lives here:
+            - URL formula: `start=page_index * 25` (LinkedIn serves
+              ~25 jobs per page; page 0 starts at offset 0).
+            - `is_block_page(soup)` check after `wait_for_selector`
+              (LinkedIn auth-wall / verification page).
+            - `_parse_cards(soup, remaining)` 2-arg shape (no
+              `domain` arg — Indeed/InfoJobs are 3-arg).
+            - NO page-0 zero-cards raise: the closure returns
+              `[]` and the helper's zero-cards break returns
+              `[]` to the caller. (Indeed/InfoJobs closures DO
+              raise a `*ParseError` in this case.)
+        """
+
+        async def fetch_one_page(page: Any, page_index: int, remaining: int) -> list[Job]:
+            url = self._build_url(keywords, location, page_index * 25)
+            await self._navigate_and_wait(page, url)
+            content = await page.content()
+            soup = BeautifulSoup(content, "html.parser")
+            if is_block_page(soup):
+                raise LinkedInBlockedError("LinkedIn returned an auth-wall / verification page")
+            return _parse_cards(soup, remaining)
+
+        return fetch_one_page
 
     @staticmethod
     def _build_url(keywords: str, location: str, start: int) -> str:
