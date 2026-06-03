@@ -40,6 +40,14 @@ async def jobsearch_error_handler(request: Request, exc: JobSearchError) -> JSON
     the log line emitted by the same request (REQ-020). The server log
     carries the concrete exception class and message so operators can
     diagnose without seeing the masked client response.
+
+    The response also includes an `X-Cache: MISS` header (REQ-C-003
+    3rd scenario). A 502 in this design ALWAYS implies a fresh MISS:
+    cache hits short-circuit before the port runs (no exception
+    possible) and a port exception propagates to the handler without
+    being cached (REQ-C-006). So the `X-Cache: MISS` header on 502
+    is unambiguous and tells the client "this is a fresh scrape
+    that just failed; retry, do not serve a cached value".
     """
     # Server-side diagnostic. NEVER include `exc` in the response body:
     # the response stays opaque so internal details (e.g. internal error
@@ -56,6 +64,7 @@ async def jobsearch_error_handler(request: Request, exc: JobSearchError) -> JSON
             "detail": UPSTREAM_UNAVAILABLE_DETAIL,
             "request_id": _request_id(request),
         },
+        headers={"X-Cache": "MISS"},
     )
 
 
