@@ -41,12 +41,13 @@ jobs-finder/
 │       ├── __init__.py
 │       ├── main.py                 # composition root + uvicorn entry
 │       ├── domain/                 # Job value object, base exceptions
-│       ├── application/            # JobSearchPort, use cases, DTOs
-│       │   └── usecases/           # one use case file per source
-│       ├── infrastructure/         # Playwright scrapers, parsers, throttle
+│       ├── application/            # JobSearchPort, CachePort, use cases, DTOs
+│       │   └── usecases/           # one use case file per source + cached wrapper
+│       ├── infrastructure/         # Playwright scrapers, parsers, throttle, cache
 │       │   ├── linkedin/           # LinkedInPlaywrightScraper + parsers
 │       │   ├── indeed/             # IndeedPlaywrightScraper + parsers
-│       │   └── infojobs/           # InfoJobsPlaywrightScraper + parsers
+│       │   ├── infojobs/           # InfoJobsPlaywrightScraper + parsers
+│       │   └── cache/              # InMemoryTTLCache primitive
 │       └── presentation/           # FastAPI app, routes, middleware, schemas
 │           └── routes/             # one route file per source
 └── tests/
@@ -55,8 +56,8 @@ jobs-finder/
     │   ├── linkedin_search.py
     │   ├── indeed_search.py
     │   └── infojobs_search.py
-    ├── unit/                       # parsers, throttle, use case, scraper, exceptions
-    └── integration/                # FastAPI app + composition root
+    ├── unit/                       # parsers, throttle, use case, scraper, exceptions, cache
+    └── integration/                # FastAPI app + composition root + X-Cache headers
 ```
 
 The dependency rule is
@@ -65,6 +66,17 @@ must not import `infrastructure/` or `presentation/`. Each source
 (`linkedin`, `indeed`, `infojobs`) has its own sub-package under
 `infrastructure/` and its own route file under `presentation/routes/`,
 mirrored by per-source fixtures under `tests/fixtures/`.
+
+### Caching
+
+The composition root (`app_factory.build_app()`) wraps each source's
+raw use case in a `CachedJobSearchUseCase` backed by an
+`InMemoryTTLCache`. The 3 source caches are independent (the cache
+key includes the source name). Each route sets an `X-Cache: HIT|MISS`
+response header from the use case's `SearchResult.cache_status.value`.
+The TTL is controlled by the `CACHE_TTL_SECONDS` env var (default
+`60.0`); setting it to `0` disables the cache. See the README
+"Caching" section for the full contract.
 
 ## How to run
 

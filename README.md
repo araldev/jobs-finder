@@ -15,6 +15,19 @@
 Each source has its own Legal Notice and Manual Verification procedure —
 read them both before running.
 
+## Response headers
+
+Every `GET /jobs/<source>` response carries these headers:
+
+| Header | Value | Purpose |
+| --- | --- | --- |
+| `X-Request-Id` | UUID (or the value of the request's `X-Request-Id` header, if present) | Correlation id for logs + 502 bodies. |
+| `X-Cache` | `HIT` or `MISS` | Whether the response was served from the in-memory TTL cache. `MISS` means the Playwright scraper was invoked; `HIT` means the cached `list[Job]` was returned without a browser launch. |
+
+The `X-Cache` header is additive — the JSON response body is unchanged.
+A `HIT` collapses a 2-15s Playwright round-trip into a sub-millisecond
+dict lookup; see "Caching" below.
+
 ## Legal Notice
 
 > **STOP. Read this before running anything.**
@@ -147,6 +160,38 @@ LINKEDIN_CORS_ALLOW_ORIGINS="https://app.example.com,https://admin.example.com" 
   uv run uvicorn jobs_finder.main:app --port 8000
 ```
 
+### Caching
+
+Each `GET /jobs/<source>` route wraps the source's `JobSearchPort` in a
+`CachedJobSearchUseCase` backed by an in-memory `InMemoryTTLCache` with
+absolute TTL semantics. The first call invokes the Playwright scraper
+and stores the result (`X-Cache: MISS`); every subsequent identical
+query within the TTL window returns the cached `list[Job]` without
+launching a browser (`X-Cache: HIT`).
+
+The TTL is controlled by the `CACHE_TTL_SECONDS` env var (default `60.0`).
+Set `CACHE_TTL_SECONDS=0` to disable caching (every call is a miss).
+The 3 source caches are independent (a LinkedIn HIT does not affect
+Indeed or InfoJobs) — the cache key includes the source name.
+
+```bash
+# Default: 60s TTL. A frontend SPA refreshing every 5s collapses
+# 12 requests into 1.
+uv run uvicorn jobs_finder.main:app --port 8000
+
+# 5-minute cache (longer absorption window, more stale-data risk).
+CACHE_TTL_SECONDS=300 uv run uvicorn jobs_finder.main:app --port 8000
+
+# Cache disabled (every call hits the upstream source).
+CACHE_TTL_SECONDS=0 uv run uvicorn jobs_finder.main:app --port 8000
+```
+
+Caveats: the cache is in-memory (no cross-process / cross-host sharing,
+no survival of process restart) and best-effort (two concurrent misses
+for the same key can cause two scraper calls; a future change can add
+`asyncio.Lock`-per-key for single-flight). Errors (502) are NOT cached
+so a transient Distil/Cloudflare block doesn't poison the cache.
+
 ### Structured JSON logs (with `request_id`)
 
 Log lines are emitted as single-line JSON to stderr with the field set
@@ -257,6 +302,7 @@ curl -i --get "http://localhost:8000/jobs/linkedin" \
 ```http
 HTTP/1.1 200 OK
 content-type: application/json
+x-cache: MISS
 x-request-id: <uuid-or-your-trace-id>
 
 {
@@ -272,6 +318,11 @@ x-request-id: <uuid-or-your-trace-id>
   ]
 }
 ```
+
+The first call returns `X-Cache: MISS` (the Playwright scraper was
+invoked). Repeating the exact same query within the TTL window
+(default 60s) returns `X-Cache: HIT` and the cached `list[Job]`
+without launching a browser. See the "Caching" section above.
 
 ```bash
 # 6. Trigger a 502. Two reproducible ways to do it:
@@ -396,6 +447,7 @@ curl -i "http://localhost:8000/jobs/indeed?keywords=python&l=madrid&limit=20"
 ```http
 HTTP/1.1 200 OK
 content-type: application/json
+x-cache: MISS
 x-request-id: <uuid-or-your-trace-id>
 
 {
@@ -411,6 +463,11 @@ x-request-id: <uuid-or-your-trace-id>
   ]
 }
 ```
+
+The first call returns `X-Cache: MISS` (Playwright invoked). Repeating
+the same query within the TTL window returns `X-Cache: HIT` without a
+browser launch. The Indeed cache is independent of the LinkedIn +
+InfoJobs caches.
 
 ```bash
 # 6. Trigger a 502. Two reproducible ways to do it:
@@ -551,6 +608,7 @@ curl -i "http://localhost:8000/jobs/infojobs?keywords=python&location=madrid&lim
 ```http
 HTTP/1.1 200 OK
 content-type: application/json
+x-cache: MISS
 x-request-id: <uuid-or-your-trace-id>
 
 {
@@ -566,6 +624,11 @@ x-request-id: <uuid-or-your-trace-id>
   ]
 }
 ```
+
+The first call returns `X-Cache: MISS` (Playwright invoked). Repeating
+the same query within the TTL window returns `X-Cache: HIT` without a
+browser launch. The InfoJobs cache is independent of the LinkedIn +
+Indeed caches.
 
 ```bash
 # 6. Trigger a 502 (Distil/Geetest challenge is also a valid
