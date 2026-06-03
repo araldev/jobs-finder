@@ -559,20 +559,25 @@ def test_infojobs_parsers_accept_string_or_tag() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_placeholder_fixture_has_at_least_15_cards() -> None:
-    """The real-capture fixture has 10+ cards (was 15+ in the v1 placeholder).
+def test_real_capture_fixture_has_at_least_10_offer_or_banner_elements() -> None:
+    """The T-010 real-capture fixture has 10+ card-like elements.
 
-    The v1 placeholder was synthetic with 15 cards (3 per date string).
     The T-010 real capture against `?q=python&l=madrid` returned
-    exactly 10 cards on the first page (InfoJobs's default page
-    size for this query). The parser contract is unchanged: any
-    number of cards ≥ 1 must parse correctly. The lower bound is
-    raised here only as a sanity check that the fixture is not
-    empty.
+    exactly 10 elements matching the `.ij-OfferList-offerCardItem`
+    CSS class on the first page: 5 real offer cards + 5 promoted
+    ad banners (which also carry the card class but lack a title
+    heading and are filtered out by the parser's
+    `_CARD_SELECTOR` via the `:has(h2.ij-OfferCardContent-description-title)`
+    pseudo-class).
+
+    The parser contract is unchanged: any number of cards ≥ 1 must
+    parse correctly. This test is a sanity check that the fixture
+    is not empty (a missing or corrupted capture would yield 0
+    elements and the test would fail loudly).
     """
     soup = BeautifulSoup(SEARCH_PAGE_HTML, "html.parser")
     cards = soup.select("li.ij-OfferList-offerCardItem")
-    assert len(cards) >= 10, f"expected 10+ cards, got {len(cards)}"
+    assert len(cards) >= 10, f"expected 10+ card elements, got {len(cards)}"
 
 
 def test_placeholder_fixture_file_path_is_loadable() -> None:
