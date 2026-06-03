@@ -444,6 +444,47 @@ The body's `detail` MUST be the literal string
 `"upstream source unavailable"` — the underlying exception type
 (`LinkedInTimeoutError`, `LinkedInBlockedError`, ...) is masked.
 
+### LinkedIn pagination
+
+`GET /jobs/linkedin` auto-paginates `start=0, 25, 50, ...` per page
+up to `max_pages` total requests (REQ-L-007). The default
+`max_pages=10` and `inter_page_delay_seconds=1.0` are mirrored from
+the Indeed scraper so all three sources behave consistently.
+
+| Env var | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `LINKEDIN_MAX_PAGES` | int | `10` | Hard cap on pages per `search()`. Set to `1` for the v0 single-page behavior; raise it to drain longer result streams. |
+| `LINKEDIN_INTER_PAGE_DELAY_SECONDS` | float | `1.0` | Pacing between pages to reduce the chance of LinkedIn's anti-bot re-challenging the 2nd+ request. Set to `0.0` to skip the sleep entirely. |
+
+#### Curl smoke test
+
+After `uv run uvicorn jobs_finder.main:app --port 8000` is running,
+exercise the paginated path against a real page (LinkedIn is the
+only source for which a live smoke test is in the spec):
+
+```bash
+# Start the server first (in another terminal):
+uv run uvicorn jobs_finder.main:app --host 0.0.0.0 --port 8000 &
+
+# Body curl — must return >= 25 jobs (one full page, ~25 cards).
+curl -sS 'http://localhost:8000/jobs/linkedin?keywords=python&location=madrid&limit=30' | head -c 4000
+
+# Header curl — first call MUST carry `X-Cache: MISS` (cache is cold).
+curl -sSI 'http://localhost:8000/jobs/linkedin?keywords=python&location=madrid&limit=30' | grep -i x-cache
+
+# Second call MUST carry `X-Cache: HIT` (cache layer + pagination
+# coexist correctly — the cached first-page result is returned
+# without re-navigating).
+curl -sSI 'http://localhost:8000/jobs/linkedin?keywords=python&location=madrid&limit=30' | grep -i x-cache
+
+# Kill the server when done:
+kill %1
+```
+
+If the body returns 0 jobs OR the headers lack `X-Cache: MISS`, the
+live path is broken from your IP (LinkedIn anti-bot, rate limit, or
+DOM drift). See "When the live path breaks" below.
+
 ### When the live path breaks
 
 If step 5 returns `200 {"jobs": []}` and the HTML is the auth wall, the

@@ -78,6 +78,15 @@ The TTL is controlled by the `CACHE_TTL_SECONDS` env var (default
 `60.0`); setting it to `0` disables the cache. See the README
 "Caching" section for the full contract.
 
+### LinkedIn pagination env vars
+
+The LinkedIn scraper auto-paginates `start=0, 25, 50, ...` per
+`search()` call (REQ-L-007). The two new env vars
+`LINKEDIN_MAX_PAGES` (default `10`) and
+`LINKEDIN_INTER_PAGE_DELAY_SECONDS` (default `1.0`) cap the loop
+and pace the per-page requests. See the README "LinkedIn pagination"
+subsection for the curl smoke test.
+
 ## How to run
 
 All commands are run from the project root and use `uv` (NOT `pip`, NOT
