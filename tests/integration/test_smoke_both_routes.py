@@ -35,6 +35,7 @@ from jobs_finder.application.usecases.search_linkedin_jobs import (
     SearchLinkedInJobsUseCase,
 )
 from jobs_finder.domain.job import Job
+from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCache
 from jobs_finder.presentation.app_factory import build_app
 from tests.conftest import FakeJobSearchPort
 
@@ -73,7 +74,11 @@ def both_sources_app() -> FastAPI:
     """
     shared_port = FakeJobSearchPort(jobs=[_linkedin_job(1), _indeed_job(1)])
     return build_app(
-        use_case=SearchLinkedInJobsUseCase(port=shared_port),
+        use_case=SearchLinkedInJobsUseCase(
+            port=shared_port,
+            cache=InMemoryTTLCache(ttl_seconds=60.0),
+            source="linkedin",
+        ),
         indeed_use_case=SearchJobsUseCase(port=shared_port),
     )
 

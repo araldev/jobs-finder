@@ -21,6 +21,7 @@ import pytest
 from jobs_finder.application.usecases.search_linkedin_jobs import (
     SearchLinkedInJobsUseCase,
 )
+from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCache
 from jobs_finder.infrastructure.linkedin.exceptions import (
     LinkedInBlockedError,
     LinkedInTimeoutError,
@@ -28,6 +29,20 @@ from jobs_finder.infrastructure.linkedin.exceptions import (
 from jobs_finder.presentation.app_factory import build_app
 
 from .test_api import FakeJobSearchPort
+
+
+def _wrap(port: FakeJobSearchPort) -> SearchLinkedInJobsUseCase:
+    """Build a `SearchLinkedInJobsUseCase` (cached wrapper) around the given port.
+
+    The `cache-ttl` change replaced the raw use case with a
+    `CachedJobSearchUseCase` wrapper. Each test builds a fresh
+    `InMemoryTTLCache` so there's no shared state.
+    """
+    return SearchLinkedInJobsUseCase(
+        port=port,
+        cache=InMemoryTTLCache(ttl_seconds=60.0),
+        source="linkedin",
+    )
 
 
 async def test_request_id_correlates_with_log_records(
@@ -45,7 +60,7 @@ async def test_request_id_correlates_with_log_records(
          `request_id` attribute (injected by `RequestIdLogFilter`).
     """
     fake_port = FakeJobSearchPort(error=LinkedInBlockedError("auth wall"))
-    app = build_app(use_case=SearchLinkedInJobsUseCase(port=fake_port))
+    app = build_app(use_case=_wrap(fake_port))
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -94,9 +109,7 @@ async def test_jobsearch_error_handler_logs_exception_class(
     and asserts each one is logged with its concrete class name.
     """
     app = build_app(
-        use_case=SearchLinkedInJobsUseCase(
-            port=FakeJobSearchPort(error=LinkedInTimeoutError("timeout waiting")),
-        ),
+        use_case=_wrap(FakeJobSearchPort(error=LinkedInTimeoutError("timeout waiting"))),
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -123,9 +136,7 @@ async def test_jobsearch_error_handler_logs_exception_class(
     # Now a different exception: must surface a different class name.
     caplog.clear()
     app_blocked = build_app(
-        use_case=SearchLinkedInJobsUseCase(
-            port=FakeJobSearchPort(error=LinkedInBlockedError("auth wall")),
-        ),
+        use_case=_wrap(FakeJobSearchPort(error=LinkedInBlockedError("auth wall"))),
     )
     transport_blocked = httpx.ASGITransport(app=app_blocked)
     async with httpx.AsyncClient(transport=transport_blocked, base_url="http://test") as ac:

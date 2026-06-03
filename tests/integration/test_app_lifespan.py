@@ -30,6 +30,7 @@ from httpx import ASGITransport, AsyncClient
 from jobs_finder.application.usecases.search_linkedin_jobs import (
     SearchLinkedInJobsUseCase,
 )
+from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCache
 from jobs_finder.infrastructure.linkedin.scraper import LinkedInPlaywrightScraper
 from jobs_finder.presentation.app_factory import build_app
 
@@ -103,7 +104,7 @@ async def test_build_app_default_lifespan_opens_default_scraper(
             "LinkedInPlaywrightScraper; first request would crash with "
             "AttributeError: 'NoneType' object has no attribute 'new_context'"
         )
-        port = app.state.use_case._port
+        port = app.state.use_case._port._port  # cached wrapper -> raw use case -> scraper
         assert port is enter_calls[0], (
             "Lifespan opened a different scraper instance than the one the use case holds."
         )
@@ -146,7 +147,11 @@ async def test_build_app_with_explicit_use_case_lifespan_is_noop(
     monkeypatch.setattr(LinkedInPlaywrightScraper, "__aexit__", fake_aexit)
 
     fake_port = _FakeJobSearchPort()
-    use_case = SearchLinkedInJobsUseCase(port=fake_port)
+    use_case = SearchLinkedInJobsUseCase(
+        port=fake_port,
+        cache=InMemoryTTLCache(ttl_seconds=60.0),
+        source="linkedin",
+    )
     app = build_app(use_case=use_case)
 
     async with _client_with_lifespan(app):

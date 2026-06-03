@@ -230,7 +230,9 @@ async def test_build_app_default_lifespan_opens_all_three_scrapers(
             "InfoJobsPlaywrightScraper; first InfoJobs request would crash."
         )
         # The use case wraps the same scraper instance the lifespan opened.
-        assert app.state.use_case._port is linkedin_enter_calls[0]  # noqa: SLF001
+        # The `cache-ttl` change wraps each use case in a `CachedJobSearchUseCase`;
+        # unwrap one level (cached wrapper -> raw use case -> scraper).
+        assert app.state.use_case._port._port is linkedin_enter_calls[0]  # noqa: SLF001
         assert app.state.indeed_use_case._port is indeed_enter_calls[0]  # noqa: SLF001
         assert app.state.infojobs_use_case._port is infojobs_enter_calls[0]  # noqa: SLF001
 

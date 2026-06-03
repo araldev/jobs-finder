@@ -32,6 +32,7 @@ from jobs_finder.application.usecases.search_linkedin_jobs import (
     SearchLinkedInJobsUseCase,
 )
 from jobs_finder.domain.job import Job
+from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCache
 from jobs_finder.presentation.app_factory import build_app
 from tests.conftest import FakeJobSearchPort
 
@@ -53,7 +54,11 @@ async def test_smoke_all_three_routes_return_200_with_populated_jobs() -> None:
     infojobs_port = FakeJobSearchPort(jobs=sample_jobs)
 
     app = build_app(
-        use_case=SearchLinkedInJobsUseCase(port=linkedin_port),
+        use_case=SearchLinkedInJobsUseCase(
+            port=linkedin_port,
+            cache=InMemoryTTLCache(ttl_seconds=60.0),
+            source="linkedin",
+        ),
         indeed_use_case=IndeedSearchJobsUseCase(port=indeed_port),
         infojobs_use_case=InfoJobsSearchJobsUseCase(port=infojobs_port),
     )

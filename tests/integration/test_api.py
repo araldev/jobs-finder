@@ -16,10 +16,9 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from jobs_finder.application.usecases.search_linkedin_jobs import (
-    SearchLinkedInJobsUseCase,
-)
+from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase
 from jobs_finder.domain.job import Job
+from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCache
 from jobs_finder.infrastructure.linkedin.exceptions import LinkedInBlockedError
 from jobs_finder.presentation.app_factory import build_app
 
@@ -80,8 +79,20 @@ def fake_port() -> FakeJobSearchPort:
 
 @pytest.fixture
 def app(fake_port: FakeJobSearchPort) -> FastAPI:
-    """A FastAPI app whose use case is wired to the fake port."""
-    return build_app(use_case=SearchLinkedInJobsUseCase(port=fake_port))
+    """A FastAPI app whose use case is wired to the fake port.
+
+    The `cache-ttl` change wraps the raw use case in a
+    `CachedJobSearchUseCase`. The fixture builds the cached wrapper
+    with a fresh `InMemoryTTLCache` (no shared state across tests)
+    so the route's `X-Cache: HIT|MISS` header reflects the cache
+    state per-test.
+    """
+    cached = CachedJobSearchUseCase(
+        port=fake_port,
+        cache=InMemoryTTLCache(ttl_seconds=60.0),
+        source="linkedin",
+    )
+    return build_app(use_case=cached)
 
 
 @pytest.fixture

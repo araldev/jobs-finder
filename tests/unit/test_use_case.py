@@ -2,8 +2,11 @@
 
 Spec: REQ-008, REQ-009, REQ-010, REQ-011, REQ-012.
 Design: `application/` defines the `JobSearchPort` Protocol, the
-`SearchLinkedInInput` DTO, and the `SearchLinkedInJobsUseCase`. The use case
-trusts the input is already validated by the presentation layer.
+`SearchLinkedInInput` DTO, and the `RawLinkedInJobsUseCase` (renamed
+from the original `SearchLinkedInJobsUseCase` in the `cache-ttl`
+change — the public LinkedIn use case is now a re-export of
+`CachedJobSearchUseCase`). The raw use case trusts the input is
+already validated by the presentation layer.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ import pytest
 from jobs_finder.application.dto import SearchLinkedInInput
 from jobs_finder.application.ports import JobSearchPort
 from jobs_finder.application.usecases.search_linkedin_jobs import (
-    SearchLinkedInJobsUseCase,
+    RawLinkedInJobsUseCase,
 )
 from jobs_finder.domain.exceptions import JobSearchError
 from jobs_finder.domain.job import Job
@@ -114,7 +117,7 @@ async def test_use_case_returns_jobs_from_port_unchanged() -> None:
     """REQ-010: use case returns the port's list unchanged."""
     jobs = [_sample_job(1), _sample_job(2), _sample_job(3)]
     port = FakeJobSearchPort(jobs=jobs)
-    use_case = SearchLinkedInJobsUseCase(port=port)
+    use_case = RawLinkedInJobsUseCase(port=port)
 
     result = await use_case.execute(
         SearchLinkedInInput(keywords="python", location="madrid", limit=20)
@@ -127,7 +130,7 @@ async def test_use_case_returns_jobs_from_port_unchanged() -> None:
 async def test_use_case_forwards_input_fields_to_port() -> None:
     """The use case forwards keywords/location/limit to the port unchanged."""
     port = FakeJobSearchPort(jobs=[])
-    use_case = SearchLinkedInJobsUseCase(port=port)
+    use_case = RawLinkedInJobsUseCase(port=port)
 
     await use_case.execute(SearchLinkedInInput(keywords="rust", location="barcelona", limit=7))
 
@@ -137,7 +140,7 @@ async def test_use_case_forwards_input_fields_to_port() -> None:
 async def test_use_case_returns_empty_list_when_port_returns_empty() -> None:
     """An empty result is not failure — the use case does NOT mask it."""
     port = FakeJobSearchPort(jobs=[])
-    use_case = SearchLinkedInJobsUseCase(port=port)
+    use_case = RawLinkedInJobsUseCase(port=port)
 
     result = await use_case.execute(SearchLinkedInInput(keywords="nothing", location="nowhere"))
 
@@ -152,7 +155,7 @@ async def test_use_case_returns_empty_list_when_port_returns_empty() -> None:
 async def test_use_case_propagates_job_search_error() -> None:
     """A `JobSearchError` from the port propagates unchanged."""
     port = FakeJobSearchPort(error=JobSearchError("upstream is down"))
-    use_case = SearchLinkedInJobsUseCase(port=port)
+    use_case = RawLinkedInJobsUseCase(port=port)
 
     with pytest.raises(JobSearchError, match="upstream is down"):
         await use_case.execute(SearchLinkedInInput(keywords="python", location="madrid"))
@@ -165,7 +168,7 @@ async def test_use_case_propagates_subclass_of_job_search_error() -> None:
         pass
 
     port = FakeJobSearchPort(error=CustomBlockedError("auth wall"))
-    use_case = SearchLinkedInJobsUseCase(port=port)
+    use_case = RawLinkedInJobsUseCase(port=port)
 
     with pytest.raises(CustomBlockedError, match="auth wall"):
         await use_case.execute(SearchLinkedInInput(keywords="python", location="madrid"))
@@ -178,7 +181,7 @@ async def test_use_case_propagates_subclass_of_job_search_error() -> None:
 
 def test_use_case_execute_is_coroutine_function() -> None:
     """REQ-011: `execute` is a coroutine function (awaitable)."""
-    use_case = SearchLinkedInJobsUseCase(port=FakeJobSearchPort())
+    use_case = RawLinkedInJobsUseCase(port=FakeJobSearchPort())
     assert inspect.iscoroutinefunction(use_case.execute) is True
 
 

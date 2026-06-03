@@ -53,6 +53,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from playwright_stealth import Stealth  # type: ignore[import-untyped]
 
+from jobs_finder.application.ports import JobSearchCacheKey
+from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase
 from jobs_finder.application.usecases.search_indeed_jobs import (
     SearchJobsUseCase as IndeedSearchJobsUseCase,
 )
@@ -60,8 +62,11 @@ from jobs_finder.application.usecases.search_infojobs_jobs import (
     SearchJobsUseCase as InfoJobsSearchJobsUseCase,
 )
 from jobs_finder.application.usecases.search_linkedin_jobs import (
+    RawLinkedInJobsUseCase,
     SearchLinkedInJobsUseCase,
 )
+from jobs_finder.domain.job import Job
+from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCache
 from jobs_finder.infrastructure.config import Settings
 from jobs_finder.infrastructure.indeed.scraper import (
     IndeedPlaywrightScraper,
@@ -92,7 +97,7 @@ from jobs_finder.presentation.routes import infojobs as infojobs_routes
 from jobs_finder.presentation.routes import linkedin as linkedin_routes
 
 
-def build_app(
+def build_app(  # noqa: PLR0915
     use_case: SearchLinkedInJobsUseCase | None = None,
     *,
     indeed_use_case: IndeedSearchJobsUseCase | None = None,
@@ -141,7 +146,21 @@ def build_app(
                 timeout_ms=effective_settings.request_timeout_ms,
             ),
         )
-        use_case = SearchLinkedInJobsUseCase(port=scraper)
+        raw_use_case = RawLinkedInJobsUseCase(port=scraper)
+        # T-003: wrap the raw use case in a `CachedJobSearchUseCase`
+        # so repeated identical queries within the TTL window return
+        # the cached `list[Job]` without invoking the Playwright
+        # scraper. The wrapper exposes `search(...)` which the route
+        # calls (REQ-C-003 — the route sets the `X-Cache: HIT|MISS`
+        # response header from the wrapper's `SearchResult.cache_status`).
+        linkedin_cache: InMemoryTTLCache[JobSearchCacheKey, list[Job]] = InMemoryTTLCache(
+            ttl_seconds=effective_settings.cache_ttl_seconds,
+        )
+        use_case = CachedJobSearchUseCase(
+            port=raw_use_case,
+            cache=linkedin_cache,
+            source="linkedin",
+        )
 
     if indeed_use_case is None:
         # T-008: the default branch now also builds the Indeed
@@ -216,15 +235,39 @@ def build_app(
     # wrapping a real `*PlaywrightScraper` is opened on startup and
     # closed on shutdown; a use case wrapping anything else is left
     # untouched.
-    raw_linkedin_port = getattr(use_case, "_port", None)
+    #
+    # T-003 (cache-ttl): the LinkedIn use case is now a
+    # `CachedJobSearchUseCase` whose `_port` is the raw use case
+    # (`RawLinkedInJobsUseCase`), not the scraper. The lifespan
+    # helper unwraps one level: a cached wrapper around a raw
+    # use case around a scraper means we follow `.port._port` to
+    # reach the scraper. A directly-injected use case (no cache
+    # wrapper) has `.port` as the scraper.
+    def _unwrap_to_port(candidate: object) -> object | None:
+        """Walk one level through a `CachedJobSearchUseCase` to find the inner port.
+
+        Returns the scraper (or any other port) the lifespan should
+        open. `None` if the candidate is not a use case at all.
+        """
+        inner = getattr(candidate, "_port", None)
+        if inner is None:
+            return None
+        # Cached wrapper -> raw use case -> scraper.
+        deeper = getattr(inner, "_port", None)
+        if deeper is not None:
+            return deeper  # type: ignore[no-any-return]
+        # Raw use case (or direct port) -> the port itself.
+        return inner  # type: ignore[no-any-return]
+
+    raw_linkedin_port = _unwrap_to_port(use_case)
     scraper_for_lifespan: LinkedInPlaywrightScraper | None = (
         raw_linkedin_port if isinstance(raw_linkedin_port, LinkedInPlaywrightScraper) else None
     )
-    raw_indeed_port = getattr(indeed_use_case, "_port", None)
+    raw_indeed_port = _unwrap_to_port(indeed_use_case)
     indeed_scraper_for_lifespan: IndeedPlaywrightScraper | None = (
         raw_indeed_port if isinstance(raw_indeed_port, IndeedPlaywrightScraper) else None
     )
-    raw_infojobs_port = getattr(infojobs_use_case, "_port", None)
+    raw_infojobs_port = _unwrap_to_port(infojobs_use_case)
     infojobs_scraper_for_lifespan: InfoJobsPlaywrightScraper | None = (
         raw_infojobs_port if isinstance(raw_infojobs_port, InfoJobsPlaywrightScraper) else None
     )
@@ -270,20 +313,23 @@ def build_app(
     app = FastAPI(title="jobs-finder", lifespan=lifespan)
     app.state.use_case = use_case
     # Expose the underlying port for diagnostics; routes use the use case.
-    app.state.job_search_port = getattr(use_case, "_port", None)
+    # T-003 (cache-ttl): unwrap the cached wrapper if present so
+    # `app.state.job_search_port` still points at the scraper (or
+    # any other port) for diagnostics, not at the raw use case.
+    app.state.job_search_port = _unwrap_to_port(use_case)
     # The Indeed use case defaults to `None`; the route raises a
     # descriptive `RuntimeError` if it's missing so misconfiguration
     # surfaces in tests rather than as a 500.
     app.state.indeed_use_case = indeed_use_case
     app.state.indeed_job_search_port = (
-        getattr(indeed_use_case, "_port", None) if indeed_use_case is not None else None
+        _unwrap_to_port(indeed_use_case) if indeed_use_case is not None else None
     )
     # The InfoJobs use case defaults to `None`; the route raises a
     # descriptive `RuntimeError` if it's missing so misconfiguration
     # surfaces in tests rather than as a 500.
     app.state.infojobs_use_case = infojobs_use_case
     app.state.infojobs_job_search_port = (
-        getattr(infojobs_use_case, "_port", None) if infojobs_use_case is not None else None
+        _unwrap_to_port(infojobs_use_case) if infojobs_use_case is not None else None
     )
 
     # Middleware — order matters. Starlette runs middlewares outermost

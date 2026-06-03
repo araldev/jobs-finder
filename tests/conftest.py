@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi import FastAPI
 
+from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase
 from jobs_finder.application.usecases.search_indeed_jobs import (
     SearchJobsUseCase as IndeedSearchJobsUseCase,
 )
@@ -42,7 +43,26 @@ from jobs_finder.application.usecases.search_linkedin_jobs import (
     SearchLinkedInJobsUseCase,
 )
 from jobs_finder.domain.job import Job
+from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCache
 from jobs_finder.presentation.app_factory import build_app
+
+
+def _build_cached_linkedin_use_case(
+    port: FakeJobSearchPort,
+) -> CachedJobSearchUseCase:
+    """Wrap a LinkedIn `FakeJobSearchPort` in a fresh cached wrapper.
+
+    The `cache-ttl` change replaces the raw `SearchLinkedInJobsUseCase`
+    with a `CachedJobSearchUseCase` wrapper. Tests that build the
+    app via `build_app(use_case=...)` need a cached wrapper; this
+    helper constructs one with a fresh `InMemoryTTLCache` (no
+    shared state across tests).
+    """
+    return SearchLinkedInJobsUseCase(
+        port=port,
+        cache=InMemoryTTLCache(ttl_seconds=60.0),
+        source="linkedin",
+    )
 
 
 class FakeJobSearchPort:
@@ -158,7 +178,7 @@ def app(
     and per-source cross-check tests.
     """
     linkedin_port = FakeJobSearchPort()
-    linkedin_use_case = SearchLinkedInJobsUseCase(port=linkedin_port)
+    linkedin_use_case = _build_cached_linkedin_use_case(port=linkedin_port)
     indeed_use_case = IndeedSearchJobsUseCase(port=fake_indeed_port)
     infojobs_use_case = InfoJobsSearchJobsUseCase(port=fake_infojobs_port)
     return build_app(

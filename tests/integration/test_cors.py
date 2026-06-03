@@ -22,6 +22,7 @@ from fastapi import FastAPI
 from jobs_finder.application.usecases.search_linkedin_jobs import (
     SearchLinkedInJobsUseCase,
 )
+from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCache
 from jobs_finder.presentation.app_factory import build_app
 
 from .test_api import FakeJobSearchPort
@@ -31,7 +32,13 @@ from .test_api import FakeJobSearchPort
 def app() -> FastAPI:
     """An app with an empty fake port (never called by these tests)."""
     fake_port = FakeJobSearchPort(jobs=[])
-    return build_app(use_case=SearchLinkedInJobsUseCase(port=fake_port))
+    return build_app(
+        use_case=SearchLinkedInJobsUseCase(
+            port=fake_port,
+            cache=InMemoryTTLCache(ttl_seconds=60.0),
+            source="linkedin",
+        ),
+    )
 
 
 @pytest.fixture
