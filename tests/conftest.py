@@ -179,8 +179,16 @@ def app(
     """
     linkedin_port = FakeJobSearchPort()
     linkedin_use_case = _build_cached_linkedin_use_case(port=linkedin_port)
-    indeed_use_case = IndeedSearchJobsUseCase(port=fake_indeed_port)
-    infojobs_use_case = InfoJobsSearchJobsUseCase(port=fake_infojobs_port)
+    indeed_use_case = IndeedSearchJobsUseCase(
+        port=fake_indeed_port,
+        cache=InMemoryTTLCache(ttl_seconds=60.0),
+        source="indeed",
+    )
+    infojobs_use_case = InfoJobsSearchJobsUseCase(
+        port=fake_infojobs_port,
+        cache=InMemoryTTLCache(ttl_seconds=60.0),
+        source="infojobs",
+    )
     return build_app(
         use_case=linkedin_use_case,
         indeed_use_case=indeed_use_case,

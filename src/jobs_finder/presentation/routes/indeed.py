@@ -1,16 +1,18 @@
 """`GET /jobs/indeed` route.
 
-Spec: REQ-I-012, REQ-I-013, REQ-I-017. The route:
+Spec: REQ-I-012, REQ-I-013, REQ-I-017, REQ-C-003. The route:
   1. Validates the query via the Pydantic `IndeedJobsQuery` schema.
   2. Resolves the use case from `request.app.state.indeed_use_case`
      (set by `app_factory.build_app`).
-  3. Maps the validated query to a `SearchIndeedInput` dataclass.
-  4. Calls the use case and maps the returned `list[Job]` to an
-     `IndeedJobsResponse`.
+  3. Calls the use case's `search(...)` method (the cached wrapper
+     interface) which returns a `SearchResult(jobs, cache_status)`.
+  4. Sets the `X-Cache: HIT|MISS` response header from
+     `result.cache_status.value` (REQ-C-003).
+  5. Maps the `result.jobs` to an `IndeedJobsResponse`.
 
 The route is async, has zero `JobSearchPort`-shaped knowledge (it only
-sees the use case), and lets the framework handle 422 (validation) and
-the registered handler handle 502 (port failure).
+sees the cached wrapper), and lets the framework handle 422
+(validation) and the registered handler handle 502 (port failure).
 
 The `SearchJobsUseCase` import is from the SOURCE-NEUTRAL module
 `application/usecases/search_indeed_jobs.py`. The class was renamed
@@ -24,10 +26,9 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 
-from jobs_finder.application.dto import SearchIndeedInput
-from jobs_finder.application.usecases.search_indeed_jobs import SearchJobsUseCase
+from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase
 from jobs_finder.presentation.schemas import (
     IndeedJobsQuery,
     IndeedJobsResponse,
@@ -37,13 +38,15 @@ from jobs_finder.presentation.schemas import (
 router = APIRouter()
 
 
-def get_indeed_use_case(request: Request) -> SearchJobsUseCase:
+def get_indeed_use_case(request: Request) -> CachedJobSearchUseCase:
     """Resolve the Indeed use case from `app.state.indeed_use_case`.
 
     `app_factory.build_app` is responsible for setting it. Tests build the
     app with `build_app(indeed_use_case=...)` so this dependency is always
     wired. Mirrors the LinkedIn `get_use_case` dependency in
-    `presentation/routes/linkedin.py`.
+    `presentation/routes/linkedin.py`. The dependency type is
+    `CachedJobSearchUseCase` (the public Indeed use case after the
+    `cache-ttl` change).
     """
     use_case = getattr(request.app.state, "indeed_use_case", None)
     if use_case is None:
@@ -57,14 +60,18 @@ def get_indeed_use_case(request: Request) -> SearchJobsUseCase:
 @router.get("/jobs/indeed", response_model=IndeedJobsResponse)
 async def search_indeed(
     query: Annotated[IndeedJobsQuery, Query()],
-    use_case: Annotated[SearchJobsUseCase, Depends(get_indeed_use_case)],
+    use_case: Annotated[CachedJobSearchUseCase, Depends(get_indeed_use_case)],
+    response: Response,
 ) -> IndeedJobsResponse:
-    """Search Indeed for jobs matching the validated query."""
-    jobs = await use_case.execute(
-        SearchIndeedInput(
-            keywords=query.keywords,
-            location=query.location,
-            limit=query.limit,
-        )
+    """Search Indeed for jobs matching the validated query.
+
+    Sets the `X-Cache: HIT|MISS` response header from the use case's
+    `SearchResult.cache_status` (REQ-C-003).
+    """
+    result = await use_case.search(
+        keywords=query.keywords,
+        location=query.location,
+        limit=query.limit,
     )
-    return IndeedJobsResponse(jobs=[to_response(job) for job in jobs])
+    response.headers["X-Cache"] = result.cache_status.value
+    return IndeedJobsResponse(jobs=[to_response(job) for job in result.jobs])

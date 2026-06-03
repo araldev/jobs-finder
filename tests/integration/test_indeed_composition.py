@@ -180,7 +180,7 @@ async def test_build_app_default_lifespan_opens_both_scrapers(
         # The `cache-ttl` change wraps each use case in a `CachedJobSearchUseCase`;
         # unwrap one level (cached wrapper -> raw use case -> scraper).
         assert app.state.use_case._port._port is linkedin_enter_calls[0]  # noqa: SLF001
-        assert app.state.indeed_use_case._port is indeed_enter_calls[0]  # noqa: SLF001
+        assert app.state.indeed_use_case._port._port is indeed_enter_calls[0]  # noqa: SLF001
 
     # Both scrapers were closed on shutdown.
     assert len(linkedin_exit_calls) == 1

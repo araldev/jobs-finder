@@ -1,6 +1,6 @@
 """Use case: orchestrate a single job-search call against any port.
 
-Spec: REQ-J-004.
+Spec: REQ-J-004, REQ-C-001..REQ-C-006.
 
 This module is the per-source binding entry point for the presentation
 layer. The class is intentionally named generically and the input
@@ -12,6 +12,11 @@ name into the code would be a smell that something is wrong.
 
 The use case is a thin orchestrator: it does not parse HTML, does not
 know about Playwright, and does not catch exceptions from the port.
+
+T-004 (cache-ttl): the public `SearchJobsUseCase` is now a
+re-export of `CachedJobSearchUseCase` (the cached wrapper). The
+raw orchestrator is exposed as `RawSearchJobsUseCase` for tests
+that exercise the unwrapped implementation.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from jobs_finder.application.ports import JobSearchPort
+from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase
 from jobs_finder.domain.job import Job
 
 
@@ -48,8 +54,15 @@ class _SearchInput(Protocol):
     def limit(self) -> int: ...
 
 
-class SearchJobsUseCase:
-    """Orchestrates a single job-search call against any `JobSearchPort`."""
+class RawSearchJobsUseCase:
+    """Orchestrates a single job-search call against any `JobSearchPort`.
+
+    Renamed from the original `SearchJobsUseCase` in the
+    `cache-ttl` change (T-004). The public `SearchJobsUseCase`
+    (re-exported below) is the cached wrapper. This class is the
+    raw orchestrator that the cached wrapper composes as its
+    inner port.
+    """
 
     def __init__(self, port: JobSearchPort) -> None:
         self._port = port
@@ -63,3 +76,38 @@ class SearchJobsUseCase:
         empty list on failure.
         """
         return await self._port.search(input.keywords, input.location, input.limit)
+
+    async def search(self, keywords: str, location: str, limit: int = 20) -> list[Job]:
+        """Structural `JobSearchPort` shim.
+
+        `CachedJobSearchUseCase` is typed against `JobSearchPort`,
+        whose `search` method is the seam. Exposing `search` on
+        the raw use case lets the cached wrapper compose the raw
+        use case as its inner port. The body forwards to
+        `execute` via a duck-typed input object so the existing
+        DTO path is unchanged.
+        """
+        return await self.execute(_InlineInput(keywords, location, limit))
+
+
+class _InlineInput:
+    """Duck-typed `_SearchInput` for the `search` shim.
+
+    Implements the `keywords` / `location` / `limit` read-only
+    attributes the use case's `execute` consumes. Used only by
+    the `search` shim — production callers go through the DTO.
+    """
+
+    __slots__ = ("keywords", "location", "limit")
+
+    def __init__(self, keywords: str, location: str, limit: int) -> None:
+        self.keywords = keywords
+        self.location = location
+        self.limit = limit
+
+
+# Public re-export. `SearchJobsUseCase` is the cached wrapper
+# (`CachedJobSearchUseCase`) so existing imports resolve to the
+# type the route consumes. Tests that need the raw orchestrator
+# should import `RawSearchJobsUseCase` directly.
+SearchJobsUseCase = CachedJobSearchUseCase

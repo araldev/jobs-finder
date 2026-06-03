@@ -30,7 +30,9 @@ import pytest
 
 from jobs_finder.application.dto import SearchIndeedInput
 from jobs_finder.application.ports import JobSearchPort
-from jobs_finder.application.usecases.search_indeed_jobs import SearchJobsUseCase
+from jobs_finder.application.usecases.search_indeed_jobs import (
+    RawSearchJobsUseCase,
+)
 from jobs_finder.domain.exceptions import JobSearchError
 from jobs_finder.domain.job import Job
 from tests.conftest import FakeJobSearchPort
@@ -82,7 +84,7 @@ async def test_use_case_returns_jobs_from_port_unchanged(
     sample_indeed_jobs: list[Job],
 ) -> None:
     """REQ-I-004: use case returns the port's list unchanged (3 sample jobs)."""
-    use_case = SearchJobsUseCase(port=fake_port)
+    use_case = RawSearchJobsUseCase(port=fake_port)
 
     result = await use_case.execute(
         SearchIndeedInput(keywords="python", location="madrid", limit=20)
@@ -95,7 +97,7 @@ async def test_use_case_returns_jobs_from_port_unchanged(
 async def test_use_case_forwards_input_fields_to_port() -> None:
     """The use case forwards keywords/location/limit to the port unchanged."""
     port = FakeJobSearchPort(jobs=[])
-    use_case = SearchJobsUseCase(port=port)
+    use_case = RawSearchJobsUseCase(port=port)
 
     await use_case.execute(SearchIndeedInput(keywords="rust", location="barcelona", limit=7))
 
@@ -105,7 +107,7 @@ async def test_use_case_forwards_input_fields_to_port() -> None:
 async def test_use_case_returns_empty_list_when_port_returns_empty() -> None:
     """An empty result is not failure — the use case does NOT mask it."""
     port = FakeJobSearchPort(jobs=[])
-    use_case = SearchJobsUseCase(port=port)
+    use_case = RawSearchJobsUseCase(port=port)
 
     result = await use_case.execute(SearchIndeedInput(keywords="nothing", location="nowhere"))
 
@@ -128,7 +130,7 @@ async def test_use_case_propagates_indeed_blocked_error() -> None:
     from jobs_finder.infrastructure.indeed.exceptions import IndeedBlockedError  # noqa: PLC0415
 
     port = FakeJobSearchPort(error=IndeedBlockedError("cloudflare challenge"))
-    use_case = SearchJobsUseCase(port=port)
+    use_case = RawSearchJobsUseCase(port=port)
 
     with pytest.raises(IndeedBlockedError, match="cloudflare challenge"):
         await use_case.execute(SearchIndeedInput(keywords="python", location="madrid"))
@@ -137,7 +139,7 @@ async def test_use_case_propagates_indeed_blocked_error() -> None:
 async def test_use_case_propagates_generic_job_search_error() -> None:
     """A generic `JobSearchError` from the port propagates unchanged."""
     port = FakeJobSearchPort(error=JobSearchError("upstream is down"))
-    use_case = SearchJobsUseCase(port=port)
+    use_case = RawSearchJobsUseCase(port=port)
 
     with pytest.raises(JobSearchError, match="upstream is down"):
         await use_case.execute(SearchIndeedInput(keywords="python", location="madrid"))
@@ -150,7 +152,7 @@ async def test_use_case_propagates_generic_job_search_error() -> None:
 
 def test_use_case_execute_is_coroutine_function(fake_port: FakeJobSearchPort) -> None:
     """`execute` is a coroutine function (awaitable)."""
-    use_case = SearchJobsUseCase(port=fake_port)
+    use_case = RawSearchJobsUseCase(port=fake_port)
     assert inspect.iscoroutinefunction(use_case.execute) is True
 
 

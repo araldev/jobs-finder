@@ -56,7 +56,13 @@ from playwright_stealth import Stealth  # type: ignore[import-untyped]
 from jobs_finder.application.ports import JobSearchCacheKey
 from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase
 from jobs_finder.application.usecases.search_indeed_jobs import (
+    RawSearchJobsUseCase as RawIndeedJobsUseCase,
+)
+from jobs_finder.application.usecases.search_indeed_jobs import (
     SearchJobsUseCase as IndeedSearchJobsUseCase,
+)
+from jobs_finder.application.usecases.search_infojobs_jobs import (
+    RawSearchJobsUseCase as RawInfoJobsJobsUseCase,
 )
 from jobs_finder.application.usecases.search_infojobs_jobs import (
     SearchJobsUseCase as InfoJobsSearchJobsUseCase,
@@ -191,7 +197,19 @@ def build_app(  # noqa: PLR0915
             # `browser_factory` so the stealth script never runs.
             stealth=Stealth(),
         )
-        indeed_use_case = IndeedSearchJobsUseCase(port=indeed_scraper)
+        raw_indeed_use_case = RawIndeedJobsUseCase(port=indeed_scraper)
+        # T-004 (cache-ttl): wrap the raw Indeed use case in its
+        # OWN `CachedJobSearchUseCase` so the Indeed cache is
+        # independent of the LinkedIn + InfoJobs caches (REQ-C-005
+        # — per-source isolation).
+        indeed_cache: InMemoryTTLCache[JobSearchCacheKey, list[Job]] = InMemoryTTLCache(
+            ttl_seconds=effective_settings.cache_ttl_seconds,
+        )
+        indeed_use_case = IndeedSearchJobsUseCase(
+            port=raw_indeed_use_case,
+            cache=indeed_cache,
+            source="indeed",
+        )
 
     if infojobs_use_case is None:
         # T-007: the default branch builds the InfoJobs scraper +
@@ -225,7 +243,19 @@ def build_app(  # noqa: PLR0915
             # `browser_factory` so the stealth script never runs.
             stealth=Stealth(),
         )
-        infojobs_use_case = InfoJobsSearchJobsUseCase(port=infojobs_scraper)
+        raw_infojobs_use_case = RawInfoJobsJobsUseCase(port=infojobs_scraper)
+        # T-004 (cache-ttl): wrap the raw InfoJobs use case in its
+        # OWN `CachedJobSearchUseCase` so the InfoJobs cache is
+        # independent of the LinkedIn + Indeed caches (REQ-C-005
+        # — per-source isolation).
+        infojobs_cache: InMemoryTTLCache[JobSearchCacheKey, list[Job]] = InMemoryTTLCache(
+            ttl_seconds=effective_settings.cache_ttl_seconds,
+        )
+        infojobs_use_case = InfoJobsSearchJobsUseCase(
+            port=raw_infojobs_use_case,
+            cache=infojobs_cache,
+            source="infojobs",
+        )
 
     # The lifespan opens ALL THREE default scrapers. When tests
     # inject a use case wrapping a non-`*PlaywrightScraper` port

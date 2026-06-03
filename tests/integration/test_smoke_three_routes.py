@@ -59,8 +59,16 @@ async def test_smoke_all_three_routes_return_200_with_populated_jobs() -> None:
             cache=InMemoryTTLCache(ttl_seconds=60.0),
             source="linkedin",
         ),
-        indeed_use_case=IndeedSearchJobsUseCase(port=indeed_port),
-        infojobs_use_case=InfoJobsSearchJobsUseCase(port=infojobs_port),
+        indeed_use_case=IndeedSearchJobsUseCase(
+            port=indeed_port,
+            cache=InMemoryTTLCache(ttl_seconds=60.0),
+            source="indeed",
+        ),
+        infojobs_use_case=InfoJobsSearchJobsUseCase(
+            port=infojobs_port,
+            cache=InMemoryTTLCache(ttl_seconds=60.0),
+            source="infojobs",
+        ),
     )
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

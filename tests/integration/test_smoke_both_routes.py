@@ -79,7 +79,11 @@ def both_sources_app() -> FastAPI:
             cache=InMemoryTTLCache(ttl_seconds=60.0),
             source="linkedin",
         ),
-        indeed_use_case=SearchJobsUseCase(port=shared_port),
+        indeed_use_case=SearchJobsUseCase(
+            port=shared_port,
+            cache=InMemoryTTLCache(ttl_seconds=60.0),
+            source="indeed",
+        ),
     )
 
 
