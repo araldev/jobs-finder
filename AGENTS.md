@@ -49,7 +49,7 @@ jobs-finder/
 │       │   ├── infojobs/           # InfoJobsPlaywrightScraper + parsers
 │       │   └── cache/              # InMemoryTTLCache primitive
 │       └── presentation/           # FastAPI app, routes, middleware, schemas
-│           └── routes/             # one route file per source
+│           └── routes/             # one route file per source (linkedin, indeed, infojobs) + aggregator
 └── tests/
     ├── conftest.py
     ├── fixtures/                   # inline HTML for parser tests

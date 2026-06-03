@@ -11,9 +11,11 @@
 | `GET /jobs/linkedin` | `linkedin.com/jobs/search` | `LinkedInPlaywrightScraper` (closed source) |
 | `GET /jobs/indeed`   | `es.indeed.com/jobs`     | `IndeedPlaywrightScraper` (closed source) |
 | `GET /jobs/infojobs` | `www.infojobs.net/ofertas-trabajo` | `InfoJobsPlaywrightScraper` |
+| `GET /jobs`          | aggregator over all 3 sources (dedup by `(title, company, location)`) | `SearchAllSourcesUseCase` |
 
 Each source has its own Legal Notice and Manual Verification procedure —
-read them both before running.
+read them both before running. The aggregator is a thin composition
+layer — see "Aggregator endpoint" below.
 
 ## Response headers
 
