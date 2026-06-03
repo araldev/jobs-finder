@@ -152,6 +152,27 @@ async def aggregate_jobs(
         sources=source_list,
     )
 
+    # T-003 (REQ-A-006): per-source observability headers. The route
+    # is the composition root for the 3 sources' cache statuses + the
+    # errored-source list. The order in the joined `X-Cache` and
+    # `X-Aggregator-Sources` headers is the same `source_list` order
+    # the caller provided (NOT necessarily source-priority order);
+    # this matches the user's mental model — they asked for
+    # `sources=linkedin,infojobs` and the headers reflect that
+    # exact order. The route uses `result.per_source` to look up
+    # the cache status and errored flag for each requested source.
+    response.headers["X-Cache"] = ",".join(result.cache_statuses[s] for s in source_list)
+    response.headers["X-Aggregator-Sources"] = ",".join(source_list)
+
+    # `X-Aggregator-Errors` is absent when all sources succeed; it
+    # is set to the comma-separated list of errored sources (in the
+    # caller's order) when at least one fails. The list preserves
+    # caller order so the client can map the errored-source names
+    # back to its own request semantics.
+    errored = [s for s in source_list if not result.per_source[s].succeeded]
+    if errored:
+        response.headers["X-Aggregator-Errors"] = ",".join(errored)
+
     return _to_aggregated_response(result)
 
 
