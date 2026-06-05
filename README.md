@@ -25,7 +25,7 @@ Every `GET /jobs/<source>` response carries these headers:
 | --- | --- | --- |
 | `X-Request-Id` | UUID (or the value of the request's `X-Request-Id` header, if present) | Correlation id for logs + 502 bodies. |
 | `X-Cache` | `HIT` or `MISS` | Whether the response was served from the in-memory TTL cache. `MISS` means the Playwright scraper was invoked; `HIT` means the cached `list[Job]` was returned without a browser launch. |
-| `X-RateLimit-Limit` | int | The bucket capacity (= max burst). From `RATE_LIMIT_REQUESTS` (default 60). Absent on exempt paths. |
+| `X-RateLimit-Limit` | int | The bucket capacity (= max burst). From `RATE_LIMIT_REQUESTS` (default 20). Absent on exempt paths. |
 | `X-RateLimit-Remaining` | int | Tokens left in the bucket after this request. Absent on exempt paths. |
 | `X-RateLimit-Reset` | int (seconds) | Seconds until the bucket is full again. Absent on exempt paths. |
 | `Retry-After` | int (seconds) | Seconds until the next token is available. **ONLY on 429 responses** (RFC 6585). |
@@ -301,12 +301,26 @@ query — regardless of backend.
 
 A token-bucket rate limiter at the HTTP layer protects against a
 single client IP hammering the API and fanning out to 3 Playwright
-sessions per request. The default is 60 requests per 60 seconds
-per client IP, with one global bucket (not per-route) and a
-per-route cost map: `GET /jobs` (the aggregator) costs 3 tokens
-because it fans out to 3 scrapers; each `GET /jobs/{source}` costs
-1 token. A 429 short-circuits `call_next`, so the cache and
-scraper are NEVER reached from a 429 path.
+sessions per request. The default is 20 requests per 60 seconds
+per client IP, aligned with the per-source `AsyncThrottle` pace
+(`min_interval_seconds=3.0` → 20 req/min/source). With the
+in-memory backend, the rate limiter is a coarse top layer that
+matches the per-source throttles; with the Redis backend, the
+bucket is shared across workers and hosts.
+
+**Bucket keys are SHA256 hashes of the resolved client IP**
+(truncated to 16 hex chars) — no PII at rest. The raw client IP
+is NEVER written to the `InMemoryTokenBucket._buckets` dict or
+the `RedisTokenBucket` Redis key. This applies to both `memory`
+and `redis` backends.
+
+The per-route cost map: `GET /jobs` (the aggregator) costs 1
+token; the 3 parallel scraper calls inside the aggregator are
+paced by each source's own `AsyncThrottle` (20 req/min/source),
+so the HTTP rate limiter does NOT double-count the fan-out.
+Each `GET /jobs/{source}` costs 1 token. A 429 short-circuits
+`call_next`, so the cache and scraper are NEVER reached from a
+429 path.
 
 Two backends are supported, selected by the `RATE_LIMIT_BACKEND`
 env var (default `memory`):
@@ -336,31 +350,80 @@ JSON list per the spec OQ-B). Exempt responses carry no
 `X-RateLimit-*` / `Retry-After` headers — exempt is
 observability-agnostic by design.
 
+#### Trusted proxies
+
+The default is to **ignore** `X-Forwarded-For` entirely (security
+default — an attacker who sets the header on a direct connection
+should not be able to spoof their client_id). To enable proxy
+trust, set `RATE_LIMIT_TRUSTED_PROXIES` to a JSON list of CIDR
+strings — the trusted proxy CIDRs:
+
+```bash
+# A single trusted reverse proxy in front of the API:
+RATE_LIMIT_TRUSTED_PROXIES='["10.0.0.0/8"]' \
+  uv run uvicorn jobs_finder.main:app --port 8000
+```
+
+With this config and a request from socket IP `10.0.0.1` (in the
+trusted CIDR) carrying `X-Forwarded-For: 1.2.3.4`, the
+rightmost-untrusted walk returns `"1.2.3.4"` as the client_id.
+A request from socket IP `203.0.113.5` (NOT in the trusted CIDR)
+with the same `X-Forwarded-For` header is **ignored** — the
+middleware uses the socket IP `203.0.113.5` as the client_id
+(direct connection from an untrusted IP cannot claim a proxy
+chain).
+
+Quick smoke test of the trusted-proxy path:
+
+```bash
+# Start the API with a trusted proxy CIDR (the 127.0.0.1/32 covers
+# the ASGITransport `client=("127.0.0.1", 50000)` default).
+RATE_LIMIT_TRUSTED_PROXIES='["127.0.0.1/32"]' \
+  RATE_LIMIT_REQUESTS=20 RATE_LIMIT_WINDOW_SECONDS=60 \
+  uv run uvicorn jobs_finder.main:app --port 8000
+
+# A request with a spoofed X-Forwarded-For lands in a different
+# bucket from the socket-IP bucket (the spoofed IP is the rightmost-
+# untrusted hop from the trusted chain):
+curl -is -H "X-Forwarded-For: 1.2.3.4" \
+  "http://localhost:8000/jobs/linkedin?keywords=python&location=madrid" \
+  | grep -E '^(HTTP/1\.1|X-RateLimit-Remaining)'
+
+# Two curls with DIFFERENT X-Forwarded-For values land in
+# DIFFERENT buckets (their X-RateLimit-Remaining values start at
+# 19 independently, NOT sharing the socket-IP bucket).
+```
+
+Invalid CIDRs in `RATE_LIMIT_TRUSTED_PROXIES` (e.g.
+`'["not-a-cidr"]'`) fail at app startup with a `pydantic.ValidationError`,
+not silently at request time. Malformed JSON fails similarly.
+
 #### Manual verification
 
 The fastest way to confirm the rate limiter is working end-to-end
 is to start the API with a small limit and curl-loop until a 429
-fires. The expected response sequence: requests 1-5 → `200` with
-`X-RateLimit-Remaining` decrementing; request 6 → `429` with
-`Retry-After: 12` (`X-RateLimit-Reset: 60` — the full-refill
-time) and the documented body shape. Run from a
+fires. With the new defaults (`RATE_LIMIT_REQUESTS=20`), the
+expected response sequence: requests 1-20 → `200` with
+`X-RateLimit-Remaining` decrementing from 19 to 0; request 21 →
+`429` with `Retry-After: 3` (`X-RateLimit-Reset: 60` — the
+full-refill time) and the documented body shape. Run from a
 separate terminal after the API is up:
 
 ```bash
-# Start with a tiny limit so a 429 is reachable in <10s.
-RATE_LIMIT_REQUESTS=5 RATE_LIMIT_WINDOW_SECONDS=60 \
+# Start with the default 20 req/min so a 429 is reachable in <10s.
+RATE_LIMIT_REQUESTS=20 RATE_LIMIT_WINDOW_SECONDS=60 \
   uv run uvicorn jobs_finder.main:app --port 8000
 
-# Loop 8 requests, inspect X-RateLimit-* + Retry-After.
-for i in $(seq 1 8); do
+# Loop 21 requests, inspect X-RateLimit-* + Retry-After.
+for i in $(seq 1 21); do
   echo "--- request $i ---"
   curl -is "http://localhost:8000/jobs/linkedin?keywords=python&location=madrid" \
     | grep -E '^(HTTP/1\.1|X-RateLimit|Retry-After|X-Request-Id)'
 done
 
 # Expected:
-#   requests 1-5 → HTTP 200, X-RateLimit-Remaining: 4,3,2,1,0
-#   requests 6-8 → HTTP 429, Retry-After: 12, X-RateLimit-Reset: 60, X-RateLimit-Remaining: 0
+#   requests 1-20 → HTTP 200, X-RateLimit-Remaining: 19,18,...,0
+#   request 21   → HTTP 429, Retry-After: 3, X-RateLimit-Reset: 60, X-RateLimit-Remaining: 0
 #   429 body: {"detail":"rate limit exceeded","request_id":"<uuid>"}
 
 # Verify the /health exempt path.
@@ -374,13 +437,14 @@ curl -is http://localhost:8000/health
 | --- | --- | --- | --- |
 | `RATE_LIMIT_ENABLED` | bool | `true` | Kill-switch: `false` makes the middleware a no-op (no headers, no rejection). |
 | `RATE_LIMIT_BACKEND` | `memory` \| `redis` | `memory` | Selects the backend. `redis` requires a reachable `redis.asyncio` server (used for the atomic Lua `EVAL`; if unreachable, the middleware fails OPEN with a WARNING — no startup ping). |
-| `RATE_LIMIT_REQUESTS` | int | `60` | Bucket capacity (= max burst). |
-| `RATE_LIMIT_WINDOW_SECONDS` | float | `60.0` | Refill period. The refill rate is `capacity / window_seconds` tokens/sec. |
+| `RATE_LIMIT_REQUESTS` | int | `20` | Bucket capacity (= max burst). Aligned to the per-source `AsyncThrottle.min_interval_seconds=3.0` pace: 1 req / 3 sec = 20 req/min. |
+| `RATE_LIMIT_WINDOW_SECONDS` | float | `60.0` | Refill period. The refill rate is `capacity / window_seconds` tokens/sec (20 / 60 = 1/3 tokens/sec at the new default). |
 | `RATE_LIMIT_REDIS_URL` | str | (falls back to `CACHE_REDIS_URL`) | The `redis://` URL for the optional Redis backend. |
-| `RATE_LIMIT_REDIS_NAMESPACE` | str | `rate-limiter` | The per-deployment key prefix. The runtime key is `{namespace}:{client_host}`. |
+| `RATE_LIMIT_REDIS_NAMESPACE` | str | `rate-limiter` | The per-deployment key prefix. The runtime key is `{namespace}:{sha256(client_id)[:16]}` (hash, not raw IP — see "Trusted proxies" below). |
 | `RATE_LIMIT_REDIS_DB` | int | (falls back to `CACHE_REDIS_DB`) | The integer db index passed to `redis.asyncio.from_url(..., db=...)`. |
 | `RATE_LIMIT_EXEMPT_PATHS` | JSON list | `["/health"]` | Paths that bypass the limiter (no headers, no rejection). FastAPI docs paths are appended at app-factory wiring time. |
-| `RATE_LIMIT_AGGREGATOR_PATH_COST` | int | `3` | Cost of `GET /jobs` (the aggregator). The aggregator IS 3x heavier, so it pays 3x. |
+| `RATE_LIMIT_TRUSTED_PROXIES` | JSON list of CIDR strings | `[]` | Trusted proxy CIDRs. When the socket IP is in any trusted CIDR, `X-Forwarded-For` is parsed right-to-left and the first untrusted hop is the client_id. When empty (the default), `X-Forwarded-For` is IGNORED. |
+| `RATE_LIMIT_AGGREGATOR_PATH_COST` | int | `1` | Cost of `GET /jobs` (the aggregator). The 3 parallel scraper calls are paced by each source's own `AsyncThrottle` (20 req/min/source), so the HTTP rate limiter charges 1× per aggregator call (NOT 3× — that would double-count). |
 | `RATE_LIMIT_PER_SOURCE_PATH_COST` | int | `1` | Cost of `GET /jobs/{linkedin,indeed,infojobs}`. |
 
 #### Disable the rate limiter
@@ -400,20 +464,19 @@ RATE_LIMIT_ENABLED=false uv run uvicorn jobs_finder.main:app --port 8000
   independent buckets (no cross-worker sharing, no survival of
   process restart). For multi-worker throttling, use the Redis
   backend.
-- **No proxy trust**: v1 uses `request.client.host` only (no
-  `X-Forwarded-For` parsing). A deployment behind a proxy that
-  forwards the original client IP must set `TRUSTED_PROXY` (a
-  follow-up change) for per-client throttling to work correctly.
-- **Aggregator cost = 3 is a hidden gotcha**: a frontend that
-  prefers `/jobs` hits the rate limit 3x faster than a frontend
-  that uses per-source routes (20 calls/min vs 60 calls/min at
-  the defaults). This is the truthful semantic (the aggregator
-  IS 3x heavier) but is visible to the user. Set
-  `RATE_LIMIT_AGGREGATOR_PATH_COST=1` to opt out.
-- **`X-Forwarded-For` trust**: deferred to a follow-up change.
-  A misconfigured proxy is a common attack vector; v1 takes the
-  safe default of trusting only the direct connection's
-  `client.host`.
+- **Bucket keys are SHA256 hashes, not raw IPs**: the resolved
+  client IP (after `_resolve_client_id`) is hashed via
+  `hash_client_id()` (SHA256, truncated to 16 hex chars) before
+  being passed to the limiter. The raw IP NEVER appears in the
+  `InMemoryTokenBucket._buckets` dict or the `RedisTokenBucket`
+  Redis key. This is PII-sanitization at the HTTP boundary.
+- **Default trusted-proxies = empty** (security default): the
+  middleware IGNORES `X-Forwarded-For` when
+  `RATE_LIMIT_TRUSTED_PROXIES=[]`. A deployment behind a reverse
+  proxy that forwards the original client IP MUST set
+  `RATE_LIMIT_TRUSTED_PROXIES` to a JSON list of CIDR strings
+  (e.g. `'["10.0.0.0/8"]'`) for per-client throttling to work
+  correctly. See the "Trusted proxies" subsection above.
 - **`X-RateLimit-Remaining` rounds DOWN** to the nearest integer
   (a `float` decision's `remaining` field is `int(math.floor(...))`).
   Clients should treat the value as an approximation under heavy
