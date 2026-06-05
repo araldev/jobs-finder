@@ -389,6 +389,17 @@ def build_app(  # noqa: PLR0915
             # doesn't delay the LIFO scraper-shutdown order.
             if redis_client is not None:
                 await redis_client.aclose()
+            # T-003 (rate-limiting): close the rate-limiter Redis
+            # client on shutdown. The factory constructs a separate
+            # client when `RATE_LIMIT_BACKEND="redis"` and the
+            # caller passes no `client` (the composition root does
+            # not), so the rate-limiter owns its own client. The
+            # `is not redis_client` guard is defensive — a future
+            # refactor that shares the client across the cache
+            # and rate-limiter would otherwise double-close.
+            rl_redis_client = getattr(rate_limiter, "_client", None)
+            if rl_redis_client is not None and rl_redis_client is not redis_client:
+                await rl_redis_client.aclose()
             if infojobs_scraper_for_lifespan is not None:
                 # Close the InfoJobs browser and stop its Playwright
                 # driver. Runs FIRST so the InfoJobs shutdown is the

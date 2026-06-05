@@ -342,7 +342,8 @@ The fastest way to confirm the rate limiter is working end-to-end
 is to start the API with a small limit and curl-loop until a 429
 fires. The expected response sequence: requests 1-5 → `200` with
 `X-RateLimit-Remaining` decrementing; request 6 → `429` with
-`Retry-After: 60` and the documented body shape. Run from a
+`Retry-After: 12` (`X-RateLimit-Reset: 60` — the full-refill
+time) and the documented body shape. Run from a
 separate terminal after the API is up:
 
 ```bash
@@ -359,7 +360,7 @@ done
 
 # Expected:
 #   requests 1-5 → HTTP 200, X-RateLimit-Remaining: 4,3,2,1,0
-#   requests 6-8 → HTTP 429, Retry-After: 60, X-RateLimit-Remaining: 0
+#   requests 6-8 → HTTP 429, Retry-After: 12, X-RateLimit-Reset: 60, X-RateLimit-Remaining: 0
 #   429 body: {"detail":"rate limit exceeded","request_id":"<uuid>"}
 
 # Verify the /health exempt path.
