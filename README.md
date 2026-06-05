@@ -25,10 +25,15 @@ Every `GET /jobs/<source>` response carries these headers:
 | --- | --- | --- |
 | `X-Request-Id` | UUID (or the value of the request's `X-Request-Id` header, if present) | Correlation id for logs + 502 bodies. |
 | `X-Cache` | `HIT` or `MISS` | Whether the response was served from the in-memory TTL cache. `MISS` means the Playwright scraper was invoked; `HIT` means the cached `list[Job]` was returned without a browser launch. |
+| `X-RateLimit-Limit` | int | The bucket capacity (= max burst). From `RATE_LIMIT_REQUESTS` (default 60). Absent on exempt paths. |
+| `X-RateLimit-Remaining` | int | Tokens left in the bucket after this request. Absent on exempt paths. |
+| `X-RateLimit-Reset` | int (seconds) | Seconds until the bucket is full again. Absent on exempt paths. |
+| `Retry-After` | int (seconds) | Seconds until the next token is available. **ONLY on 429 responses** (RFC 6585). |
 
 The `X-Cache` header is additive — the JSON response body is unchanged.
 A `HIT` collapses a 2-15s Playwright round-trip into a sub-millisecond
-dict lookup; see "Caching" below.
+dict lookup; see "Caching" below. The 3 `X-RateLimit-*` headers are
+additive on every non-exempt response; see "Rate limiting" below.
 
 ## Legal Notice
 
@@ -291,6 +296,136 @@ query — regardless of backend.
 - **Error caching**: errors (502) are NOT cached (REQ-C-006),
   so a transient Distil/Cloudflare block doesn't poison the
   cache. The next request after a failure retries the scraper.
+
+### Rate limiting
+
+A token-bucket rate limiter at the HTTP layer protects against a
+single client IP hammering the API and fanning out to 3 Playwright
+sessions per request. The default is 60 requests per 60 seconds
+per client IP, with one global bucket (not per-route) and a
+per-route cost map: `GET /jobs` (the aggregator) costs 3 tokens
+because it fans out to 3 scrapers; each `GET /jobs/{source}` costs
+1 token. A 429 short-circuits `call_next`, so the cache and
+scraper are NEVER reached from a 429 path.
+
+Two backends are supported, selected by the `RATE_LIMIT_BACKEND`
+env var (default `memory`):
+
+| Backend | Use case | Survives restart | Multi-worker / multi-host | State location |
+| --- | --- | --- | --- | --- |
+| `memory` (default) | single-process dev / laptop | no | no | per-process `dict` + per-key `asyncio.Lock` |
+| `redis` | production / multi-worker | yes | yes (shared bucket) | external `redis.asyncio` server (atomic Lua `EVAL`) |
+
+Both backends satisfy the same `RateLimitPort` Protocol, set the
+same `X-RateLimit-*` response headers, and short-circuit the
+route on a 429 (no cache pollution, no scraper call). The Redis
+backend is **fail-open** by design: a `redis.exceptions.RedisError`
+on `try_acquire` logs a WARNING and returns `allowed=True` (no
+throttling), so a rate-limiter Redis outage degrades to "no
+throttling", never 5xx. This is asymmetric to the cache's
+fail-fast Redis ping — the rate limiter is OPTIONAL, the cache
+is not.
+
+#### Exempt paths
+
+The exempt list defaults to `{/health}` (k8s liveness probes MUST
+NOT 429 the pod) and `app_factory` additionally exempts FastAPI's
+docs surface (`/docs`, `/openapi.json`, `/redoc`). Override via
+`RATE_LIMIT_EXEMPT_PATHS='["/health", "/internal/ping"]'` (a
+JSON list per the spec OQ-B). Exempt responses carry no
+`X-RateLimit-*` / `Retry-After` headers — exempt is
+observability-agnostic by design.
+
+#### Manual verification
+
+The fastest way to confirm the rate limiter is working end-to-end
+is to start the API with a small limit and curl-loop until a 429
+fires. The expected response sequence: requests 1-5 → `200` with
+`X-RateLimit-Remaining` decrementing; request 6 → `429` with
+`Retry-After: 60` and the documented body shape. Run from a
+separate terminal after the API is up:
+
+```bash
+# Start with a tiny limit so a 429 is reachable in <10s.
+RATE_LIMIT_REQUESTS=5 RATE_LIMIT_WINDOW_SECONDS=60 \
+  uv run uvicorn jobs_finder.main:app --port 8000
+
+# Loop 8 requests, inspect X-RateLimit-* + Retry-After.
+for i in $(seq 1 8); do
+  echo "--- request $i ---"
+  curl -is "http://localhost:8000/jobs/linkedin?keywords=python&location=madrid" \
+    | grep -E '^(HTTP/1\.1|X-RateLimit|Retry-After|X-Request-Id)'
+done
+
+# Expected:
+#   requests 1-5 → HTTP 200, X-RateLimit-Remaining: 4,3,2,1,0
+#   requests 6-8 → HTTP 429, Retry-After: 60, X-RateLimit-Remaining: 0
+#   429 body: {"detail":"rate limit exceeded","request_id":"<uuid>"}
+
+# Verify the /health exempt path.
+curl -is http://localhost:8000/health
+# Expected: HTTP 200, NO X-RateLimit-* headers (exempt is observability-agnostic).
+```
+
+#### Rate-limit env-var table
+
+| Env var | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `RATE_LIMIT_ENABLED` | bool | `true` | Kill-switch: `false` makes the middleware a no-op (no headers, no rejection). |
+| `RATE_LIMIT_BACKEND` | `memory` \| `redis` | `memory` | Selects the backend. `redis` requires a reachable `redis.asyncio` server (used for the atomic Lua `EVAL`; if unreachable, the middleware fails OPEN with a WARNING — no startup ping). |
+| `RATE_LIMIT_REQUESTS` | int | `60` | Bucket capacity (= max burst). |
+| `RATE_LIMIT_WINDOW_SECONDS` | float | `60.0` | Refill period. The refill rate is `capacity / window_seconds` tokens/sec. |
+| `RATE_LIMIT_REDIS_URL` | str | (falls back to `CACHE_REDIS_URL`) | The `redis://` URL for the optional Redis backend. |
+| `RATE_LIMIT_REDIS_NAMESPACE` | str | `rate-limiter` | The per-deployment key prefix. The runtime key is `{namespace}:{client_host}`. |
+| `RATE_LIMIT_REDIS_DB` | int | (falls back to `CACHE_REDIS_DB`) | The integer db index passed to `redis.asyncio.from_url(..., db=...)`. |
+| `RATE_LIMIT_EXEMPT_PATHS` | JSON list | `["/health"]` | Paths that bypass the limiter (no headers, no rejection). FastAPI docs paths are appended at app-factory wiring time. |
+| `RATE_LIMIT_AGGREGATOR_PATH_COST` | int | `3` | Cost of `GET /jobs` (the aggregator). The aggregator IS 3x heavier, so it pays 3x. |
+| `RATE_LIMIT_PER_SOURCE_PATH_COST` | int | `1` | Cost of `GET /jobs/{linkedin,indeed,infojobs}`. |
+
+#### Disable the rate limiter
+
+Set `RATE_LIMIT_ENABLED=false` to make the middleware a true
+no-op (no `X-RateLimit-*` headers, no rejection, no log noise).
+The middleware is not added to the stack at all, so the app's
+behavior is byte-identical to the pre-rate-limiting baseline.
+
+```bash
+RATE_LIMIT_ENABLED=false uv run uvicorn jobs_finder.main:app --port 8000
+```
+
+#### Caveats
+
+- **In-memory backend** is per-process: 4 uvicorn workers = 4
+  independent buckets (no cross-worker sharing, no survival of
+  process restart). For multi-worker throttling, use the Redis
+  backend.
+- **No proxy trust**: v1 uses `request.client.host` only (no
+  `X-Forwarded-For` parsing). A deployment behind a proxy that
+  forwards the original client IP must set `TRUSTED_PROXY` (a
+  follow-up change) for per-client throttling to work correctly.
+- **Aggregator cost = 3 is a hidden gotcha**: a frontend that
+  prefers `/jobs` hits the rate limit 3x faster than a frontend
+  that uses per-source routes (20 calls/min vs 60 calls/min at
+  the defaults). This is the truthful semantic (the aggregator
+  IS 3x heavier) but is visible to the user. Set
+  `RATE_LIMIT_AGGREGATOR_PATH_COST=1` to opt out.
+- **`X-Forwarded-For` trust**: deferred to a follow-up change.
+  A misconfigured proxy is a common attack vector; v1 takes the
+  safe default of trusting only the direct connection's
+  `client.host`.
+- **`X-RateLimit-Remaining` rounds DOWN** to the nearest integer
+  (a `float` decision's `remaining` field is `int(math.floor(...))`).
+  Clients should treat the value as an approximation under heavy
+  fractional-cost loads.
+- **Cache invariant preserved**: the 429 short-circuits
+  `call_next`, so `CachedJobSearchUseCase.search` is never
+  reached from a 429 path. No `CachePort.set` happens, so the
+  cache namespace stays clean.
+- **Asymmetric fail-open**: the rate-limiter Redis is fail-open
+  (a Redis outage degrades to "no throttling"), while the cache
+  Redis is fail-fast (a Redis outage prevents startup). The
+  asymmetry is intentional — the rate limiter is OPTIONAL
+  (`memory` is the default), the cache is not.
 
 ### Structured JSON logs (with `request_id`)
 
