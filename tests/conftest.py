@@ -337,3 +337,87 @@ def app_with_rate_limit(
         infojobs_use_case=infojobs_use_case,
         settings=settings_with_rate_limit,
     )
+
+
+@pytest.fixture
+def settings_with_rate_limit_concurrent() -> Settings:
+    """A `Settings` with `rate_limit_requests=3` (so 7 of 10 concurrent are denied)."""
+    return Settings(
+        rate_limit_requests=3,
+        rate_limit_window_seconds=60.0,
+    )
+
+
+@pytest.fixture
+def app_with_rate_limit_concurrent(
+    fake_indeed_port: FakeJobSearchPort,
+    fake_infojobs_port: FakeJobSearchPort,
+    settings_with_rate_limit_concurrent: Settings,
+) -> FastAPI:
+    """A FastAPI app with the rate limiter wired (`rate_limit_requests=3`).
+
+    The concurrency test fires 10 concurrent `GET /jobs/linkedin`
+    against a `capacity=3` bucket. Exactly 3 must return 200 and
+    7 must return 429 (the per-key `asyncio.Lock` serializes the
+    read-modify-write so no double-spend occurs).
+    """
+    linkedin_port = FakeJobSearchPort()
+    linkedin_use_case = _build_cached_linkedin_use_case(port=linkedin_port)
+    indeed_use_case = IndeedSearchJobsUseCase(
+        port=fake_indeed_port,
+        cache=InMemoryTTLCache(ttl_seconds=60.0),
+        source="indeed",
+    )
+    infojobs_use_case = InfoJobsSearchJobsUseCase(
+        port=fake_infojobs_port,
+        cache=InMemoryTTLCache(ttl_seconds=60.0),
+        source="infojobs",
+    )
+    return build_app(
+        use_case=linkedin_use_case,
+        indeed_use_case=indeed_use_case,
+        infojobs_use_case=infojobs_use_case,
+        settings=settings_with_rate_limit_concurrent,
+    )
+
+
+@pytest.fixture
+def app_with_redis_rate_limit_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_indeed_port: FakeJobSearchPort,
+    fake_infojobs_port: FakeJobSearchPort,
+) -> FastAPI:
+    """A FastAPI app whose rate-limiter Redis points at a refused port.
+
+    REQ-RL-003 fail-open + REQ-RL-009 no-lifespan-ping: the
+    rate-limiter Redis is OPTIONAL. `RATE_LIMIT_REDIS_URL` is
+    pointed at port 1 (reserved, never listening). The lifespan
+    starts successfully (NO ping on the rate-limit Redis — that's
+    the asymmetric contract with the cache's fail-fast ping). A
+    subsequent request returns 200 + WARNING logged.
+    """
+    monkeypatch.setenv("RATE_LIMIT_ENABLED", "true")
+    monkeypatch.setenv("RATE_LIMIT_BACKEND", "redis")
+    monkeypatch.setenv("RATE_LIMIT_REDIS_URL", "redis://localhost:1/0")
+    monkeypatch.setenv("RATE_LIMIT_REQUESTS", "5")
+    monkeypatch.setenv("RATE_LIMIT_WINDOW_SECONDS", "60.0")
+    settings = Settings()
+
+    linkedin_port = FakeJobSearchPort()
+    linkedin_use_case = _build_cached_linkedin_use_case(port=linkedin_port)
+    indeed_use_case = IndeedSearchJobsUseCase(
+        port=fake_indeed_port,
+        cache=InMemoryTTLCache(ttl_seconds=60.0),
+        source="indeed",
+    )
+    infojobs_use_case = InfoJobsSearchJobsUseCase(
+        port=fake_infojobs_port,
+        cache=InMemoryTTLCache(ttl_seconds=60.0),
+        source="infojobs",
+    )
+    return build_app(
+        use_case=linkedin_use_case,
+        indeed_use_case=indeed_use_case,
+        infojobs_use_case=infojobs_use_case,
+        settings=settings,
+    )
