@@ -46,6 +46,7 @@ from jobs_finder.application.usecases.search_linkedin_jobs import (
 )
 from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCache
 from jobs_finder.infrastructure.config import Settings
+from jobs_finder.infrastructure.rate_limit._hashing import hash_client_id
 from jobs_finder.presentation.app_factory import build_app
 
 # Reuse the conftest's `FakeJobSearchPort` class (defined in
@@ -173,12 +174,14 @@ async def test_trusted_proxies_empty_ignores_xff(
         assert r1.status_code == 200
         assert r2.status_code == 200
 
-    # Both requests landed in the SAME bucket (the socket IP).
-    # The spoofed XFF IPs are NOT in the bucket.
+    # Both requests landed in the SAME bucket (the HASH of the
+    # socket IP — REQ-RL-012). The spoofed XFF IPs are NOT in
+    # the bucket (neither as raw IPs nor as hashes).
     assert len(limiter._buckets) == 1
-    assert socket_ip in limiter._buckets
-    assert "1.2.3.4" not in limiter._buckets
-    assert "5.6.7.8" not in limiter._buckets
+    expected_key = hash_client_id(socket_ip)
+    assert expected_key in limiter._buckets
+    assert hash_client_id("1.2.3.4") not in limiter._buckets
+    assert hash_client_id("5.6.7.8") not in limiter._buckets
 
 
 # ---------------------------------------------------------------------------
@@ -217,11 +220,12 @@ async def test_socket_ip_not_in_trusted_cidr_ignores_xff(
         assert r1.status_code == 200
         assert r2.status_code == 200
 
-    # Both requests landed in the SAME bucket (the socket IP),
-    # not in separate buckets per the spoofed XFF.
+    # Both requests landed in the SAME bucket (the HASH of the
+    # socket IP), not in separate buckets per the spoofed XFF.
     assert len(limiter._buckets) == 1
-    assert socket_ip in limiter._buckets
-    assert "1.2.3.4" not in limiter._buckets
+    expected_key = hash_client_id(socket_ip)
+    assert expected_key in limiter._buckets
+    assert hash_client_id("1.2.3.4") not in limiter._buckets
 
 
 # ---------------------------------------------------------------------------
@@ -256,13 +260,15 @@ async def test_trusted_socket_ip_resolves_rightmost_untrusted_hop(
         )
         assert response.status_code == 200
 
-    # The bucket key is the leftmost untrusted hop ("1.2.3.4"),
-    # NOT the socket IP and NOT any of the trusted proxies.
+    # The bucket key is the HASH of the leftmost untrusted hop
+    # ("1.2.3.4"), NOT the socket IP and NOT any of the trusted
+    # proxies.
     assert len(limiter._buckets) == 1
-    assert "1.2.3.4" in limiter._buckets
-    assert socket_ip not in limiter._buckets
-    assert "5.6.7.8" not in limiter._buckets
-    assert "9.10.11.12" not in limiter._buckets
+    expected_key = hash_client_id("1.2.3.4")
+    assert expected_key in limiter._buckets
+    assert hash_client_id(socket_ip) not in limiter._buckets
+    assert hash_client_id("5.6.7.8") not in limiter._buckets
+    assert hash_client_id("9.10.11.12") not in limiter._buckets
 
 
 # ---------------------------------------------------------------------------
@@ -295,11 +301,13 @@ async def test_all_hops_trusted_falls_back_to_socket_ip(
         )
         assert response.status_code == 200
 
-    # All hops are trusted; the helper falls back to the socket IP.
+    # All hops are trusted; the helper falls back to the socket
+    # IP. The bucket key is the HASH of the socket IP.
     assert len(limiter._buckets) == 1
-    assert socket_ip in limiter._buckets
-    assert "10.0.0.5" not in limiter._buckets
-    assert "10.0.0.6" not in limiter._buckets
+    expected_key = hash_client_id(socket_ip)
+    assert expected_key in limiter._buckets
+    assert hash_client_id("10.0.0.5") not in limiter._buckets
+    assert hash_client_id("10.0.0.6") not in limiter._buckets
 
 
 # ---------------------------------------------------------------------------
@@ -334,10 +342,12 @@ async def test_malformed_xff_hop_logs_warning_and_falls_back(
             )
             assert response.status_code == 200
 
-    # The bucket falls back to the socket IP (the malformed hop is NOT
-    # in any bucket; the warning is logged and we return socket_ip).
+    # The bucket falls back to the HASH of the socket IP (the
+    # malformed hop is NOT in any bucket; the warning is logged
+    # and we return socket_ip).
     assert len(limiter._buckets) == 1
-    assert socket_ip in limiter._buckets
+    expected_key = hash_client_id(socket_ip)
+    assert expected_key in limiter._buckets
     # The WARNING was logged with the bad hop value so ops can debug.
     warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert warning_records, "expected at least one WARNING log record"

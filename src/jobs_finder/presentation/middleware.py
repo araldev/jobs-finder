@@ -37,6 +37,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from jobs_finder.application.ports import RateLimitPort
+from jobs_finder.infrastructure.rate_limit._hashing import hash_client_id
 from jobs_finder.presentation.schemas import RateLimitedResponse
 
 REQUEST_ID_HEADER = "X-Request-Id"
@@ -325,17 +326,24 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # 4. Resolve the client_id (rightmost-untrusted). With no
         #    trusted proxies this is just `request.client.host` and
         #    `X-Forwarded-For` is IGNORED (the security default).
-        client_id = self._resolve_client_id(request, self._trusted_proxies)
+        resolved_client_id = self._resolve_client_id(request, self._trusted_proxies)
 
-        # 5. Acquire a token. The limiter NEVER raises (the Redis
+        # 5. Hash the resolved client_id for PII sanitization
+        #    (REQ-RL-012). The limiter receives an opaque hash,
+        #    not the raw IP. Both `InMemoryTokenBucket._buckets`
+        #    and the `RedisTokenBucket._key()` use the hash; raw
+        #    IPs NEVER reach storage.
+        client_id = hash_client_id(resolved_client_id) if resolved_client_id else "unknown"
+
+        # 6. Acquire a token. The limiter NEVER raises (the Redis
         #    impl catches `redis.exceptions.RedisError` and returns
         #    `allowed=True`; the in-memory impl is pure math).
         decision = await self._limiter.try_acquire(
-            key=client_id or "unknown",
+            key=client_id,
             cost=float(cost),
         )
 
-        # 6. Denied: 429 + JSON body + Retry-After + 3 X-RateLimit-* headers.
+        # 7. Denied: 429 + JSON body + Retry-After + 3 X-RateLimit-* headers.
         if not decision.allowed:
             request_id = str(getattr(request.state, "request_id", "") or "")
             body = RateLimitedResponse(
@@ -356,7 +364,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-        # 7. Allowed: forward the request, then decorate the response.
+        # 8. Allowed: forward the request, then decorate the response.
         response = await call_next(request)
         response.headers[RATE_LIMIT_HEADERS["limit"]] = str(self._capacity)
         response.headers[RATE_LIMIT_HEADERS["remaining"]] = str(int(math.floor(decision.remaining)))
