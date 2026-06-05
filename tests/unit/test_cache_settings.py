@@ -95,3 +95,54 @@ def test_existing_infojobs_throttle_seconds_default_is_unchanged() -> None:
     """Regression: `infojobs_throttle_seconds` still defaults to `3.0`."""
     settings = Settings()
     assert settings.infojobs_throttle_seconds == 3.0
+
+
+# ---------------------------------------------------------------------------
+# Persistent-cache backend + Redis config (REQ-PC-004, persistent-cache change)
+#
+# The 4 new fields + the namespace validator are exercised below. The
+# defaults pin the in-memory backend (preserving the pre-persistent-cache
+# behavior) and a localhost Redis URL (no production bias). The validator
+# rejects empty and `:`-containing namespace values so misconfiguration
+# surfaces at startup, not on the first cache write.
+# ---------------------------------------------------------------------------
+
+
+def test_cache_backend_default_is_memory() -> None:
+    """REQ-PC-004: `cache_backend` defaults to `\"memory\"` (in-memory TTL cache)."""
+    settings = Settings()
+    assert settings.cache_backend == "memory"
+
+
+def test_cache_redis_url_default_is_localhost() -> None:
+    """REQ-PC-004: `cache_redis_url` defaults to `\"redis://localhost:6379/0\"`."""
+    settings = Settings()
+    assert settings.cache_redis_url == "redis://localhost:6379/0"
+
+
+def test_cache_redis_namespace_default_is_jobs_finder() -> None:
+    """REQ-PC-004: `cache_redis_namespace` defaults to `\"jobs-finder\"`."""
+    settings = Settings()
+    assert settings.cache_redis_namespace == "jobs-finder"
+
+
+def test_cache_backend_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-PC-004: `CACHE_BACKEND=redis` overrides the default to `\"redis\"`."""
+    monkeypatch.setenv("CACHE_BACKEND", "redis")
+    settings = Settings()
+    assert settings.cache_backend == "redis"
+
+
+def test_cache_redis_namespace_with_colon_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REQ-PC-004: a `:` in `CACHE_REDIS_NAMESPACE` is rejected at construction.
+
+    The runtime key format is `f\"{ns}:{source}:{hash}\"`. A `:` in the
+    namespace would let two deployments share a key prefix and is
+    rejected so misconfiguration surfaces at startup, not on the
+    first cache write.
+    """
+    monkeypatch.setenv("CACHE_REDIS_NAMESPACE", "foo:bar")
+    with pytest.raises(ValueError, match="must not contain ':'"):
+        Settings()

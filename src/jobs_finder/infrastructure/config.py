@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # A plausible stealth desktop UA. The exact fingerprint is not load-bearing;
@@ -245,6 +245,71 @@ class Settings(BaseSettings):
             "LINKEDIN_INTER_PAGE_DELAY_SECONDS", "linkedin_inter_page_delay_seconds"
         ),
     )
+
+    # ------------------------------------------------------------------
+    # Persistent-cache settings (REQ-PC-004, persistent-cache change)
+    #
+    # The 4 fields below select the cache backend and configure the
+    # Redis client when `cache_backend=\"redis\"`. The model-level
+    # `env_prefix=\"LINKEDIN_\"` does not apply to these fields
+    # because each declares its own `validation_alias` (same pattern
+    # used by the `indeed_*`, `infojobs_*`, and `linkedin_*`
+    # pagination fields above).
+    #
+    # - `cache_backend`: `Literal[\"memory\", \"redis\"]`. The
+    #   in-memory backend is the default — it preserves the
+    #   pre-persistent-cache behavior (single-process, 60s TTL,
+    #   in-memory dict) and keeps the 553 pre-existing tests green.
+    #   `redis` shares the cache across workers and hosts via a
+    #   `redis.asyncio` client (REQ-PC-001).
+    # - `cache_redis_url`: the `redis://` URL passed to
+    #   `redis.asyncio.from_url`. Includes the db suffix (e.g.
+    #   `redis://localhost:6379/0`).
+    # - `cache_redis_namespace`: a single-segment label prepended to
+    #   every Redis key. MUST be non-empty and MUST NOT contain
+    #   `:` (enforced by `_validate_cache_redis_namespace` below)
+    #   because the runtime key is `f\"{ns}:{source}:{hash}\"` —
+    #   a `:` in the namespace would let two deployments collide.
+    # - `cache_redis_db`: the integer db index passed to
+    #   `redis.asyncio.from_url(..., db=...)`. Default `0`.
+    # ------------------------------------------------------------------
+
+    cache_backend: Literal["memory", "redis"] = Field(
+        default="memory",
+        validation_alias=AliasChoices("CACHE_BACKEND", "cache_backend"),
+    )
+    cache_redis_url: str = Field(
+        default="redis://localhost:6379/0",
+        validation_alias=AliasChoices("CACHE_REDIS_URL", "cache_redis_url"),
+    )
+    cache_redis_namespace: str = Field(
+        default="jobs-finder",
+        validation_alias=AliasChoices("CACHE_REDIS_NAMESPACE", "cache_redis_namespace"),
+    )
+    cache_redis_db: int = Field(
+        default=0,
+        validation_alias=AliasChoices("CACHE_REDIS_DB", "cache_redis_db"),
+    )
+
+    @field_validator("cache_redis_namespace")
+    @classmethod
+    def _validate_cache_redis_namespace(cls, v: str) -> str:
+        """Reject empty and `:`-containing values for `cache_redis_namespace`.
+
+        The runtime key is `f\"{ns}:{source}:{hash}\"` (3 colon-separated
+        segments). A `:` in the namespace would introduce a 4th
+        segment and risk collision with another deployment sharing
+        the same Redis instance. An empty namespace would let two
+        deployments' keys share a single root segment and is the
+        most dangerous form of the same bug. Both are rejected at
+        startup so misconfiguration surfaces immediately, not on
+        the first cache write.
+        """
+        if not v:
+            raise ValueError("CACHE_REDIS_NAMESPACE must be non-empty")
+        if ":" in v:
+            raise ValueError(f"CACHE_REDIS_NAMESPACE must not contain ':' (got {v!r})")
+        return v
 
 
 def load_settings() -> Settings:
