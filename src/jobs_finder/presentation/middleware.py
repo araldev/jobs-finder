@@ -23,11 +23,13 @@ the Playwright scraper are NEVER reached from a 429 path —
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import math
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
+from ipaddress import IPv4Network, IPv6Network
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -56,6 +58,42 @@ def get_request_id() -> str:
 # of one per request) is the standard pattern; pytest's `caplog`
 # captures it via propagation to the parent `jobs_finder` logger.
 _access_logger = logging.getLogger("jobs_finder.access")
+
+# Module-level logger for the rate-limiter middleware. The
+# `X-Forwarded-For` WARNINGs are emitted on this logger so ops can
+# configure a separate handler / filter for proxy-related warnings.
+_rate_limit_logger = logging.getLogger("jobs_finder.presentation.middleware")
+
+
+def _ip_in_any_cidr(
+    ip_obj: str | ipaddress.IPv4Address | ipaddress.IPv6Address | IPv4Network | IPv6Network,
+    cidrs: frozenset[IPv4Network | IPv6Network],
+) -> bool:
+    """Return `True` if `ip_obj` is a valid IP/Network in any of `cidrs`.
+
+    Accepts a string (parsed with `ipaddress.ip_address`), a
+    pre-parsed `IPv4Address` / `IPv6Address` / `IPv4Network` /
+    `IPv6Network` instance, or any object whose `__str__` returns
+    a parseable IP. Used by `_resolve_client_id` to check
+    whether the socket IP and each XFF hop are in the trusted
+    CIDR set.
+    """
+    try:
+        if isinstance(
+            ip_obj,
+            (
+                IPv4Network,
+                IPv6Network,
+                ipaddress.IPv4Address,
+                ipaddress.IPv6Address,
+            ),
+        ):
+            addr = ip_obj
+        else:
+            addr = ipaddress.ip_address(str(ip_obj))
+    except ValueError:
+        return False
+    return any(addr in cidr for cidr in cidrs)
 
 
 class RequestIdLogFilter(logging.Filter):
@@ -178,7 +216,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     `X-RateLimit-Limit` header).
     """
 
-    __slots__ = ("_limiter", "_exempt_paths", "_cost_map", "_capacity")
+    __slots__ = ("_limiter", "_exempt_paths", "_cost_map", "_capacity", "_trusted_proxies")
 
     def __init__(
         self,
@@ -188,6 +226,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         exempt_paths: frozenset[str] | set[str],
         cost_map: Mapping[str, int],
         capacity: int,
+        trusted_proxies: frozenset[IPv4Network | IPv6Network]
+        | set[IPv4Network | IPv6Network]
+        | None = None,
     ) -> None:
         super().__init__(app)
         self._limiter: RateLimitPort = limiter
@@ -200,6 +241,68 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._cost_map: Mapping[str, int] = cost_map
         # Bucket capacity — used for the `X-RateLimit-Limit` header.
         self._capacity: int = capacity
+        # The TRUSTED_PROXY CIDR set. Default `frozenset()` (security
+        # default — never trust `X-Forwarded-For`). The middleware
+        # passes this to `_resolve_client_id` to compute the bucket
+        # key per request.
+        self._trusted_proxies: frozenset[IPv4Network | IPv6Network] = frozenset(
+            trusted_proxies or frozenset()
+        )
+
+    @staticmethod
+    def _resolve_client_id(
+        request: Request,
+        trusted_proxies: frozenset[IPv4Network | IPv6Network],
+    ) -> str:
+        """Resolve the rate-limiter `client_id` from the request (rightmost-untrusted).
+
+        REQ-RL-011: with no proxy trust, the security default is
+        "use the socket IP, IGNORE `X-Forwarded-For`" (AD-7). With
+        a non-empty `trusted_proxies` AND a socket IP in a trusted
+        CIDR, parse `X-Forwarded-For` right-to-left, skip trusted
+        hops, return the first untrusted IP. Falls back to the
+        socket IP when the header is absent, all hops are trusted,
+        or any hop is malformed (logs WARNING on malformed input).
+
+        The helper is a `@staticmethod` so it is testable in
+        isolation (the `RateLimitMiddleware` constructor requires
+        an ASGI app; a unit test of the resolution logic does not
+        need one).
+        """
+        socket_ip = request.client.host if request.client else ""
+        # AD-7: never trust `X-Forwarded-For` without explicit trust
+        # config (empty trusted_proxies is the security default).
+        # Also bail out if the socket IP is not parseable as an IP
+        # address (e.g., ASGI test client with `client=("testclient", 50000)`)
+        # — in that case we return the opaque string and the
+        # rightmost-untrusted walk is meaningless.
+        if not socket_ip or not trusted_proxies:
+            return socket_ip
+        if not _ip_in_any_cidr(socket_ip, trusted_proxies):
+            return socket_ip
+        xff = request.headers.get("X-Forwarded-For", "")
+        if not xff:
+            return socket_ip
+        hops = [h.strip() for h in xff.split(",") if h.strip()]
+        for hop in reversed(hops):
+            try:
+                hop_addr = ipaddress.ip_address(hop)
+            except ValueError:
+                _rate_limit_logger.warning(
+                    "rate_limit: malformed X-Forwarded-For hop: %r; falling back to socket IP %r",
+                    hop,
+                    socket_ip,
+                )
+                return socket_ip
+            if not _ip_in_any_cidr(hop_addr, trusted_proxies):
+                return hop
+        # `for ... else`: runs ONLY if the loop completes without
+        # `break` (i.e., no untrusted hop found). All hops are
+        # in the trusted chain — fall back to the socket IP, NOT
+        # the leftmost hop (the leftmost is the "original client"
+        # per XFF semantics, but if all hops are trusted we have
+        # no way to verify the real client).
+        return socket_ip
 
     async def dispatch(
         self,
@@ -219,15 +322,20 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # 3. Per-route cost (default 1 for unknown paths).
         cost = int(self._cost_map.get(request.url.path, 1))
 
-        # 4. Acquire a token. The limiter NEVER raises (the Redis
+        # 4. Resolve the client_id (rightmost-untrusted). With no
+        #    trusted proxies this is just `request.client.host` and
+        #    `X-Forwarded-For` is IGNORED (the security default).
+        client_id = self._resolve_client_id(request, self._trusted_proxies)
+
+        # 5. Acquire a token. The limiter NEVER raises (the Redis
         #    impl catches `redis.exceptions.RedisError` and returns
         #    `allowed=True`; the in-memory impl is pure math).
         decision = await self._limiter.try_acquire(
-            key=(getattr(request.client, "host", None) or "unknown"),
+            key=client_id or "unknown",
             cost=float(cost),
         )
 
-        # 5. Denied: 429 + JSON body + Retry-After + 3 X-RateLimit-* headers.
+        # 6. Denied: 429 + JSON body + Retry-After + 3 X-RateLimit-* headers.
         if not decision.allowed:
             request_id = str(getattr(request.state, "request_id", "") or "")
             body = RateLimitedResponse(
@@ -248,7 +356,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-        # 6. Allowed: forward the request, then decorate the response.
+        # 7. Allowed: forward the request, then decorate the response.
         response = await call_next(request)
         response.headers[RATE_LIMIT_HEADERS["limit"]] = str(self._capacity)
         response.headers[RATE_LIMIT_HEADERS["remaining"]] = str(int(math.floor(decision.remaining)))

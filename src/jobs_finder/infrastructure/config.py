@@ -32,7 +32,9 @@ new fields opt out of the prefix by declaring an alias).
 
 from __future__ import annotations
 
+import ipaddress
 import json
+from ipaddress import IPv4Network, IPv6Network
 from typing import Literal
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
@@ -402,6 +404,16 @@ class Settings(BaseSettings):
         ),
         ge=1,
     )
+    # REQ-RL-008 (scenarios 8, 9, 10) + REQ-RL-011: `RATE_LIMIT_TRUSTED_PROXIES`
+    # is a JSON list of CIDR strings parsed by the validator below.
+    # Default is `frozenset()` (the security default — no proxy
+    # trust, `X-Forwarded-For` is IGNORED). Operators set
+    # `RATE_LIMIT_TRUSTED_PROXIES='["10.0.0.0/8","::1/128"]'`
+    # to enable the rightmost-untrusted algorithm.
+    rate_limit_trusted_proxies: frozenset[IPv4Network | IPv6Network] = Field(
+        default_factory=frozenset,
+        validation_alias=AliasChoices("RATE_LIMIT_TRUSTED_PROXIES", "rate_limit_trusted_proxies"),
+    )
 
     @field_validator("rate_limit_exempt_paths", mode="before")
     @classmethod
@@ -428,6 +440,44 @@ class Settings(BaseSettings):
         if v is None or v == "":
             return frozenset({"/health"})
         raise ValueError(f"unparseable RATE_LIMIT_EXEMPT_PATHS: {v!r}")
+
+    @field_validator("rate_limit_trusted_proxies", mode="before")
+    @classmethod
+    def _parse_trusted_proxies(cls, v: object) -> frozenset[IPv4Network | IPv6Network]:
+        """Parse `RATE_LIMIT_TRUSTED_PROXIES` as a JSON list of CIDR strings.
+
+        REQ-RL-008 scenarios 8/9/10: a
+        `RATE_LIMIT_TRUSTED_PROXIES='["10.0.0.0/8","::1/128"]'`
+        env var parses to
+        `frozenset({IPv4Network("10.0.0.0/8"), IPv6Network("::1/128")})`.
+        Each entry is parsed with `ipaddress.ip_network(s, strict=False)`
+        which auto-detects single IPs (`"10.0.0.1"` -> `IPv4Network("10.0.0.1/32")`).
+        Invalid CIDR raises `ValueError`; malformed JSON raises
+        `json.JSONDecodeError`; Pydantic surfaces both as
+        `ValidationError` at app construction time so misconfiguration
+        fails fast (not on the first 429).
+
+        Also accepts a pre-parsed `list` / `tuple` / `set` /
+        `frozenset` (Pydantic-Settings auto-parses the JSON env var
+        into a list BEFORE the `mode="before"` validator runs, so
+        programmatic `Settings(rate_limit_trusted_proxies=[...])`
+        construction lands here as a list).
+        """
+        if isinstance(v, frozenset):
+            return v
+        if isinstance(v, (set, list, tuple)):
+            return frozenset(ipaddress.ip_network(str(s), strict=False) for s in v)
+        if isinstance(v, str):
+            if not v.strip():
+                return frozenset()
+            parsed = json.loads(v)
+            if not isinstance(parsed, list):
+                raise ValueError(
+                    "RATE_LIMIT_TRUSTED_PROXIES must be a JSON list of CIDR strings, "
+                    f"got {type(parsed).__name__}"
+                )
+            return frozenset(ipaddress.ip_network(str(s), strict=False) for s in parsed)
+        raise ValueError(f"unparseable RATE_LIMIT_TRUSTED_PROXIES: {v!r}")
 
     @model_validator(mode="after")
     def _fall_back_redis(self) -> Settings:

@@ -502,6 +502,11 @@ def build_app(  # noqa: PLR0915
             exempt_paths=effective_exempt_paths,
             cost_map=cost_map,
             capacity=effective_settings.rate_limit_requests,
+            # REQ-RL-011: `RATE_LIMIT_TRUSTED_PROXIES` is a JSON list
+            # of CIDR strings parsed by `Settings` into a
+            # `frozenset[IPv4Network | IPv6Network]`. Default empty
+            # (security default — `X-Forwarded-For` ignored).
+            trusted_proxies=effective_settings.rate_limit_trusted_proxies,
         )
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(
