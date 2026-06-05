@@ -58,12 +58,20 @@ class InMemoryTTLCache[K, V]:
         self._store: dict[K, tuple[V, float]] = {}
         self._lock = threading.Lock()
 
-    def get(self, key: K) -> V | None:
+    async def get(self, key: K) -> V | None:
         """Return the stored value if not expired, else `None`.
 
         Lazy expiration: an expired entry is evicted on the read
         path. Concurrent reads are safe; the lock is held only
         across the dict access.
+
+        The method is `async def` to satisfy the upgraded
+        `CachePort` Protocol (REQ-C-001 MODIFIED per Path A,
+        2026-06-05). The body remains synchronous — the underlying
+        ops (`dict` access under a `threading.Lock`) are sync — so
+        the `async def` is a no-op wrapper. This lets the same
+        Protocol be implemented by both the sync in-memory cache
+        and the async Redis cache (which uses `redis.asyncio`).
         """
         with self._lock:
             entry = self._store.get(key)
@@ -76,7 +84,7 @@ class InMemoryTTLCache[K, V]:
                 return None
             return value
 
-    def set(self, key: K, value: V) -> None:
+    async def set(self, key: K, value: V) -> None:
         """Store the value with the configured TTL. Overwrites prior.
 
         The TTL is absolute: the expiry is `now() + ttl_seconds`,
@@ -85,12 +93,12 @@ class InMemoryTTLCache[K, V]:
         with self._lock:
             self._store[key] = (value, time.monotonic() + self._ttl)
 
-    def delete(self, key: K) -> None:
+    async def delete(self, key: K) -> None:
         """Remove the key (no-op if absent)."""
         with self._lock:
             self._store.pop(key, None)
 
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """Remove all keys. Used by tests; not exposed in production."""
         with self._lock:
             self._store.clear()

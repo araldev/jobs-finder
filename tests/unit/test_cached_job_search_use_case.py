@@ -86,19 +86,19 @@ class _FakeCachePort:
         self.get_calls = 0
         self.set_calls = 0
 
-    def get(self, key: JobSearchCacheKey) -> list[Job] | None:
+    async def get(self, key: JobSearchCacheKey) -> list[Job] | None:
         self.get_calls += 1
         value = self._store.get(key)
         return list(value) if value is not None else None
 
-    def set(self, key: JobSearchCacheKey, value: list[Job]) -> None:
+    async def set(self, key: JobSearchCacheKey, value: list[Job]) -> None:
         self.set_calls += 1
         self._store[key] = list(value)
 
-    def delete(self, key: JobSearchCacheKey) -> None:
+    async def delete(self, key: JobSearchCacheKey) -> None:
         self._store.pop(key, None)
 
-    def clear(self) -> None:
+    async def clear(self) -> None:
         self._store.clear()
 
 
@@ -157,7 +157,7 @@ async def test_cache_miss_stores_the_result_in_the_cache() -> None:
     expected_key = JobSearchCacheKey(
         source="linkedin", keywords="python", location="madrid", limit=20
     )
-    assert cache.get(expected_key) == [_job(1)]
+    assert await cache.get(expected_key) == [_job(1)]
 
 
 async def test_cache_hit_does_not_invoke_the_port() -> None:
@@ -196,7 +196,7 @@ async def test_port_exception_propagates_and_does_not_store_to_cache() -> None:
     expected_key = JobSearchCacheKey(
         source="linkedin", keywords="python", location="madrid", limit=20
     )
-    assert cache.get(expected_key) is None
+    assert await cache.get(expected_key) is None
 
 
 async def test_subclass_of_job_search_error_propagates() -> None:
@@ -247,7 +247,7 @@ async def test_prior_success_then_failure_does_not_overwrite_cache() -> None:
 
     # 2) Simulate TTL expiry: clear the cache. The port is now primed
     #    to fail. A fresh miss will invoke the port and raise.
-    cache.clear()
+    await cache.clear()
     port._error = JobSearchError("upstream is down")
     with pytest.raises(JobSearchError, match="upstream is down"):
         await wrapper.search("python", "madrid", 20)
@@ -256,7 +256,7 @@ async def test_prior_success_then_failure_does_not_overwrite_cache() -> None:
     expected_key = JobSearchCacheKey(
         source="linkedin", keywords="python", location="madrid", limit=20
     )
-    assert cache.get(expected_key) is None
+    assert await cache.get(expected_key) is None
 
     # 4) Clear the error; the next call is STILL a miss (cache was
     #    never re-populated), and the port returns fresh data.
@@ -291,8 +291,8 @@ async def test_different_sources_with_same_query_have_distinct_cache_entries() -
         source="linkedin", keywords="python", location="madrid", limit=20
     )
     indeed_key = JobSearchCacheKey(source="indeed", keywords="python", location="madrid", limit=20)
-    assert linkedin_cache.get(linkedin_key) == [_job(1)]
-    assert indeed_cache.get(indeed_key) == [_job(2)]
+    assert await linkedin_cache.get(linkedin_key) == [_job(1)]
+    assert await indeed_cache.get(indeed_key) == [_job(2)]
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +311,7 @@ async def test_cache_key_includes_all_four_fields() -> None:
     expected_key = JobSearchCacheKey(
         source="infojobs", keywords="rust", location="barcelona", limit=5
     )
-    assert cache.get(expected_key) == [_job(1)]
+    assert await cache.get(expected_key) == [_job(1)]
 
 
 # ---------------------------------------------------------------------------

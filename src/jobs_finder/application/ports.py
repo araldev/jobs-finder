@@ -40,19 +40,19 @@ class CachePort(Protocol[K_co, V]):
     application layer).
     """
 
-    def get(self, key: K_co) -> V | None:
+    async def get(self, key: K_co) -> V | None:
         """Return the stored value if not expired, else `None`."""
         ...
 
-    def set(self, key: K_co, value: V) -> None:
+    async def set(self, key: K_co, value: V) -> None:
         """Store the value with the configured TTL. Overwrites prior."""
         ...
 
-    def delete(self, key: K_co) -> None:
+    async def delete(self, key: K_co) -> None:
         """Remove the key (no-op if absent)."""
         ...
 
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """Remove all keys. Used by tests; not exposed in production."""
         ...
 

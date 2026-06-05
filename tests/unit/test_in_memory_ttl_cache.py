@@ -16,6 +16,7 @@ passes (GREEN), then any cleanup (REFACTOR) happens.
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from typing import NamedTuple
@@ -72,10 +73,10 @@ def test_init_with_negative_ttl_raises_value_error() -> None:
         InMemoryTTLCache(ttl_seconds=-1.0)
 
 
-def test_get_on_empty_cache_returns_none() -> None:
+async def test_get_on_empty_cache_returns_none() -> None:
     """A `get` on an empty cache returns `None`."""
     cache: InMemoryTTLCache[str, _Sample] = InMemoryTTLCache(ttl_seconds=60.0)
-    assert cache.get("any-key") is None
+    assert await cache.get("any-key") is None
 
 
 # ---------------------------------------------------------------------------
@@ -83,14 +84,14 @@ def test_get_on_empty_cache_returns_none() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_set_then_get_returns_stored_value() -> None:
+async def test_set_then_get_returns_stored_value() -> None:
     """A value stored via `set` is retrievable via `get` before TTL expiry."""
     cache: InMemoryTTLCache[str, _Sample] = InMemoryTTLCache(ttl_seconds=60.0)
-    cache.set("k", _make_value(1))
-    assert cache.get("k") == _make_value(1)
+    await cache.set("k", _make_value(1))
+    assert await cache.get("k") == _make_value(1)
 
 
-def test_get_after_expiry_returns_none() -> None:
+async def test_get_after_expiry_returns_none() -> None:
     """After TTL elapses, a `get` returns `None` and evicts the entry.
 
     Uses a tiny `ttl=0.01` and a `time.sleep` long enough to exceed it
@@ -99,49 +100,49 @@ def test_get_after_expiry_returns_none() -> None:
     contract, not the precise millisecond.
     """
     cache: InMemoryTTLCache[str, _Sample] = InMemoryTTLCache(ttl_seconds=0.01)
-    cache.set("k", _make_value(1))
+    await cache.set("k", _make_value(1))
     time.sleep(0.05)
-    assert cache.get("k") is None
+    assert await cache.get("k") is None
 
 
-def test_get_after_expiry_evicts_entry() -> None:
+async def test_get_after_expiry_evicts_entry() -> None:
     """Lazy expiration: a `get` on an expired entry evicts it from the store.
 
     A subsequent `set` on the same key must NOT see the stale value
     leak (the internal store should no longer have the entry).
     """
     cache: InMemoryTTLCache[str, _Sample] = InMemoryTTLCache(ttl_seconds=0.01)
-    cache.set("k", _make_value(1))
+    await cache.set("k", _make_value(1))
     time.sleep(0.05)
     # First get returns None AND evicts.
-    assert cache.get("k") is None
+    assert await cache.get("k") is None
     # Overwrite with a new value; the cache must not have any stale data.
-    cache.set("k", _make_value(2))
-    assert cache.get("k") == _make_value(2)
+    await cache.set("k", _make_value(2))
+    assert await cache.get("k") == _make_value(2)
 
 
-def test_set_overwrites_with_last_write_wins() -> None:
+async def test_set_overwrites_with_last_write_wins() -> None:
     """A second `set` on the same key replaces the prior value (no merge)."""
     cache: InMemoryTTLCache[str, _Sample] = InMemoryTTLCache(ttl_seconds=60.0)
-    cache.set("k", _make_value(1))
-    cache.set("k", _make_value(2))
-    assert cache.get("k") == _make_value(2)
+    await cache.set("k", _make_value(1))
+    await cache.set("k", _make_value(2))
+    assert await cache.get("k") == _make_value(2)
 
 
-def test_set_resets_ttl_to_new_write_time() -> None:
+async def test_set_resets_ttl_to_new_write_time() -> None:
     """A second `set` resets the TTL window (absolute, not sliding)."""
     cache: InMemoryTTLCache[str, _Sample] = InMemoryTTLCache(ttl_seconds=60.0)
-    cache.set("k", _make_value(1))
+    await cache.set("k", _make_value(1))
     # Re-set with a different value; the original TTL window is
     # replaced, NOT extended from the original write.
     time.sleep(0.01)
-    cache.set("k", _make_value(2))
+    await cache.set("k", _make_value(2))
     # The new value is still retrievable 0.05s later (well within 60s).
     time.sleep(0.05)
-    assert cache.get("k") == _make_value(2)
+    assert await cache.get("k") == _make_value(2)
 
 
-def test_set_with_zero_ttl_means_immediate_expiry() -> None:
+async def test_set_with_zero_ttl_means_immediate_expiry() -> None:
     """A `set` on a `ttl=0` cache stores nothing usable — every `get` is None.
 
     This is the documented behavior of `CACHE_TTL_SECONDS=0`: the
@@ -150,9 +151,9 @@ def test_set_with_zero_ttl_means_immediate_expiry() -> None:
     `ttl=0` cache is also a safe fallback.)
     """
     cache: InMemoryTTLCache[str, _Sample] = InMemoryTTLCache(ttl_seconds=0.0)
-    cache.set("k", _make_value(1))
+    await cache.set("k", _make_value(1))
     # Even immediately after the set, the entry is already expired.
-    assert cache.get("k") is None
+    assert await cache.get("k") is None
 
 
 # ---------------------------------------------------------------------------
@@ -160,39 +161,39 @@ def test_set_with_zero_ttl_means_immediate_expiry() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_delete_removes_existing_key() -> None:
+async def test_delete_removes_existing_key() -> None:
     """`delete` on an existing key returns None on the next `get`."""
     cache: InMemoryTTLCache[str, _Sample] = InMemoryTTLCache(ttl_seconds=60.0)
-    cache.set("k", _make_value(1))
-    cache.delete("k")
-    assert cache.get("k") is None
+    await cache.set("k", _make_value(1))
+    await cache.delete("k")
+    assert await cache.get("k") is None
 
 
-def test_delete_on_missing_key_is_a_noop() -> None:
+async def test_delete_on_missing_key_is_a_noop() -> None:
     """`delete` on a missing key does not raise."""
     cache: InMemoryTTLCache[str, _Sample] = InMemoryTTLCache(ttl_seconds=60.0)
     # No prior `set` on this key — must not raise.
-    cache.delete("k")
-    assert cache.get("k") is None
+    await cache.delete("k")
+    assert await cache.get("k") is None
 
 
-def test_clear_removes_all_keys() -> None:
+async def test_clear_removes_all_keys() -> None:
     """`clear` removes every stored entry; subsequent `get`s return None."""
     cache: InMemoryTTLCache[str, _Sample] = InMemoryTTLCache(ttl_seconds=60.0)
-    cache.set("a", _make_value(1))
-    cache.set("b", _make_value(2))
-    cache.set("c", _make_value(3))
-    cache.clear()
-    assert cache.get("a") is None
-    assert cache.get("b") is None
-    assert cache.get("c") is None
+    await cache.set("a", _make_value(1))
+    await cache.set("b", _make_value(2))
+    await cache.set("c", _make_value(3))
+    await cache.clear()
+    assert await cache.get("a") is None
+    assert await cache.get("b") is None
+    assert await cache.get("c") is None
 
 
-def test_clear_on_empty_cache_is_a_noop() -> None:
+async def test_clear_on_empty_cache_is_a_noop() -> None:
     """`clear` on an empty cache does not raise."""
     cache: InMemoryTTLCache[str, _Sample] = InMemoryTTLCache(ttl_seconds=60.0)
-    cache.clear()
-    assert cache.get("any") is None
+    await cache.clear()
+    assert await cache.get("any") is None
 
 
 # ---------------------------------------------------------------------------
@@ -200,26 +201,26 @@ def test_clear_on_empty_cache_is_a_noop() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_distinct_keys_do_not_collide() -> None:
+async def test_distinct_keys_do_not_collide() -> None:
     """Two `set`s on different keys are both retrievable independently."""
     cache: InMemoryTTLCache[str, _Sample] = InMemoryTTLCache(ttl_seconds=60.0)
-    cache.set("a", _make_value(1))
-    cache.set("b", _make_value(2))
-    assert cache.get("a") == _make_value(1)
-    assert cache.get("b") == _make_value(2)
+    await cache.set("a", _make_value(1))
+    await cache.set("b", _make_value(2))
+    assert await cache.get("a") == _make_value(1)
+    assert await cache.get("b") == _make_value(2)
 
 
-def test_get_does_not_mutate_unrelated_keys() -> None:
+async def test_get_does_not_mutate_unrelated_keys() -> None:
     """`get` on key A does not evict or touch key B."""
     cache: InMemoryTTLCache[str, _Sample] = InMemoryTTLCache(ttl_seconds=0.01)
-    cache.set("a", _make_value(1))
-    cache.set("b", _make_value(2))
+    await cache.set("a", _make_value(1))
+    await cache.set("b", _make_value(2))
     time.sleep(0.05)
     # Both are expired by now, but the act of getting "a" must
     # not somehow preserve "b". The contract: each entry is
     # independently expired.
-    assert cache.get("a") is None
-    assert cache.get("b") is None
+    assert await cache.get("a") is None
+    assert await cache.get("b") is None
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +228,7 @@ def test_get_does_not_mutate_unrelated_keys() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_cache_preserves_value_type_for_arbitrary_v() -> None:
+async def test_cache_preserves_value_type_for_arbitrary_v() -> None:
     """The cache stores and returns values of any type V unchanged.
 
     The protocol is `CachePort[K, V]` so a `list[Job]` value must
@@ -235,13 +236,13 @@ def test_cache_preserves_value_type_for_arbitrary_v() -> None:
     """
     cache: InMemoryTTLCache[str, list[int]] = InMemoryTTLCache(ttl_seconds=60.0)
     original: list[int] = [1, 2, 3]
-    cache.set("k", original)
-    result = cache.get("k")
+    await cache.set("k", original)
+    result = await cache.get("k")
     assert result == [1, 2, 3]
     assert result is original  # identity, not just equality
 
 
-def test_cache_supports_arbitrary_hashable_k() -> None:
+async def test_cache_supports_arbitrary_hashable_k() -> None:
     """The cache uses K's own hash; any hashable K works (str, int, tuple).
 
     This pins the K = `JobSearchCacheKey` (a NamedTuple) contract:
@@ -251,12 +252,12 @@ def test_cache_supports_arbitrary_hashable_k() -> None:
     cache: InMemoryTTLCache[tuple[str, str, int], _Sample] = InMemoryTTLCache(ttl_seconds=60.0)
     key1: tuple[str, str, int] = ("linkedin", "python", 20)
     key2: tuple[str, str, int] = ("indeed", "python", 20)
-    cache.set(key1, _make_value(1))
-    cache.set(key2, _make_value(2))
-    assert cache.get(key1) == _make_value(1)
-    assert cache.get(key2) == _make_value(2)
+    await cache.set(key1, _make_value(1))
+    await cache.set(key2, _make_value(2))
+    assert await cache.get(key1) == _make_value(1)
+    assert await cache.get(key2) == _make_value(2)
     # A swapped-source key is a different key.
-    assert cache.get(("infojobs", "python", 20)) is None
+    assert await cache.get(("infojobs", "python", 20)) is None
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +265,7 @@ def test_cache_supports_arbitrary_hashable_k() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_concurrent_sets_on_distinct_keys_all_succeed() -> None:
+async def test_concurrent_sets_on_distinct_keys_all_succeed() -> None:
     """N threads setting distinct keys do not lose any writes.
 
     The lock is held only for the dict access; the test asserts the
@@ -278,10 +279,15 @@ def test_concurrent_sets_on_distinct_keys_all_succeed() -> None:
     errors: list[BaseException] = []
 
     def worker(thread_idx: int) -> None:
+        # `threading.Thread` workers cannot `await` directly. Run the
+        # coroutine returned by `cache.set(...)` via `asyncio.run`
+        # (each worker thread starts with no event loop, so this is
+        # safe). The body of `cache.set` is sync, so this is just a
+        # coroutine wrapper over a dict assignment.
         try:
             for i in range(keys_per_thread):
                 key = f"t{thread_idx}-k{i}"
-                cache.set(key, _make_value(thread_idx * 1000 + i))
+                asyncio.run(cache.set(key, _make_value(thread_idx * 1000 + i)))
         except BaseException as exc:  # noqa: BLE001
             errors.append(exc)
 
@@ -296,10 +302,10 @@ def test_concurrent_sets_on_distinct_keys_all_succeed() -> None:
     for thread_idx in range(n_threads):
         for i in range(keys_per_thread):
             key = f"t{thread_idx}-k{i}"
-            assert cache.get(key) == _make_value(thread_idx * 1000 + i)
+            assert await cache.get(key) == _make_value(thread_idx * 1000 + i)
 
 
-def test_concurrent_gets_during_set_do_not_raise() -> None:
+async def test_concurrent_gets_during_set_do_not_raise() -> None:
     """Concurrent reads during writes do not raise and return consistent data.
 
     The contract is "no torn reads": a `get` either returns the prior
@@ -307,21 +313,39 @@ def test_concurrent_gets_during_set_do_not_raise() -> None:
     raises under contention.
     """
     cache: InMemoryTTLCache[str, _Sample] = InMemoryTTLCache(ttl_seconds=60.0)
-    cache.set("k", _make_value(0))
+    # Pre-seed with the initial value (the writer below will
+    # overwrite it 500 times).
+    await cache.set("k", _make_value(0))
 
     errors: list[BaseException] = []
+
+    def _run(coro: object) -> object:
+        """Run a coroutine on a fresh event loop in the worker thread.
+
+        `threading.Thread` workers cannot `await` directly. Each
+        worker creates its own loop so we can run the coroutine
+        returned by `cache.set(...)` (which has a sync body). This
+        is `asyncio.run`-equivalent but without the
+        "running-event-loop" guard, so it is safe inside a
+        `threading.Thread` even when the test is `async def`.
+        """
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)  # type: ignore[arg-type]
+        finally:
+            loop.close()
 
     def writer() -> None:
         try:
             for i in range(500):
-                cache.set("k", _make_value(i))
+                _run(cache.set("k", _make_value(i)))
         except BaseException as exc:  # noqa: BLE001
             errors.append(exc)
 
     def reader() -> None:
         try:
             for _ in range(500):
-                v = cache.get("k")
+                v = _run(cache.get("k"))
                 # Every read returns either None (cleared) or a _Sample —
                 # never a malformed value.
                 assert v is None or isinstance(v, _Sample)

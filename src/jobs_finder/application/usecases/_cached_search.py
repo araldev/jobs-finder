@@ -107,11 +107,11 @@ class CachedJobSearchUseCase:
             location=location,
             limit=limit,
         )
-        cached = self._cache.get(key)
+        cached = await self._cache.get(key)
         if cached is not None:
             return SearchResult(jobs=cached, cache_status=CacheStatus.HIT)
         result = await self._port.search(keywords, location, limit)
         # Only cache successful results. Errors (502) propagate
         # to the caller without poisoning the cache.
-        self._cache.set(key, result)
+        await self._cache.set(key, result)
         return SearchResult(jobs=result, cache_status=CacheStatus.MISS)
