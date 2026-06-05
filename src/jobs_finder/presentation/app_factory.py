@@ -54,12 +54,13 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import redis.asyncio as redis_async
+import redis.exceptions
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from playwright_stealth import Stealth  # type: ignore[import-untyped]
 
 from jobs_finder.application.aggregator import SearchAllSourcesUseCase
-from jobs_finder.application.ports import JobSearchCacheKey
 from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase
 from jobs_finder.application.usecases.search_indeed_jobs import (
     RawSearchJobsUseCase as RawIndeedJobsUseCase,
@@ -77,8 +78,7 @@ from jobs_finder.application.usecases.search_linkedin_jobs import (
     RawLinkedInJobsUseCase,
     SearchLinkedInJobsUseCase,
 )
-from jobs_finder.domain.job import Job
-from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCache
+from jobs_finder.infrastructure.cache._factory import build_cache
 from jobs_finder.infrastructure.config import Settings
 from jobs_finder.infrastructure.indeed.scraper import (
     IndeedPlaywrightScraper,
@@ -158,6 +158,21 @@ def build_app(  # noqa: PLR0915
     # formatted as JSON (or plain) with the request_id bound.
     configure_logging(effective_settings)
 
+    # T-005 (persistent-cache): when `cache_backend == "redis"`,
+    # build a SINGLE shared `redis.asyncio.Redis` client here.
+    # The 3 `build_cache(...)` calls below all receive this same
+    # client (single connection pool, 3 logical caches). The
+    # lifespan block further below pings it on startup (fail-fast
+    # on `ConnectionError`) and closes it on shutdown.
+    # When `cache_backend == "memory"` (default), this stays `None`
+    # and the 3 caches are independent `InMemoryTTLCache`s.
+    redis_client: redis_async.Redis | None = None
+    if effective_settings.cache_backend == "redis":
+        redis_client = redis_async.from_url(  # type: ignore[no-untyped-call]
+            effective_settings.cache_redis_url,
+            db=effective_settings.cache_redis_db,
+        )
+
     if use_case is None:
         scraper = LinkedInPlaywrightScraper(
             throttle=AsyncThrottle(min_interval_seconds=effective_settings.throttle_seconds),
@@ -179,9 +194,11 @@ def build_app(  # noqa: PLR0915
         # scraper. The wrapper exposes `search(...)` which the route
         # calls (REQ-C-003 — the route sets the `X-Cache: HIT|MISS`
         # response header from the wrapper's `SearchResult.cache_status`).
-        linkedin_cache: InMemoryTTLCache[JobSearchCacheKey, list[Job]] = InMemoryTTLCache(
-            ttl_seconds=effective_settings.cache_ttl_seconds,
-        )
+        # T-005 (persistent-cache): the cache is now built via the
+        # `build_cache` factory so it selects `InMemoryTTLCache` or
+        # `RedisCache` per `settings.cache_backend`. The shared
+        # `redis_client` is passed in for the Redis branch.
+        linkedin_cache = build_cache(effective_settings, source="linkedin", client=redis_client)
         use_case = CachedJobSearchUseCase(
             port=raw_use_case,
             cache=linkedin_cache,
@@ -221,10 +238,10 @@ def build_app(  # noqa: PLR0915
         # T-004 (cache-ttl): wrap the raw Indeed use case in its
         # OWN `CachedJobSearchUseCase` so the Indeed cache is
         # independent of the LinkedIn + InfoJobs caches (REQ-C-005
-        # — per-source isolation).
-        indeed_cache: InMemoryTTLCache[JobSearchCacheKey, list[Job]] = InMemoryTTLCache(
-            ttl_seconds=effective_settings.cache_ttl_seconds,
-        )
+        # — per-source isolation). T-005 (persistent-cache): the
+        # cache is built via `build_cache` so the same factory
+        # selects the backend.
+        indeed_cache = build_cache(effective_settings, source="indeed", client=redis_client)
         indeed_use_case = IndeedSearchJobsUseCase(
             port=raw_indeed_use_case,
             cache=indeed_cache,
@@ -267,10 +284,10 @@ def build_app(  # noqa: PLR0915
         # T-004 (cache-ttl): wrap the raw InfoJobs use case in its
         # OWN `CachedJobSearchUseCase` so the InfoJobs cache is
         # independent of the LinkedIn + Indeed caches (REQ-C-005
-        # — per-source isolation).
-        infojobs_cache: InMemoryTTLCache[JobSearchCacheKey, list[Job]] = InMemoryTTLCache(
-            ttl_seconds=effective_settings.cache_ttl_seconds,
-        )
+        # — per-source isolation). T-005 (persistent-cache): the
+        # cache is built via `build_cache` so the same factory
+        # selects the backend.
+        infojobs_cache = build_cache(effective_settings, source="infojobs", client=redis_client)
         infojobs_use_case = InfoJobsSearchJobsUseCase(
             port=raw_infojobs_use_case,
             cache=infojobs_cache,
@@ -324,6 +341,23 @@ def build_app(  # noqa: PLR0915
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        # T-005 (persistent-cache): ping Redis on startup when the
+        # backend is `redis`. The ping is fail-fast: a
+        # `redis.exceptions.RedisError` (e.g. `ConnectionError`
+        # "Connection refused") is re-raised as a `RuntimeError`
+        # with a descriptive message so misconfiguration surfaces
+        # in container logs at boot, not on the first user request.
+        # The 3 `build_cache(...)` calls above already created the
+        # 3 `RedisCache` instances; this ping is the connection
+        # smoke test.
+        if redis_client is not None:
+            try:
+                await redis_client.ping()
+            except redis.exceptions.RedisError as cause:
+                raise RuntimeError(
+                    f"Redis cache backend selected but cannot connect to "
+                    f"{effective_settings.cache_redis_url}: {cause}"
+                ) from cause
         if scraper_for_lifespan is not None:
             # Enter the async context manager: launches Chromium and
             # sets `scraper_for_lifespan._browser`. After this returns,
@@ -346,6 +380,11 @@ def build_app(  # noqa: PLR0915
         try:
             yield
         finally:
+            # T-005 (persistent-cache): close the shared Redis
+            # client on shutdown. Runs FIRST so a slow `aclose()`
+            # doesn't delay the LIFO scraper-shutdown order.
+            if redis_client is not None:
+                await redis_client.aclose()
             if infojobs_scraper_for_lifespan is not None:
                 # Close the InfoJobs browser and stop its Playwright
                 # driver. Runs FIRST so the InfoJobs shutdown is the
