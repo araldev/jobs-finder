@@ -30,26 +30,28 @@ def test_rate_limit_settings_defaults_match_spec() -> None:
     The defaults are pinned in the spec REQ-RL-008 table:
     - `rate_limit_enabled` -> `True`
     - `rate_limit_backend` -> `"memory"`
-    - `rate_limit_requests` -> `60`
+    - `rate_limit_requests` -> `20` (was 60 pre-`rate-limit-followups`;
+      aligned to per-source `AsyncThrottle.min_interval_seconds=3.0` → 20 req/min)
     - `rate_limit_window_seconds` -> `60.0`
     - `rate_limit_redis_url` -> falls back to `cache_redis_url`
       (`"redis://localhost:6379/0"` by default)
     - `rate_limit_redis_namespace` -> `"rate-limiter"`
     - `rate_limit_redis_db` -> falls back to `cache_redis_db` (`0` by default)
     - `rate_limit_exempt_paths` -> `frozenset({"/health"})`
-    - `rate_limit_aggregator_path_cost` -> `3`
+    - `rate_limit_aggregator_path_cost` -> `1` (was 3 pre-`rate-limit-followups`;
+      the per-source throttles already pace the 3 parallel scraper calls)
     - `rate_limit_per_source_path_cost` -> `1`
     """
     settings = Settings()
     assert settings.rate_limit_enabled is True
     assert settings.rate_limit_backend == "memory"
-    assert settings.rate_limit_requests == 60
+    assert settings.rate_limit_requests == 20
     assert settings.rate_limit_window_seconds == 60.0
     assert settings.rate_limit_redis_url == "redis://localhost:6379/0"  # fell back to cache
     assert settings.rate_limit_redis_namespace == "rate-limiter"
     assert settings.rate_limit_redis_db == 0  # fell back to cache
     assert settings.rate_limit_exempt_paths == frozenset({"/health"})
-    assert settings.rate_limit_aggregator_path_cost == 3
+    assert settings.rate_limit_aggregator_path_cost == 1
     assert settings.rate_limit_per_source_path_cost == 1
 
 

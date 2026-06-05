@@ -313,7 +313,8 @@ class Settings(BaseSettings):
         return v
 
     # ------------------------------------------------------------------
-    # Rate-limit settings (REQ-RL-008, rate-limiting change)
+    # Rate-limit settings (REQ-RL-008, rate-limiting change +
+    # `rate-limit-followups` defaults alignment)
     #
     # The 10 fields below configure the `RateLimitMiddleware` (T-002)
     # and the `build_rate_limiter` factory (T-003). Each field
@@ -326,9 +327,15 @@ class Settings(BaseSettings):
     # - `rate_limit_backend`: `Literal["memory", "redis"]` mirrors
     #   `cache_backend`. `memory` is the default; `redis` shares
     #   the limiter across workers/hosts.
-    # - `rate_limit_requests`: capacity (max burst). Default 60.
+    # - `rate_limit_requests`: capacity (max burst). **Default 20**
+    #   (`rate-limit-followups`, was 60). Aligned to the per-source
+    #   `AsyncThrottle.min_interval_seconds=3.0` pace — 1 req/3sec
+    #   = 20 req/min. The HTTP rate limit is a coarse top layer
+    #   that matches the per-source throttles' actual pacing.
     # - `rate_limit_window_seconds`: refill period. Refill rate is
-    #   `capacity / window_seconds` tokens/sec.
+    #   `capacity / window_seconds` tokens/sec. With the new
+    #   default 20/60, refill rate is 1/3 tokens/sec (matches the
+    #   per-source throttles exactly).
     # - `rate_limit_redis_url` / `rate_limit_redis_db`: fall back
     #   to `cache_redis_url` / `cache_redis_db` via the
     #   `_fall_back_redis` model_validator below. Empty / `-1` is
@@ -338,8 +345,13 @@ class Settings(BaseSettings):
     #   `"rate-limiter"`.
     # - `rate_limit_exempt_paths`: JSON list per spec OQ-B
     #   (Pydantic-friendly). Default `["/health"]`.
-    # - `rate_limit_aggregator_path_cost` / `rate_limit_per_source_path_cost`:
-    #   per-route cost (aggregator = 3, per-source = 1).
+    # - `rate_limit_aggregator_path_cost`: **default 1** (`rate-
+    #   limit-followups`, was 3). Each per-source `AsyncThrottle`
+    #   already paces the 3 parallel scraper calls in
+    #   `SearchAllSourcesUseCase`; charging 3× at the HTTP rate
+    #   limiter would double-count. Per-call cost is 1.
+    # - `rate_limit_per_source_path_cost`: per-source cost
+    #   (default 1, unchanged).
     # ------------------------------------------------------------------
 
     rate_limit_enabled: bool = Field(
@@ -351,7 +363,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("RATE_LIMIT_BACKEND", "rate_limit_backend"),
     )
     rate_limit_requests: int = Field(
-        default=60,
+        default=20,
         validation_alias=AliasChoices("RATE_LIMIT_REQUESTS", "rate_limit_requests"),
         ge=1,
     )
@@ -377,7 +389,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("RATE_LIMIT_EXEMPT_PATHS", "rate_limit_exempt_paths"),
     )
     rate_limit_aggregator_path_cost: int = Field(
-        default=3,
+        default=1,
         validation_alias=AliasChoices(
             "RATE_LIMIT_AGGREGATOR_PATH_COST", "rate_limit_aggregator_path_cost"
         ),

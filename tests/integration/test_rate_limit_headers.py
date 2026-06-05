@@ -192,11 +192,14 @@ async def test_429_response_content_type_is_json(client: httpx.AsyncClient) -> N
 # ---------------------------------------------------------------------------
 
 
-async def test_aggregator_consumes_3_tokens(app_with_rate_limit: FastAPI) -> None:
-    """The middleware's cost map has `/jobs` -> 3 (aggregator's 3x scraper cost).
+async def test_aggregator_consumes_1_token(app_with_rate_limit: FastAPI) -> None:
+    """The middleware's cost map has `/jobs` -> 1 (aggregator's per-call cost).
 
-    REQ-RL-006: the aggregator's cost is `rate_limit_aggregator_path_cost`
-    (default 3) because it fans out to 3 scrapers. The test
+    REQ-RL-006 (MODIFIED in `rate-limit-followups`): the aggregator's
+    cost is `rate_limit_aggregator_path_cost` (default 1, was 3). The
+    3 parallel scraper calls are paced by each source's own
+    `AsyncThrottle.min_interval_seconds=3.0` (20 req/min/source);
+    the HTTP rate limiter no longer double-counts. The test
     inspects the middleware's `_cost_map` (a `MappingProxyType`)
     to verify the wiring without needing a capacity-4 app to
     observe the consumption behavior.
@@ -212,7 +215,7 @@ async def test_aggregator_consumes_3_tokens(app_with_rate_limit: FastAPI) -> Non
             break
     assert found is not None, "RateLimitMiddleware not in app.user_middleware"
     cost_map: MappingProxyType[str, int] = found.kwargs["cost_map"]
-    assert cost_map["/jobs"] == 3
+    assert cost_map["/jobs"] == 1
     assert cost_map["/jobs/linkedin"] == 1
     assert cost_map["/jobs/indeed"] == 1
     assert cost_map["/jobs/infojobs"] == 1
