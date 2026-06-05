@@ -62,7 +62,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from playwright_stealth import Stealth  # type: ignore[import-untyped]
 
 from jobs_finder.application.aggregator import SearchAllSourcesUseCase
-from jobs_finder.application.ports import NoOpRateLimiter, RateLimitPort
+from jobs_finder.application.ports import RateLimitPort
 from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase
 from jobs_finder.application.usecases.search_indeed_jobs import (
     RawSearchJobsUseCase as RawIndeedJobsUseCase,
@@ -97,9 +97,7 @@ from jobs_finder.infrastructure.linkedin.scraper import (
     LinkedInScraperSettings,
 )
 from jobs_finder.infrastructure.linkedin.throttle import AsyncThrottle
-from jobs_finder.infrastructure.rate_limit.in_memory_token_bucket import (
-    InMemoryTokenBucket,
-)
+from jobs_finder.infrastructure.rate_limit._factory import build_rate_limiter
 from jobs_finder.presentation.exception_handlers import (
     register_exception_handlers,
 )
@@ -453,21 +451,15 @@ def build_app(  # noqa: PLR0915
     # 3. `RequestId` is next: it sets the id and binds the `ContextVar`.
     # 4. `CORS` is outermost: preflights get a request_id echo too.
     #
-    # T-002 (rate-limiting): build the limiter directly (no factory
-    # yet — the factory lands in T-003 with the optional Redis
-    # backend). When `rate_limit_enabled=False`, the middleware is
-    # NOT added to the stack — the app's behavior is byte-identical
-    # to the pre-T-002 baseline.
-    rate_limiter: RateLimitPort
-    if effective_settings.rate_limit_enabled:
-        rate_limiter = InMemoryTokenBucket(
-            capacity=effective_settings.rate_limit_requests,
-            window_seconds=effective_settings.rate_limit_window_seconds,
-        )
-    else:
-        rate_limiter = NoOpRateLimiter(
-            capacity=effective_settings.rate_limit_requests,
-        )
+    # T-003 (rate-limiting): the limiter is built via
+    # `build_rate_limiter(settings)` — the factory selects
+    # `NoOpRateLimiter` (disabled), `InMemoryTokenBucket` (memory
+    # backend, default), or `RedisTokenBucket` (redis backend)
+    # per `RATE_LIMIT_ENABLED` / `RATE_LIMIT_BACKEND`. When
+    # `rate_limit_enabled=False`, the middleware is NOT added to
+    # the stack — the app's behavior is byte-identical to the
+    # pre-T-002 baseline.
+    rate_limiter: RateLimitPort = build_rate_limiter(effective_settings)
 
     # Effective exempt set = `settings.rate_limit_exempt_paths` ∪
     # `EXEMPT_UNCONDITIONAL` ∪ FastAPI docs surface. The unconditional
