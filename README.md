@@ -165,34 +165,132 @@ LINKEDIN_CORS_ALLOW_ORIGINS="https://app.example.com,https://admin.example.com" 
 ### Caching
 
 Each `GET /jobs/<source>` route wraps the source's `JobSearchPort` in a
-`CachedJobSearchUseCase` backed by an in-memory `InMemoryTTLCache` with
-absolute TTL semantics. The first call invokes the Playwright scraper
-and stores the result (`X-Cache: MISS`); every subsequent identical
-query within the TTL window returns the cached `list[Job]` without
-launching a browser (`X-Cache: HIT`).
+`CachedJobSearchUseCase` backed by a `CachePort` implementation. The
+first call invokes the Playwright scraper and stores the result
+(`X-Cache: MISS`); every subsequent identical query within the TTL
+window returns the cached `list[Job]` without launching a browser
+(`X-Cache: HIT`).
 
-The TTL is controlled by the `CACHE_TTL_SECONDS` env var (default `60.0`).
-Set `CACHE_TTL_SECONDS=0` to disable caching (every call is a miss).
-The 3 source caches are independent (a LinkedIn HIT does not affect
-Indeed or InfoJobs) — the cache key includes the source name.
+Two cache backends are supported, selected by the `CACHE_BACKEND`
+env var (default `memory`):
+
+| Backend | Use case | Survives restart | Multi-worker / multi-host | State location |
+| --- | --- | --- | --- | --- |
+| `memory` (default) | single-process dev / laptop | no | no | per-process `dict` + `threading.Lock` |
+| `redis` | production / multi-worker | yes | yes (shared cache) | external `redis.asyncio` server |
+
+Both backends satisfy the same `CachePort` Protocol, set the same
+`X-Cache: HIT|MISS` response header, and honor the per-source key
+isolation (a LinkedIn HIT never satisfies an Indeed query).
+
+#### Local Redis (Docker one-liner)
 
 ```bash
-# Default: 60s TTL. A frontend SPA refreshing every 5s collapses
-# 12 requests into 1.
-uv run uvicorn jobs_finder.main:app --port 8000
+# Start a local Redis on :6379 (one-time, persists across restarts
+# of the API; stop with `docker stop jobs-finder-redis`).
+docker run -d -p 6379:6379 --name jobs-finder-redis redis:7-alpine
 
-# 5-minute cache (longer absorption window, more stale-data risk).
-CACHE_TTL_SECONDS=300 uv run uvicorn jobs_finder.main:app --port 8000
-
-# Cache disabled (every call hits the upstream source).
-CACHE_TTL_SECONDS=0 uv run uvicorn jobs_finder.main:app --port 8000
+# Run the API against Redis. The lifespan pings the server on
+# startup; if Redis is unreachable, the app exits with a
+# RuntimeError BEFORE serving any request.
+CACHE_BACKEND=redis \
+  CACHE_REDIS_URL=redis://localhost:6379/0 \
+  uv run uvicorn jobs_finder.main:app --port 8000
 ```
 
-Caveats: the cache is in-memory (no cross-process / cross-host sharing,
-no survival of process restart) and best-effort (two concurrent misses
-for the same key can cause two scraper calls; a future change can add
-`asyncio.Lock`-per-key for single-flight). Errors (502) are NOT cached
-so a transient Distil/Cloudflare block doesn't poison the cache.
+#### Remote Redis (managed services)
+
+Point `CACHE_REDIS_URL` at any reachable Redis. The factory uses
+`redis.asyncio.from_url(url, db=...)` so a `rediss://` URL (TLS) or
+a username/password are supported via the standard `redis://`
+syntax (`redis://:password@host:port/db`).
+
+```bash
+# Upstash (HTTP / TLS edge Redis — works with the free tier).
+CACHE_BACKEND=redis \
+  CACHE_REDIS_URL=rediss://default:<password>@<host>.upstash.io:6379 \
+  CACHE_REDIS_NAMESPACE=jobs-finder-prod \
+  uv run uvicorn jobs_finder.main:app --port 8000
+
+# AWS ElastiCache (cluster-mode disabled, single node).
+CACHE_BACKEND=redis \
+  CACHE_REDIS_URL=redis://my-cluster.xxxxx.use1.cache.amazonaws.com:6379/0 \
+  CACHE_REDIS_NAMESPACE=jobs-finder-prod \
+  uv run uvicorn jobs_finder.main:app --port 8000
+
+# Redis Cloud (managed Redis Enterprise).
+CACHE_BACKEND=redis \
+  CACHE_REDIS_URL=redis://default:<password>@<host>.redis.cloud:6379/0 \
+  CACHE_REDIS_NAMESPACE=jobs-finder-prod \
+  uv run uvicorn jobs_finder.main:app --port 8000
+```
+
+The `CACHE_REDIS_NAMESPACE` env var is the per-deployment key
+prefix. Set it to your environment (e.g. `jobs-finder-prod`,
+`jobs-finder-staging`) so two deployments sharing the same Redis
+instance don't collide. The validator at startup rejects empty
+or `:`-containing namespaces (the runtime key is
+`{namespace}:{source}:{hash}` — a `:` in the namespace would let
+two deployments share a key prefix).
+
+#### Disable the cache
+
+Set `CACHE_TTL_SECONDS=0` to disable the cache for either backend:
+
+```bash
+# Memory backend, cache disabled (every call hits the upstream).
+CACHE_TTL_SECONDS=0 uv run uvicorn jobs_finder.main:app --port 8000
+
+# Redis backend, cache disabled (every call hits the upstream;
+# the Redis connection is still created on startup for ping).
+CACHE_BACKEND=redis CACHE_TTL_SECONDS=0 \
+  uv run uvicorn jobs_finder.main:app --port 8000
+```
+
+A `ttl=0` cache issues NO write commands (in-memory: every entry
+is already expired by the time it's read; Redis: no `SET` issued).
+Subsequent `get`s are always a miss, so the scraper is invoked
+on every call.
+
+#### Cache env-var table
+
+| Env var | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `CACHE_BACKEND` | `memory` \| `redis` | `memory` | Selects the backend. `redis` requires a reachable `redis.asyncio` server (the lifespan pings it on startup; if unreachable, the app exits with `RuntimeError`). |
+| `CACHE_TTL_SECONDS` | float | `60.0` | Absolute TTL (last-write-wins). `0.0` disables the cache. Sub-second values use PEX (millisecond precision) on the Redis backend. |
+| `CACHE_REDIS_URL` | str | `redis://localhost:6379/0` | The `redis://` URL passed to `redis.asyncio.from_url`. Use `rediss://` for TLS, or `redis://:password@host:port/db` for auth. |
+| `CACHE_REDIS_NAMESPACE` | str | `jobs-finder` | The per-deployment key prefix. Validated at startup: empty and `:`-containing values are rejected. The runtime key is `{namespace}:{source}:{sha256(key)[:32]}`. |
+| `CACHE_REDIS_DB` | int | `0` | The integer db index passed to `redis.asyncio.from_url(..., db=...)`. |
+
+The `X-Cache: HIT|MISS` response header is unchanged by the
+backend: the route reads `SearchResult.cache_status.value` from
+the `CachedJobSearchUseCase` and emits the exact same header
+shape. The 3 source caches (LinkedIn + Indeed + InfoJobs) are
+always independent — a LinkedIn HIT never satisfies an Indeed
+query — regardless of backend.
+
+#### Caveats
+
+- **In-memory backend** is per-process: 4 uvicorn workers = 4
+  independent caches (no cross-worker sharing, no survival of
+  process restart). The 553 pre-existing tests assume this mode
+  (the conftest's `app` fixture builds a default `app = build_app()`
+  which uses `InMemoryTTLCache`).
+- **Redis backend** is best-effort: a `redis.exceptions.RedisError`
+  on a `get`/`set`/`delete` logs a WARNING and returns the no-op
+  sentinel (None for `get`, no exception for the rest). The
+  request continues as a cache miss — a Redis outage degrades to
+  a slower but functional API, not a 502.
+- **JSON serialization**: values are stored as `json.dumps(value,
+  default=str)`. A `Job` (frozen dataclass) round-trips to a
+  `dict` — callers should consume the cached value via the
+  response schema (`JobResponse`), not by `isinstance(..., Job)`.
+- **Stampede**: two concurrent misses for the same key can
+  cause two scraper calls. A future change can add
+  `asyncio.Lock`-per-key for single-flight. Not in v1.
+- **Error caching**: errors (502) are NOT cached (REQ-C-006),
+  so a transient Distil/Cloudflare block doesn't poison the
+  cache. The next request after a failure retries the scraper.
 
 ### Structured JSON logs (with `request_id`)
 
@@ -217,20 +315,58 @@ response, and any error logged during processing. Set
 
 ## Quick start
 
+Three ways to start the API, depending on whether you want the
+default in-memory cache, a Redis-backed cache, or no cache at all.
+
+### Default: in-memory cache
+
 ```bash
 # 1. Install dependencies into a project-local virtualenv
 uv sync
 
-# 2. Run the test suite (no network, no Chromium)
+# 2. Start the API. The default CACHE_BACKEND=memory uses
+#    InMemoryTTLCache (60s TTL, per-process, no external deps).
+uv run uvicorn jobs_finder.main:app --port 8000
+```
+
+### With Redis (persistent, multi-worker-safe)
+
+```bash
+# 1. Start a local Redis (one-time; persists across API restarts).
+docker run -d -p 6379:6379 --name jobs-finder-redis redis:7-alpine
+
+# 2. Start the API against Redis. The lifespan pings the server
+#    on startup and exits with a RuntimeError if unreachable.
+CACHE_BACKEND=redis \
+  CACHE_REDIS_URL=redis://localhost:6379/0 \
+  uv run uvicorn jobs_finder.main:app --port 8000
+```
+
+For remote Redis (Upstash, ElastiCache, Redis Cloud), see
+the "Caching" section above for the exact env-var block.
+
+### Cache disabled
+
+```bash
+# Every request hits the upstream source (no caching, no Redis
+# connection). Useful for forcing a fresh scrape during
+# development or for benchmarking the scraper directly.
+CACHE_TTL_SECONDS=0 uv run uvicorn jobs_finder.main:app --port 8000
+```
+
+### Quality gates
+
+```bash
+# Run the test suite (no network, no Chromium).
 uv run pytest
 
-# 3. Static type check
+# Static type check (--strict).
 uv run mypy
 
-# 4. Lint
+# Lint.
 uv run ruff check
 
-# 5. Format check
+# Format check.
 uv run ruff format --check
 ```
 
