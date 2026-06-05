@@ -212,3 +212,26 @@ class AggregatedJobsResponse(BaseModel):
     """
 
     jobs: list[AggregatedJobResponse]
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit response (REQ-RL-010, rate-limiting change)
+#
+# The 429 body shape is `{"detail": "rate limit exceeded", "request_id": "..."}` —
+# the SAME shape as the existing 502 body (`UPSTREAM_UNAVAILABLE_DETAIL`),
+# differing only in the `detail` string. The `request_id` correlates with the
+# `X-Request-Id` response header (set by `RequestIdMiddleware`).
+# ---------------------------------------------------------------------------
+
+
+class RateLimitedResponse(BaseModel):
+    """`429 Too Many Requests` body shape (rate-limiting middleware).
+
+    Spec: REQ-RL-010. The body has exactly two string fields: the
+    literal `"rate limit exceeded"` detail, and the request id
+    (echoed from the `X-Request-Id` response header so a curl
+    with the id visible can correlate the body with the headers).
+    """
+
+    detail: str
+    request_id: str

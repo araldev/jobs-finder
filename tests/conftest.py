@@ -44,6 +44,7 @@ from jobs_finder.application.usecases.search_linkedin_jobs import (
 )
 from jobs_finder.domain.job import Job
 from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCache
+from jobs_finder.infrastructure.config import Settings
 from jobs_finder.presentation.app_factory import build_app
 
 
@@ -273,3 +274,66 @@ def fake_infojobs_port(sample_infojobs_jobs: list[Job]) -> FakeJobSearchPort:
     InfoJobs reuses it because the port is source-agnostic.
     """
     return FakeJobSearchPort(jobs=sample_infojobs_jobs)
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit fixtures (added in T-002 of `rate-limiting`).
+#
+# `settings_with_rate_limit`: a `Settings` instance with
+# `rate_limit_requests=2` (so a 429 is reachable in-test) and
+# `rate_limit_window_seconds=60.0` (so `Retry-After` is a meaningful
+# integer). All other rate-limit fields use the spec defaults.
+#
+# `app_with_rate_limit`: a FastAPI app whose ALL THREE use cases are
+# wired to fake ports AND whose `RateLimitMiddleware` is wired
+# (via the `settings=...` injection). Used by the per-route rate
+# limit tests in `tests/integration/test_rate_limit_headers.py` and
+# `tests/integration/test_rate_limit_exempt.py`.
+#
+# The fixture exposes the LinkedIn fake port on `app.state.job_search_port`
+# (the unwrapped scraper / fake port) so the 429 short-circuit test
+# can assert the port was NOT called after a 429.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def settings_with_rate_limit() -> Settings:
+    """A `Settings` with `rate_limit_requests=2` (so 429 is reachable in-test)."""
+    return Settings(
+        rate_limit_requests=2,
+        rate_limit_window_seconds=60.0,
+    )
+
+
+@pytest.fixture
+def app_with_rate_limit(
+    fake_indeed_port: FakeJobSearchPort,
+    fake_infojobs_port: FakeJobSearchPort,
+    settings_with_rate_limit: Settings,
+) -> FastAPI:
+    """A FastAPI app with the rate limiter wired (`rate_limit_requests=2`).
+
+    All 3 use cases are wired to fresh `FakeJobSearchPort` instances
+    (the LinkedIn port is fresh + empty, the Indeed + InfoJobs ports
+    are primed with the conftest's sample jobs). The rate-limit
+    middleware is wired via the `settings_with_rate_limit` injection
+    so a 429 is reachable on the 3rd call to any non-exempt route.
+    """
+    linkedin_port = FakeJobSearchPort()
+    linkedin_use_case = _build_cached_linkedin_use_case(port=linkedin_port)
+    indeed_use_case = IndeedSearchJobsUseCase(
+        port=fake_indeed_port,
+        cache=InMemoryTTLCache(ttl_seconds=60.0),
+        source="indeed",
+    )
+    infojobs_use_case = InfoJobsSearchJobsUseCase(
+        port=fake_infojobs_port,
+        cache=InMemoryTTLCache(ttl_seconds=60.0),
+        source="infojobs",
+    )
+    return build_app(
+        use_case=linkedin_use_case,
+        indeed_use_case=indeed_use_case,
+        infojobs_use_case=infojobs_use_case,
+        settings=settings_with_rate_limit,
+    )

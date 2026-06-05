@@ -53,6 +53,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from types import MappingProxyType
 
 import redis.asyncio as redis_async
 import redis.exceptions
@@ -61,6 +62,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from playwright_stealth import Stealth  # type: ignore[import-untyped]
 
 from jobs_finder.application.aggregator import SearchAllSourcesUseCase
+from jobs_finder.application.ports import NoOpRateLimiter, RateLimitPort
 from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase
 from jobs_finder.application.usecases.search_indeed_jobs import (
     RawSearchJobsUseCase as RawIndeedJobsUseCase,
@@ -95,12 +97,16 @@ from jobs_finder.infrastructure.linkedin.scraper import (
     LinkedInScraperSettings,
 )
 from jobs_finder.infrastructure.linkedin.throttle import AsyncThrottle
+from jobs_finder.infrastructure.rate_limit.in_memory_token_bucket import (
+    InMemoryTokenBucket,
+)
 from jobs_finder.presentation.exception_handlers import (
     register_exception_handlers,
 )
 from jobs_finder.presentation.logging_config import configure_logging
 from jobs_finder.presentation.middleware import (
     LogOnRequestMiddleware,
+    RateLimitMiddleware,
     RequestIdMiddleware,
 )
 from jobs_finder.presentation.routes import aggregator as aggregator_routes
@@ -441,9 +447,59 @@ def build_app(  # noqa: PLR0915
     # first; the LAST `add_middleware` call wraps everything else.
     # 1. `LogOnRequest` is innermost: it runs inside `RequestId` so
     #    the `ContextVar` is bound when it logs.
-    # 2. `RequestId` is next: it sets the id and binds the `ContextVar`.
-    # 3. `CORS` is outermost: preflights get a request_id echo too.
+    # 2. `RateLimit` is next: it runs AFTER `RequestId` in execution
+    #    order (because it's added BEFORE `RequestId` in nesting
+    #    order) so the 429 body can read `request.state.request_id`.
+    # 3. `RequestId` is next: it sets the id and binds the `ContextVar`.
+    # 4. `CORS` is outermost: preflights get a request_id echo too.
+    #
+    # T-002 (rate-limiting): build the limiter directly (no factory
+    # yet — the factory lands in T-003 with the optional Redis
+    # backend). When `rate_limit_enabled=False`, the middleware is
+    # NOT added to the stack — the app's behavior is byte-identical
+    # to the pre-T-002 baseline.
+    rate_limiter: RateLimitPort
+    if effective_settings.rate_limit_enabled:
+        rate_limiter = InMemoryTokenBucket(
+            capacity=effective_settings.rate_limit_requests,
+            window_seconds=effective_settings.rate_limit_window_seconds,
+        )
+    else:
+        rate_limiter = NoOpRateLimiter(
+            capacity=effective_settings.rate_limit_requests,
+        )
+
+    # Effective exempt set = `settings.rate_limit_exempt_paths` ∪
+    # `EXEMPT_UNCONDITIONAL` ∪ FastAPI docs surface. The unconditional
+    # set is checked in the middleware itself; the other two are
+    # forwarded as kwargs.
+    effective_exempt_paths: frozenset[str] = frozenset(
+        set(effective_settings.rate_limit_exempt_paths) | {"/docs", "/openapi.json", "/redoc"}
+    )
+
+    # Per-route cost map. `MappingProxyType` makes the map immutable
+    # at runtime (REQ-RL-006 scenario 4).
+    cost_map: MappingProxyType[str, int] = MappingProxyType(
+        {
+            "/jobs": effective_settings.rate_limit_aggregator_path_cost,
+            "/jobs/linkedin": effective_settings.rate_limit_per_source_path_cost,
+            "/jobs/indeed": effective_settings.rate_limit_per_source_path_cost,
+            "/jobs/infojobs": effective_settings.rate_limit_per_source_path_cost,
+        }
+    )
+
     app.add_middleware(LogOnRequestMiddleware)
+    if effective_settings.rate_limit_enabled:
+        # Added BEFORE `RequestId` in nesting order so it runs AFTER
+        # `RequestId` in execution order — the 429 body reads
+        # `request.state.request_id` which `RequestId` sets on entry.
+        app.add_middleware(
+            RateLimitMiddleware,
+            limiter=rate_limiter,
+            exempt_paths=effective_exempt_paths,
+            cost_map=cost_map,
+            capacity=effective_settings.rate_limit_requests,
+        )
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(
         CORSMiddleware,

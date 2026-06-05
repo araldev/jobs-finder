@@ -32,9 +32,10 @@ new fields opt out of the prefix by declaring an alias).
 
 from __future__ import annotations
 
+import json
 from typing import Literal
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # A plausible stealth desktop UA. The exact fingerprint is not load-bearing;
@@ -296,7 +297,7 @@ class Settings(BaseSettings):
     def _validate_cache_redis_namespace(cls, v: str) -> str:
         """Reject empty and `:`-containing values for `cache_redis_namespace`.
 
-        The runtime key is `f\"{ns}:{source}:{hash}\"` (3 colon-separated
+        The runtime key is `f"{ns}:{source}:{hash}"` (3 colon-separated
         segments). A `:` in the namespace would introduce a 4th
         segment and risk collision with another deployment sharing
         the same Redis instance. An empty namespace would let two
@@ -310,6 +311,132 @@ class Settings(BaseSettings):
         if ":" in v:
             raise ValueError(f"CACHE_REDIS_NAMESPACE must not contain ':' (got {v!r})")
         return v
+
+    # ------------------------------------------------------------------
+    # Rate-limit settings (REQ-RL-008, rate-limiting change)
+    #
+    # The 10 fields below configure the `RateLimitMiddleware` (T-002)
+    # and the `build_rate_limiter` factory (T-003). Each field
+    # declares its own `validation_alias` (same pattern used by the
+    # `indeed_*`, `infojobs_*`, `linkedin_*` pagination, and cache
+    # fields above).
+    #
+    # - `rate_limit_enabled`: kill-switch — `False` makes the
+    #   middleware a no-op (no headers, no rejection, no log noise).
+    # - `rate_limit_backend`: `Literal["memory", "redis"]` mirrors
+    #   `cache_backend`. `memory` is the default; `redis` shares
+    #   the limiter across workers/hosts.
+    # - `rate_limit_requests`: capacity (max burst). Default 60.
+    # - `rate_limit_window_seconds`: refill period. Refill rate is
+    #   `capacity / window_seconds` tokens/sec.
+    # - `rate_limit_redis_url` / `rate_limit_redis_db`: fall back
+    #   to `cache_redis_url` / `cache_redis_db` via the
+    #   `_fall_back_redis` model_validator below. Empty / `-1` is
+    #   the sentinel "use the cache value".
+    # - `rate_limit_redis_namespace`: separate from the cache
+    #   namespace so the 2 features don't collide. Default
+    #   `"rate-limiter"`.
+    # - `rate_limit_exempt_paths`: JSON list per spec OQ-B
+    #   (Pydantic-friendly). Default `["/health"]`.
+    # - `rate_limit_aggregator_path_cost` / `rate_limit_per_source_path_cost`:
+    #   per-route cost (aggregator = 3, per-source = 1).
+    # ------------------------------------------------------------------
+
+    rate_limit_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("RATE_LIMIT_ENABLED", "rate_limit_enabled"),
+    )
+    rate_limit_backend: Literal["memory", "redis"] = Field(
+        default="memory",
+        validation_alias=AliasChoices("RATE_LIMIT_BACKEND", "rate_limit_backend"),
+    )
+    rate_limit_requests: int = Field(
+        default=60,
+        validation_alias=AliasChoices("RATE_LIMIT_REQUESTS", "rate_limit_requests"),
+        ge=1,
+    )
+    rate_limit_window_seconds: float = Field(
+        default=60.0,
+        validation_alias=AliasChoices("RATE_LIMIT_WINDOW_SECONDS", "rate_limit_window_seconds"),
+        gt=0.0,
+    )
+    rate_limit_redis_url: str = Field(
+        default="",  # sentinel: "use cache_redis_url" — see _fall_back_redis
+        validation_alias=AliasChoices("RATE_LIMIT_REDIS_URL", "rate_limit_redis_url"),
+    )
+    rate_limit_redis_namespace: str = Field(
+        default="rate-limiter",
+        validation_alias=AliasChoices("RATE_LIMIT_REDIS_NAMESPACE", "rate_limit_redis_namespace"),
+    )
+    rate_limit_redis_db: int = Field(
+        default=-1,  # sentinel: "use cache_redis_db" — see _fall_back_redis
+        validation_alias=AliasChoices("RATE_LIMIT_REDIS_DB", "rate_limit_redis_db"),
+    )
+    rate_limit_exempt_paths: frozenset[str] = Field(
+        default_factory=lambda: frozenset({"/health"}),
+        validation_alias=AliasChoices("RATE_LIMIT_EXEMPT_PATHS", "rate_limit_exempt_paths"),
+    )
+    rate_limit_aggregator_path_cost: int = Field(
+        default=3,
+        validation_alias=AliasChoices(
+            "RATE_LIMIT_AGGREGATOR_PATH_COST", "rate_limit_aggregator_path_cost"
+        ),
+        ge=1,
+    )
+    rate_limit_per_source_path_cost: int = Field(
+        default=1,
+        validation_alias=AliasChoices(
+            "RATE_LIMIT_PER_SOURCE_PATH_COST", "rate_limit_per_source_path_cost"
+        ),
+        ge=1,
+    )
+
+    @field_validator("rate_limit_exempt_paths", mode="before")
+    @classmethod
+    def _parse_exempt_paths(cls, v: object) -> frozenset[str]:
+        """Parse `RATE_LIMIT_EXEMPT_PATHS` as a JSON list of strings.
+
+        Spec OQ-B: Pydantic-friendly JSON list. A
+        `RATE_LIMIT_EXEMPT_PATHS='["/health", "/internal/ping"]'`
+        env var parses to `frozenset({"/health", "/internal/ping"})`.
+        Also accepts a pre-parsed list / tuple / set for programmatic
+        construction (`Settings(rate_limit_exempt_paths=[...])`).
+        An empty / None value yields the default `frozenset({"/health"})`.
+        """
+        if isinstance(v, (frozenset, set, list, tuple)):
+            return frozenset(str(p) for p in v)
+        if isinstance(v, str) and v:
+            parsed = json.loads(v)
+            if not isinstance(parsed, list):
+                raise ValueError(
+                    "RATE_LIMIT_EXEMPT_PATHS must be a JSON list of strings, "
+                    f"got {type(parsed).__name__}"
+                )
+            return frozenset(str(p) for p in parsed)
+        if v is None or v == "":
+            return frozenset({"/health"})
+        raise ValueError(f"unparseable RATE_LIMIT_EXEMPT_PATHS: {v!r}")
+
+    @model_validator(mode="after")
+    def _fall_back_redis(self) -> Settings:
+        """Copy `cache_redis_url` / `cache_redis_db` into the rate-limit fields when unset.
+
+        The sentinel values (empty string for `rate_limit_redis_url`,
+        `-1` for `rate_limit_redis_db`) are the "unset" markers. An
+        explicit value (any string / int) bypasses the fallback so a
+        deployment can split the cache and the rate-limiter across
+        two Redis instances.
+
+        `AliasChoices` does not support computed fallbacks, so the
+        copy is implemented here as a `model_validator(mode="after")`.
+        Settings is NOT frozen, so a direct attribute assignment works
+        (no `object.__setattr__` is needed).
+        """
+        if not self.rate_limit_redis_url:
+            self.rate_limit_redis_url = self.cache_redis_url
+        if self.rate_limit_redis_db == -1:
+            self.rate_limit_redis_db = self.cache_redis_db
+        return self
 
 
 def load_settings() -> Settings:
