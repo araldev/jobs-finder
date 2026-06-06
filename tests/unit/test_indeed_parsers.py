@@ -27,6 +27,7 @@ from bs4 import BeautifulSoup, Tag
 
 from jobs_finder.infrastructure.indeed.exceptions import IndeedParseError
 from jobs_finder.infrastructure.indeed.parsers import (
+    _find_json_value_start_after,
     is_indeed_blocked,
     parse_indeed_company,
     parse_indeed_job_id,
@@ -637,4 +638,177 @@ def test_real_fixture_pins_pubdate_value() -> None:
     assert len(cards) >= 1, "real fixture must have at least one card"
     first_card = cards[0]
     result = parse_indeed_posted_at(first_card, soup)
+    assert result == datetime(2025, 9, 24, 5, 0, 0, tzinfo=UTC)
+
+
+# ---------------------------------------------------------------------------
+# S-2 (REQ-IDF-002): direct unit tests for `_find_json_value_start_after`
+#
+# The helper was already transitively covered by `test_json_happy_path_*`
+# and friends. These tests pin the contract end-to-end so a future
+# refactor that re-introduces the v0 datetime.now(UTC) fallback (or
+# breaks the assignment-signature distinction) gets caught here.
+# ---------------------------------------------------------------------------
+
+
+def test_find_json_value_start_after_bracket_equals_returns_brace_pos() -> None:
+    """`]=` assignment where the next non-whitespace char is `{` returns the position of `{`.
+
+    Mirrors the real Indeed SERP shape:
+        providerData["mosaic-provider-jobcards"]= {"jobs":[]}
+    The helper must skip the `]=` and any whitespace, then return the
+    index of `{` so `_try_extract_pub_date_from_script` can feed it to
+    `_extract_balanced_json`.
+    """
+    text = 'foo["mosaic-provider-jobcards"]= {"jobs":[]}'
+    anchor_len = len("mosaic-provider-jobcards")
+    idx = text.find("mosaic-provider-jobcards")
+    assert idx >= 0, "test fixture must contain the anchor"
+    after = idx + anchor_len
+    result = _find_json_value_start_after(text, after, "=")
+    expected = text.index("{", after)
+    assert result == expected
+    assert text[result] == "{"
+
+
+def test_find_json_value_start_after_colon_returns_brace_pos() -> None:
+    """`:` assignment (object-literal shorthand) where the next char is `{`.
+
+    Mirrors the test-helper shape used in `_soup_with_mosaic_script`:
+        window.mosaic = { providerData: { "mosaic-provider-jobcards": {...} } };
+    The helper must skip the `:` and any whitespace, then return the
+    index of `{`.
+    """
+    text = 'window.mosaic = { providerData: { "mosaic-provider-jobcards": {"jobs":[]} } };'
+    anchor_len = len("mosaic-provider-jobcards")
+    idx = text.find("mosaic-provider-jobcards")
+    assert idx >= 0, "test fixture must contain the anchor"
+    after = idx + anchor_len
+    result = _find_json_value_start_after(text, after, ":")
+    expected = text.index("{", after)
+    assert result == expected
+    assert text[result] == "{"
+
+
+def test_find_json_value_start_after_rejects_string_assignment() -> None:
+    """`]=` followed by `"` (a string assignment) MUST return -1.
+
+    The real Indeed SERP embeds BOTH:
+        providerData["mosaic-provider-jobcards"]= <json>
+    AND
+        publicPaths["mosaic-provider-jobcards"]="https://..."
+    The helper MUST distinguish the two: only the first (where the
+    value starts with `{`) is the JSON assignment; the second is a
+    string assignment and MUST return -1 so the parser skips it.
+    This is the critical defensive case — without it, the parser
+    would parse a URL string as JSON and silently return None
+    (falling back to datetime.now(UTC)).
+    """
+    text = (
+        'publicPaths["mosaic-provider-jobcards"]='
+        '"https://chex-services-prod.indeed.com/hosted/mosaic-provider-jobcards"'
+    )
+    anchor_len = len("mosaic-provider-jobcards")
+    idx = text.find("mosaic-provider-jobcards")
+    assert idx >= 0, "test fixture must contain the anchor"
+    after = idx + anchor_len
+    result = _find_json_value_start_after(text, after, "=")
+    assert result == -1, (
+        f"string assignment MUST return -1; got {result} "
+        f"(text[{result}:]={text[result : result + 5]!r})"
+    )
+
+
+def test_find_json_value_start_after_no_delimiter_returns_minus_one() -> None:
+    """No `=` or `:` after the anchor substring returns -1.
+
+    The helper must NOT crash on input with no delimiter after the
+    anchor — it must return -1 so the caller
+    (`_try_extract_pub_date_from_script`) skips this occurrence of
+    the anchor and continues the search.
+    """
+    text = "mosaic-provider-jobcards"  # no `=` or `:` anywhere
+    result = _find_json_value_start_after(text, after=0, delim="=")
+    assert result == -1
+
+
+def test_find_json_value_start_after_skips_whitespace() -> None:
+    """Whitespace between the delimiter and the `{` is skipped.
+
+    The helper's contract is "skip whitespace, then assert the next
+    char is `{`". A real-world shape like `foo:    {"jobs":[]}`
+    (multiple spaces between `:` and `{`) must still return the
+    position of `{`.
+    """
+    text = 'foo:    {"jobs":[]}'
+    # `after=3` is right after "foo"; delim is ":".
+    result = _find_json_value_start_after(text, after=3, delim=":")
+    assert result == text.index("{")
+    assert text[result] == "{"
+
+
+# ---------------------------------------------------------------------------
+# S-1 (REQ-IDF-001): posted_at_map kwarg contract
+#
+# The v2 JSON-map optimization lifts the per-card JSON extraction to
+# the page level. `_parse_cards` calls `_extract_posted_at_map(soup)`
+# ONCE per page, then passes the resulting `{data_jk: datetime}` map
+# to `parse_indeed_posted_at` via a new optional keyword-only kwarg.
+# The 3 tests below pin the new contract.
+# ---------------------------------------------------------------------------
+
+
+def test_posted_at_map_kwarg_takes_precedence_over_soup() -> None:
+    """`posted_at_map` value is returned when present, NOT a fresh soup lookup.
+
+    Pins the precedence rule: when BOTH `posted_at_map` AND `soup`
+    are provided and BOTH would yield a datetime, the MAP's value
+    wins (the page-level map is the new source of truth; the soup
+    is the v1 fallback). The test sets up a soup that would yield
+    2025-09-24 via `_posted_at_from_mosaic` AND a map that yields
+    2026-01-15 for the same `data_jk`, then asserts the map's value.
+    """
+    soup = _soup_with_mosaic_script('{"jobs": [{"jobkey": "abc", "pubDate": 1758690000000}]}')
+    expected = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
+    posted_at_map = {"abc": expected}
+
+    result = parse_indeed_posted_at(_card_with_data_jk("abc"), soup, posted_at_map=posted_at_map)
+
+    assert result == expected
+
+
+def test_posted_at_map_kwarg_falls_through_to_soup_when_data_jk_missing() -> None:
+    """Map miss falls through to the v1 soup path (no crash, returns None on double-miss).
+
+    When `posted_at_map` is provided but does NOT contain the
+    card's `data_jk`, the function must NOT raise. It falls through
+    to the v1 `_posted_at_from_mosaic(soup, data_jk)` path. The
+    test sets up BOTH a soup AND a map where the card's `data_jk`
+    is absent — both miss — so the result is None (defensive
+    fail-closed, same as the v1 path).
+    """
+    soup = _soup_with_mosaic_script('{"jobs": [{"jobkey": "zzz", "pubDate": 1758690000000}]}')
+    posted_at_map = {"zzz": datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)}
+
+    result = parse_indeed_posted_at(_card_with_data_jk("abc"), soup, posted_at_map=posted_at_map)
+
+    assert result is None
+
+
+def test_posted_at_map_kwarg_none_preserves_v1_soup_path() -> None:
+    """`posted_at_map=None` preserves the v1 soup-based path (backward compat).
+
+    When `posted_at_map` is None (the default), the function falls
+    through to `_posted_at_from_mosaic(soup, data_jk)` — the
+    pre-change v1 path. This is the backward-compat invariant: the
+    35 pre-existing tests pass `posted_at_map=None` (implicitly,
+    via the legacy `soup` argument) and must continue to return
+    the pre-change values. The test exercises the v1 path
+    explicitly with `posted_at_map=None` and asserts the
+    `pubDate`-from-JSON lookup wins.
+    """
+    soup = _soup_with_mosaic_script('{"jobs": [{"jobkey": "abc", "pubDate": 1758690000000}]}')
+
+    result = parse_indeed_posted_at(_card_with_data_jk("abc"), soup, posted_at_map=None)
+
     assert result == datetime(2025, 9, 24, 5, 0, 0, tzinfo=UTC)

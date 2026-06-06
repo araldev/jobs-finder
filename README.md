@@ -569,6 +569,24 @@ uv run ruff check
 uv run ruff format --check
 ```
 
+### Coverage
+
+Coverage is informational, not a build gate. To measure coverage:
+
+```bash
+uv run pytest --cov=jobs_finder --cov-report=term-missing
+```
+
+This prints a per-module coverage report to the terminal. For an HTML
+report, use:
+
+```bash
+uv run pytest --cov=jobs_finder --cov-report=html
+```
+
+No `fail_under` threshold is configured — coverage is a signal, not a
+gate. Add one only when the team sets a target.
+
 ## Aggregator endpoint
 
 `GET /jobs` is a thin composition layer over the 3 per-source routes.

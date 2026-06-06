@@ -74,6 +74,7 @@ from jobs_finder.infrastructure.pagination import paginated_search
 
 from .exceptions import IndeedBlockedError, IndeedParseError, IndeedTimeoutError
 from .parsers import (
+    _extract_posted_at_map,
     is_indeed_blocked,
     parse_indeed_company,
     parse_indeed_job_id,
@@ -337,19 +338,34 @@ def _parse_cards(soup: BeautifulSoup, remaining: int, domain: str) -> list[Job]:
     A card that fails to parse any other field raises `IndeedParseError`
     with the card snippet in `details`; one bad card aborts the whole
     response (we never return a silent partial list).
+
+    Posted-at optimization (REQ-IDF-001, S-1): the per-page
+    `mosaic-provider-jobcards` JSON is extracted ONCE up-front via
+    `_extract_posted_at_map(soup)`, producing a flat
+    `{data_jk: datetime}` map. Each per-card call passes the map
+    via the `posted_at_map=` kwarg of `parse_indeed_posted_at`,
+    avoiding the per-card `<script>` walk + JSON parse (≈1ms ×
+    N cards saved per page). The map is GC'd when this function
+    returns; no caching across `search()` calls (each call gets
+    a fresh page).
     """
+    # Page-level extract: build the {data_jk: posted_at} map ONCE
+    # for the whole page. Returns {} on any error; the parser then
+    # falls through to the legacy `span.date` grammar (which the
+    # real fixture has no `span.date` for, so the v1 soup path's
+    # None → scraper `datetime.now(UTC)` safety net still applies).
+    posted_at_map = _extract_posted_at_map(soup)
     cards = soup.select(RESULTS_SELECTOR)
     jobs: list[Job] = []
     for card in cards[:remaining]:
         try:
-            # `soup` is the full document; pass it through to the
-            # parser so it can read `pubDate` from the
-            # document-level `mosaic-provider-jobcards` JSON.
-            # The parser's primary path is the JSON lookup; the
-            # legacy `span.date` grammar is preserved as a
-            # fallback. The final safety net (None → now(UTC))
+            # Per-card call: pass the pre-extracted map (the
+            # page-level optimization). `parse_indeed_posted_at`
+            # looks up `data-jk` in the map first; on a miss
+            # it falls through to the legacy `span.date`
+            # grammar. The final safety net (None → now(UTC))
             # is the line below.
-            posted = parse_indeed_posted_at(card, soup)
+            posted = parse_indeed_posted_at(card, posted_at_map=posted_at_map)
             job = Job(
                 id=parse_indeed_job_id(card),
                 title=parse_indeed_title(card),

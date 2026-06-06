@@ -299,38 +299,67 @@ def _parse_relative_date(raw: str) -> datetime:
     raise ValueError(f"unparseable relative date: {raw!r}")
 
 
-def parse_indeed_posted_at(card: str | Tag, soup: BeautifulSoup | None = None) -> datetime | None:
+def parse_indeed_posted_at(
+    card: str | Tag,
+    soup: BeautifulSoup | None = None,
+    *,
+    posted_at_map: dict[str, datetime] | None = None,
+) -> datetime | None:
     """Return the card's posting datetime, or None when the field is absent.
 
     Strategy:
-        1. If `soup` is provided, try `_posted_at_from_mosaic` to
-           read the `pubDate` from the document-level
+        1. If `posted_at_map` is provided, look up the card's
+           `data-jk` in the pre-extracted `{data_jk: datetime}`
+           map (REQ-IDF-001). This is the page-level
+           optimization: the scraper extracts the map ONCE per
+           page and threads it into every per-card call,
+           avoiding the per-card `<script>` walk + JSON parse.
+        2. Else if `soup` is provided, try `_posted_at_from_mosaic`
+           to read the `pubDate` from the document-level
            `mosaic-provider-jobcards` JSON, matched by the
-           card's `data-jk`. The JSON lookup is the PRIMARY
-           path (the real es.indeed.com DOM as of 2026-06-02
-           renders no inline date).
-        2. Otherwise, try the legacy `span.date` relative-time
+           card's `data-jk`. The JSON lookup is the V1 path;
+           it is preserved for backward-compat (the 35
+           pre-existing parser tests use it).
+        3. Otherwise, try the legacy `span.date` relative-time
            grammar. This is preserved for backward-compat with
            older fixtures and any future DOM that DOES render
            an inline date.
-        3. Return `None` when nothing resolves. The scraper
+        4. Return `None` when nothing resolves. The scraper
            falls back to `datetime.now(UTC)` for the
            `posted_at` field.
 
     A `span.date` element that is present but unparseable raises
     `IndeedParseError` — that is "malformed", not "missing". The
-    JSON path NEVER raises; it returns `None` on any error so
-    the parser fails closed.
+    JSON paths (V1 and V2) NEVER raise; they return `None` on
+    any error so the parser fails closed.
 
     MUST read `pubDate` (the original posting date), NEVER
     `createDate` (the crawler index date). See
     `tests/unit/test_indeed_parsers.py::test_real_fixture_pins_pubdate_value`
     for the contract pin.
+
+    The `posted_at_map` kwarg is keyword-only to keep the
+    signature self-documenting at the call site (the scraper
+    reads `parse_indeed_posted_at(card, posted_at_map=map)`
+    which is obviously a page-level optimization, NOT a
+    per-card soup lookup).
     """
-    # Primary path: read `pubDate` from the document-level
+    # V2 path (REQ-IDF-001): page-level map lookup. When the
+    # caller provides a pre-extracted {data_jk: datetime} map,
+    # use it directly — no <script> walk, no JSON parse, no
+    # per-card soup parameter. This is the production hot path
+    # for the scraper (extracted once per page in
+    # `_parse_cards`).
+    if posted_at_map is not None:
+        data_jk = _extract_data_jk(card)
+        if data_jk is not None:
+            result = posted_at_map.get(data_jk)
+            if result is not None:
+                return result
+    # V1 path: read `pubDate` from the document-level
     # `mosaic-provider-jobcards` JSON. Only attempted when the
-    # caller supplies the full `BeautifulSoup` (the scraper
-    # already has it in scope at `_parse_cards`).
+    # caller supplies the full `BeautifulSoup` (the legacy
+    # scraper path; new code uses `posted_at_map` instead).
     if soup is not None:
         data_jk = _extract_data_jk(card)
         if data_jk is not None:
@@ -553,6 +582,129 @@ def _extract_balanced_json(text: str, start: int) -> str | None:
             if depth == 0:
                 return text[start : i + 1]
     return None
+
+
+def _iter_records(payload: object) -> list[dict[str, Any]]:
+    """Walk a JSON payload and return every dict in the tree (DFS).
+
+    Used by `_extract_posted_at_map` to extract all records from
+    a single JSON parse. Tolerates Indeed's schema drift: the
+    structure may change (e.g. `mosaicProviderJobCardsModel` →
+    `results` → list of records), but every record is a dict
+    somewhere in the tree. Returns a flat list of all dicts
+    found, with the outer-most dicts first (pre-order traversal).
+
+    The walker returns EVERY dict (not just the leaf dicts) so
+    the caller can also pick up records that nest their
+    metadata inline. The caller is responsible for filtering
+    by `jobkey` and `pubDate`.
+    """
+    result: list[dict[str, Any]] = []
+    if isinstance(payload, dict):
+        result.append(payload)
+        for value in payload.values():
+            result.extend(_iter_records(value))
+    elif isinstance(payload, list):
+        for item in payload:
+            result.extend(_iter_records(item))
+    return result
+
+
+def _parse_mosaic_script_to_map(text: str) -> dict[str, datetime] | None:
+    """Parse a single `<script>` text and return its `{data_jk: datetime}` map.
+
+    Walks the script looking for the `mosaic-provider-jobcards`
+    anchor, extracts the JSON assignment, parses it, and converts
+    the payload to a map via `_build_record_map`. Returns `None`
+    on any error (no valid anchor, malformed JSON). The caller
+    (`_extract_posted_at_map`) iterates over `<script>` tags until
+    one yields a non-`None` result.
+    """
+    idx = -1
+    anchor_len = len(_MOSAIC_ANCHOR)
+    while True:
+        idx = text.find(_MOSAIC_ANCHOR, idx + 1)
+        if idx < 0:
+            return None
+        after = text[idx + anchor_len :]
+        # Two valid assignment shapes (same as
+        # `_try_extract_pub_date_from_script`):
+        # 1. Real Indeed SERP: `"]=` (or `']=')
+        # 2. Test-helper shorthand: `":` (or `':`)
+        start = -1
+        if after.startswith('"]=') or after.startswith("']="):
+            start = _find_json_value_start_after(text, idx + anchor_len, "=")
+        elif after.startswith('":') or after.startswith("':"):
+            start = _find_json_value_start_after(text, idx + anchor_len, ":")
+        if start < 0:
+            continue
+        json_text = _extract_balanced_json(text, start)
+        if json_text is None:
+            continue
+        try:
+            payload = json.loads(json_text)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        return _build_record_map(payload)
+
+
+def _build_record_map(payload: object) -> dict[str, datetime]:
+    """Convert a parsed mosaic JSON payload into a `{data_jk: datetime}` map.
+
+    Skips records missing `jobkey` or with non-numeric `pubDate`.
+    First `jobkey` match wins (mirrors `_find_record_by_jobkey`'s
+    "return the first match" semantic); subsequent records with
+    the same `jobkey` are ignored defensively. Never raises —
+    returns the partial map on any record-level error.
+    """
+    result: dict[str, datetime] = {}
+    for record in _iter_records(payload):
+        jobkey = str(record.get("jobkey", ""))
+        if not jobkey or jobkey in result:
+            continue
+        pub_date = record.get("pubDate")
+        # `bool` is a subclass of `int` in Python; reject
+        # `True` / `False` to keep the contract tight.
+        if not isinstance(pub_date, (int, float)) or isinstance(pub_date, bool):
+            continue
+        try:
+            result[jobkey] = datetime.fromtimestamp(float(pub_date) / 1000.0, tz=UTC)
+        except (OverflowError, OSError, ValueError):
+            continue
+    return result
+
+
+def _extract_posted_at_map(soup: BeautifulSoup) -> dict[str, datetime]:
+    """Build a `{data_jk: posted_at_datetime}` map for the page.
+
+    The page-level optimization for `parse_indeed_posted_at`
+    (REQ-IDF-001): walk all `<script>` tags ONCE, find the
+    `mosaic-provider-jobcards` JSON assignment, parse it, and
+    extract every record's `pubDate` (epoch ms) into a flat
+    dict keyed by the record's `jobkey` (which equals the
+    card's `data-jk`).
+
+    Reuses the existing helpers — `_find_json_value_start_after`,
+    `_extract_balanced_json`, `json.loads`, `_iter_records` — to
+    stay consistent with the v1 `_posted_at_from_mosaic` /
+    `_try_extract_pub_date_from_script` path. No new parsing
+    logic; just one extra loop over the records.
+
+    Defensive: returns `{}` on ANY error (missing script,
+    malformed JSON, no records, no `pubDate`, `datetime`
+    overflow). The caller falls through to the v1 soup path,
+    the legacy `span.date` grammar, or the scraper's
+    `datetime.now(UTC)` fallback. The page-level map is an
+    optimization, NOT a new hard requirement.
+    """
+    for script in soup.find_all("script"):
+        text = script.get_text() or ""
+        if _MOSAIC_ANCHOR not in text:
+            continue
+        record_map = _parse_mosaic_script_to_map(text)
+        if record_map is not None:
+            return record_map
+    return {}
 
 
 def is_indeed_blocked(soup: BeautifulSoup) -> bool:
