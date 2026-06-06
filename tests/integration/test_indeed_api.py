@@ -14,13 +14,17 @@ are 1:1 (200 happy, 422 missing/invalid, 502 with masked detail,
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 
 import httpx
 import pytest
+from bs4 import BeautifulSoup
 from fastapi import FastAPI
 
 from jobs_finder.infrastructure.indeed.exceptions import IndeedBlockedError
+from jobs_finder.infrastructure.indeed.scraper import _parse_cards
 from tests.conftest import FakeJobSearchPort
+from tests.fixtures.indeed_search import SEARCH_PAGE_HTML
 
 JOB_FIELDS: set[str] = {"id", "title", "company", "location", "url", "posted_at"}
 
@@ -210,3 +214,64 @@ async def test_health_returns_ok_without_calling_indeed_port(
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
     assert fake_indeed_port.calls == []
+
+
+# ---------------------------------------------------------------------------
+# indeed-date-fix — end-to-end scraper→parser integration (REQ-I-009 delta)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_cards_end_to_end_returns_distinct_posted_at() -> None:
+    """`_parse_cards(SEARCH_PAGE_HTML, 15, "es.indeed.com")` returns 15
+    non-`None` `posted_at` values with at least 13 distinct
+    timestamps, and the first equals
+    `datetime(2025, 9, 24, 5, 0, 0, tzinfo=UTC)`.
+
+    Defense-in-depth: this drives the module-level `_parse_cards`
+    (called by the scraper) against the committed 2026-06-02
+    real capture and asserts the JSON path wired through
+    `parse_indeed_posted_at(card, soup)` returns the real
+    `pubDate` for every card with a matching `jobkey`. The
+    legacy `datetime.now(UTC)` fallback would FAIL this test
+    (it would collapse all 15 timestamps to the scrape second,
+    yielding 1 distinct value, not 13+).
+
+    The 2026-06-02 capture has 15 records in
+    `mosaicProviderJobCardsModel/results/` with 14 unique
+    `pubDate` values (2 records share `pubDate=1780030800000`).
+    Of the 15 cards, 14 have a JSON match (distinct real
+    `pubDate`s) and 1 (`789abcdef0123456`) has no JSON record
+    and falls back to `datetime.now(UTC)`. The total distinct
+    count is therefore 14 — 13 unique JSON `pubDate`s + 1
+    shared `pubDate` (counted once) + 1 `datetime.now(UTC)`
+    fallback. The lower bound 13 (well above the 1 the
+    fallback would produce) is sufficient to prove the JSON
+    path is wired through.
+
+    The first card's `pubDate=1758690000000` → the pinned
+    `datetime(2025, 9, 24, 5, 0, 0, tzinfo=UTC)`. If this test
+    fails, the JSON wire-through in `scraper.py` regressed.
+    """
+    soup = BeautifulSoup(SEARCH_PAGE_HTML, "html.parser")
+    jobs = _parse_cards(soup, remaining=15, domain="es.indeed.com")
+
+    assert len(jobs) == 15
+    posted_at_values = [job.posted_at for job in jobs]
+    # No None: every card got a real posted_at (14 from the
+    # JSON, 1 from the `datetime.now(UTC)` fallback).
+    assert all(p is not None for p in posted_at_values), (
+        f"all 15 jobs must have non-None posted_at; got {posted_at_values}"
+    )
+    # Many distinct values: the JSON has 14 unique pubDates,
+    # the legacy `datetime.now(UTC)` fallback would collapse
+    # all 15 jobs to 1 distinct value. The lower bound 13
+    # proves the JSON path is wired through.
+    assert len(set(posted_at_values)) >= 13, (
+        f"expected at least 13 distinct posted_at values; got "
+        f"{len(set(posted_at_values))} distinct — the JSON path "
+        f"may have regressed to the datetime.now(UTC) fallback"
+    )
+    # First job's posted_at is the exact pubDate=1758690000000.
+    assert posted_at_values[0] == datetime(2025, 9, 24, 5, 0, 0, tzinfo=UTC)
+    # All are tz-aware UTC.
+    assert all(p.tzinfo == UTC for p in posted_at_values)

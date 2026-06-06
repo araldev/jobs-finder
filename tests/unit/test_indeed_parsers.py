@@ -425,14 +425,17 @@ def test_real_fixture_has_no_inline_relative_time_strings() -> None:
     an inline `span.date` element per card — the date is loaded
     asynchronously and is not in the first-page HTML.
 
-    This is documented as a fixture contract: the parser's
-    `parse_indeed_posted_at` returns `None` for every card in the
-    real fixture, and the scraper falls back to `datetime.now(UTC)`
-    for the `posted_at` field. The relative-time grammar in the
-    parser is preserved for backwards-compat with older fixtures
-    and any future DOM that DOES render an inline date; the
-    dedicated `test_parse_indeed_posted_at_*` tests pin the
-    grammar independently of the fixture.
+    Fixture contract: the legacy `span.date` relative-time grammar
+    is NOT exercised by the real fixture. The negative assertion
+    (`assert date_spans == []`) pins this.
+
+    As of `indeed-date-fix` (T-001, 2026-06-06), the parser's
+    primary path is the JSON-lookup against
+    `mosaic-provider-jobcards`, NOT the legacy `span.date` grammar.
+    The real fixture's cards DO have a real `posted_at` value —
+    the `pubDate` from the JSON — which the parser now returns.
+    The dedicated `test_real_fixture_pins_pubdate_value` test
+    pins the positive contract.
     """
     soup = BeautifulSoup(SEARCH_PAGE_HTML, "html.parser")
     cards = soup.select("div.job_seen_beacon")
@@ -447,3 +450,191 @@ def test_real_fixture_has_no_inline_relative_time_strings() -> None:
 def test_placeholder_fixture_file_path_is_loadable() -> None:
     """`tests/fixtures/indeed_search.py` exists and is importable."""
     assert _FIXTURE_PATH.exists(), f"{_FIXTURE_PATH} must exist"
+
+
+# ---------------------------------------------------------------------------
+# parse_indeed_posted_at — JSON path (REQ-I-009 delta, indeed-date-fix)
+# ---------------------------------------------------------------------------
+
+
+def _card_with_data_jk(jk: str) -> Tag:
+    """Return a card `Tag` whose title anchor carries `data-jk=jk` (real DOM shape).
+
+    The real DOM (observed 2026-06-02 against real es.indeed.com HTML)
+    places the `data-jk` attribute on the title anchor
+    `<a class="jcs-JobTitle" data-jk="<id>">`, NOT on the card div. The
+    helper mirrors the real shape so the JSON-path tests exercise the
+    same code path as the live capture.
+    """
+    soup = BeautifulSoup(
+        f"""
+        <div class="job_seen_beacon">
+          <h3 class="jobTitle">
+            <a class="jcs-JobTitle" data-jk="{jk}">Title</a>
+          </h3>
+        </div>
+        """,
+        "html.parser",
+    )
+    card = soup.find("div", class_="job_seen_beacon")
+    assert card is not None, "test helper must produce a card Tag"
+    return card
+
+
+def _soup_with_mosaic_script(payload_json: str) -> BeautifulSoup:
+    """Return a BeautifulSoup wrapping a `<script>` whose body contains
+    `mosaic-provider-jobcards` plus the given JSON payload as its value.
+
+    The shape mirrors the real capture (a `<script>` tag in the
+    document body) so the parser exercises the same substring-match
+    and brace-counting path it would on the live DOM. The payload
+    is what the parser should see as the value of
+    `window.mosaic.providerData["mosaic-provider-jobcards"]`.
+    """
+    return BeautifulSoup(
+        f"""
+        <html><body>
+          <script id="mosaic-data">
+            window.mosaic = {{ providerData: {{ "mosaic-provider-jobcards": {payload_json} }} }};
+          </script>
+        </body></html>
+        """,
+        "html.parser",
+    )
+
+
+def test_json_happy_path_returns_pub_date() -> None:
+    """A card whose `data-jk` matches a record in the mosaic JSON returns
+    the record's `pubDate` (epoch ms) as a UTC `datetime`.
+
+    Pins the JSON happy path with `pubDate=1758690000000` →
+    `datetime(2025, 9, 24, 5, 0, 0, tzinfo=UTC)`. The assertion is
+    not a hardcoded return — the parser must divide by 1000 and
+    apply the UTC timezone for the test to pass.
+    """
+    soup = _soup_with_mosaic_script('{"jobs": [{"jobkey": "abc123", "pubDate": 1758690000000}]}')
+    result = parse_indeed_posted_at(_card_with_data_jk("abc123"), soup)
+    assert result == datetime(2025, 9, 24, 5, 0, 0, tzinfo=UTC)
+
+
+def test_data_jk_not_in_json_returns_none() -> None:
+    """A card whose `data-jk` is NOT in the JSON returns `None`.
+
+    The parser's contract is "JSON record with matching `jobkey`
+    wins; otherwise return `None` so the scraper falls back to
+    `datetime.now(UTC)`". The card `data-jk="zzz999"` is absent
+    from the JSON, so no match.
+    """
+    soup = _soup_with_mosaic_script('{"jobs": [{"jobkey": "other456", "pubDate": 1758690000000}]}')
+    result = parse_indeed_posted_at(_card_with_data_jk("zzz999"), soup)
+    assert result is None
+
+
+def test_no_script_tag_returns_none() -> None:
+    """A soup with NO `<script>` tag at all returns `None` (defensive fail-closed).
+
+    The parser must NOT raise on a scriptless document; it must
+    return `None` so the scraper's `datetime.now(UTC)` fallback
+    applies. (A page without a mosaic script is, by definition,
+    not an Indeed SERP — but a generic HTML page may have no
+    `<script>` at all, and the parser must not crash.)
+    """
+    soup = BeautifulSoup("<html><body><p>no scripts here</p></body></html>", "html.parser")
+    result = parse_indeed_posted_at(_card_with_data_jk("abc123"), soup)
+    assert result is None
+
+
+def test_record_missing_pubdate_returns_none() -> None:
+    """A matching `jobkey` without a `pubDate` returns `None` (MUST NOT
+    fall back to `createDate`).
+
+    Indeed returns BOTH `pubDate` (the original posting date) and
+    `createDate` (the crawler index date). The parser MUST read
+    `pubDate` ONLY — falling back to `createDate` would silently
+    regress the freshness signal (a job posted in 2025-09 would
+    appear to be posted in 2026-02). The negative contract is
+    pinned here.
+    """
+    soup = _soup_with_mosaic_script('{"jobs": [{"jobkey": "abc123", "createDate": 1758690000000}]}')
+    result = parse_indeed_posted_at(_card_with_data_jk("abc123"), soup)
+    assert result is None
+
+
+def test_malformed_pubdate_returns_none() -> None:
+    """A non-numeric `pubDate` returns `None` (defensive fail-closed, no crash).
+
+    If Indeed ever changes the field type to a string (e.g. ISO
+    timestamp), the parser must not raise — it must return `None`
+    so the scraper falls back to `datetime.now(UTC)` rather than
+    crashing the whole response.
+    """
+    soup = _soup_with_mosaic_script('{"jobs": [{"jobkey": "abc123", "pubDate": "not-a-number"}]}')
+    result = parse_indeed_posted_at(_card_with_data_jk("abc123"), soup)
+    assert result is None
+
+
+def test_legacy_span_date_still_works_when_soup_is_none() -> None:
+    """The legacy `span.date` relative-time grammar is preserved as a
+    fallback when the new `soup` parameter is not provided.
+
+    Regression-protection: the parser must NOT remove the legacy
+    `span.date` path when the JSON path is added. The signature
+    `parse_indeed_posted_at(card)` (no `soup` arg) MUST continue
+    to parse the 5 Spanish relative-time strings the existing
+    grammar tests pin (`Hoy`, `Hace 2 horas`, `hace 30+ días`,
+    `Recién publicado`, `Hace 3 días`).
+    """
+    # `_card_with_date("Hoy")` wraps the string into a minimal
+    # fragment with a `<span class="date">Hoy</span>` element —
+    # the legacy path is the ONLY way to get a non-`None` result
+    # here because no `soup` is provided.
+    result = parse_indeed_posted_at(_card_with_date("Hoy"))
+    assert result is not None
+    assert result.date() == _today_utc().date()
+
+
+def test_json_path_wins_when_both_present() -> None:
+    """When BOTH a matching JSON record AND an inline `span.date` are
+    present, the JSON path's `pubDate` is returned (NOT the legacy
+    grammar's value).
+
+    Pins the "JSON wins" semantic. The card has a `data-jk` that
+    matches a record with `pubDate=1758690000000` (2025-09-24)
+    AND an inline `span.date` with "Hace 3 días" (today minus
+    3 days). The JSON value must be returned, not the legacy
+    value — the legacy value would be wrong for this test (the
+    card's real posting date is 2025-09-24, not "today minus 3").
+    """
+    soup = _soup_with_mosaic_script('{"jobs": [{"jobkey": "abc123", "pubDate": 1758690000000}]}')
+    card_html = """
+    <div class="job_seen_beacon">
+      <h3 class="jobTitle">
+        <a class="jcs-JobTitle" data-jk="abc123">Title</a>
+      </h3>
+      <span class="date">Hace 3 días</span>
+    </div>
+    """
+    card = BeautifulSoup(card_html, "html.parser").find("div", class_="job_seen_beacon")
+    assert card is not None
+    result = parse_indeed_posted_at(card, soup)
+    assert result == datetime(2025, 9, 24, 5, 0, 0, tzinfo=UTC)
+
+
+def test_real_fixture_pins_pubdate_value() -> None:
+    """The real `SEARCH_PAGE_HTML` capture (2026-06-02) has a first card
+    with `data-jk="dd6cc0f5b0f0cfc9"` and a JSON record with
+    `pubDate=1758690000000`. Calling `parse_indeed_posted_at` on
+    that card must round-trip to
+    `datetime(2025, 9, 24, 5, 0, 0, tzinfo=UTC)`.
+
+    Pins the contract against the live capture. If Indeed renames
+    the JSON variable or moves the `pubDate` field, this test
+    fails — a real regression that triggers the AGENTS.md
+    rule-#1 sanctioned manual fixture refresh.
+    """
+    soup = BeautifulSoup(SEARCH_PAGE_HTML, "html.parser")
+    cards = soup.select("div.job_seen_beacon")
+    assert len(cards) >= 1, "real fixture must have at least one card"
+    first_card = cards[0]
+    result = parse_indeed_posted_at(first_card, soup)
+    assert result == datetime(2025, 9, 24, 5, 0, 0, tzinfo=UTC)

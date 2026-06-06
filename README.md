@@ -972,7 +972,7 @@ x-request-id: <uuid-or-your-trace-id>
       "company": "Sigma Group",
       "location": "Madrid, Madrid provincia",
       "url": "https://es.indeed.com/viewjob?jk=dd6cc0f5b0f0cfc9",
-      "posted_at": "2026-06-02T17:00:00+00:00"
+      "posted_at": "2025-09-24T05:00:00+00:00"
     }
   ]
 }
@@ -982,6 +982,14 @@ The first call returns `X-Cache: MISS` (Playwright invoked). Repeating
 the same query within the TTL window returns `X-Cache: HIT` without a
 browser launch. The Indeed cache is independent of the LinkedIn +
 InfoJobs caches.
+
+`posted_at` is read from the document-level
+`mosaic-provider-jobcards` JSON blob (epoch-ms `pubDate` per
+result), matched by the card's `data-jk`. The legacy
+`span.date` relative-time grammar is preserved as a fallback
+for older fixtures and any future DOM that re-renders inline
+dates. Indeed cards that do not have a matching record in the
+JSON fall back to `datetime.now(UTC)` (the scrape second).
 
 ```bash
 # 6. Trigger a 502. Two reproducible ways to do it:

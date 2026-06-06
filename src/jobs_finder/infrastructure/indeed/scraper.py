@@ -342,7 +342,14 @@ def _parse_cards(soup: BeautifulSoup, remaining: int, domain: str) -> list[Job]:
     jobs: list[Job] = []
     for card in cards[:remaining]:
         try:
-            posted = parse_indeed_posted_at(card)
+            # `soup` is the full document; pass it through to the
+            # parser so it can read `pubDate` from the
+            # document-level `mosaic-provider-jobcards` JSON.
+            # The parser's primary path is the JSON lookup; the
+            # legacy `span.date` grammar is preserved as a
+            # fallback. The final safety net (None → now(UTC))
+            # is the line below.
+            posted = parse_indeed_posted_at(card, soup)
             job = Job(
                 id=parse_indeed_job_id(card),
                 title=parse_indeed_title(card),

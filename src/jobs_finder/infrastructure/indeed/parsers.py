@@ -47,23 +47,39 @@ Notable differences from the v1 placeholder:
   `div.companyLocation`).
 - Indeed does NOT render an inline relative-time string on the
   card anymore (the date is loaded asynchronously). The
-  `parse_indeed_posted_at` parser still looks for `span.date`; when
-  absent, it returns `None` and the scraper falls back to
-  `datetime.now(UTC)`. The grammar is preserved for the date
-  strings Indeed historically used (`Hoy`, `Hace 2 horas`,
-  `hace 30+ días`, `Hace 3 días`, `Recién publicado`) so older
-  fixtures and any future DOM that DOES render an inline date
-  continue to parse correctly.
+  `parse_indeed_posted_at` parser reads the timestamp from the
+  document-level `mosaic-provider-jobcards` JSON blob
+  (primary path) and falls back to the legacy `span.date`
+  relative-time grammar (preserved for backward-compat). The
+  legacy grammar is retained for the date strings Indeed
+  historically used (`Hoy`, `Hace 2 horas`, `hace 30+ días`,
+  `Hace 3 días`, `Recién publicado`) so older fixtures and any
+  future DOM that DOES render an inline date continue to parse
+  correctly.
 
-`parse_indeed_posted_at` is the only non-trivial parser: it maps
-the Spanish relative-time strings Indeed historically emitted to a
-UTC `datetime`. The grammar is small and documented inline; an
-unparseable string raises `IndeedParseError` so the scraper can
-fail closed.
+`parse_indeed_posted_at` is the only non-trivial parser: it
+first reads the `pubDate` (epoch ms) for the card from the
+embedded mosaic JSON (when a `BeautifulSoup` is supplied), and
+falls back to mapping the Spanish relative-time strings Indeed
+historically emitted to a UTC `datetime` based on
+`datetime.now(UTC)`. The grammar is small and documented inline;
+an unparseable legacy string raises `IndeedParseError` so the
+scraper can fail closed. The JSON path NEVER raises; it returns
+`None` on any error and lets the legacy path (or the scraper's
+`datetime.now(UTC)` fallback) take over.
+
+MUST read `pubDate` (the original posting date), NEVER
+`createDate` (the crawler index date). Pinned by
+`tests/unit/test_indeed_parsers.py::test_real_fixture_pins_pubdate_value`.
+If Indeed renames the JSON variable, the AGENTS.md rule-#1
+sanctioned exception allows a one-time manual Playwright refresh
+of `tests/fixtures/indeed_search.py` to capture the new shape;
+this module returns `None` from the JSON path until then.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -85,6 +101,14 @@ _COMPANY_SELECTOR = '[data-testid="company-name"]'
 _LOCATION_SELECTOR = '[data-testid="text-location"]'
 _URL_SELECTOR = "a.jcs-JobTitle"
 _DATE_SELECTOR = "span.date"
+
+# Substring anchor for the document-level JSON blob that holds the
+# per-result `pubDate` (epoch ms). Indeed's stable cross-locale
+# surface is the variable name (observed in es/fr/uk/de captures).
+# Defensive substring match — if Indeed renames the variable, the
+# parser returns `None` and the scraper falls back to
+# `datetime.now(UTC)` (fail-closed).
+_MOSAIC_ANCHOR = "mosaic-provider-jobcards"
 
 
 def _to_tag(fragment: str | Tag) -> Tag:
@@ -275,18 +299,47 @@ def _parse_relative_date(raw: str) -> datetime:
     raise ValueError(f"unparseable relative date: {raw!r}")
 
 
-def parse_indeed_posted_at(card: str | Tag) -> datetime | None:
+def parse_indeed_posted_at(card: str | Tag, soup: BeautifulSoup | None = None) -> datetime | None:
     """Return the card's posting datetime, or None when the field is absent.
 
-    Indeed cards emit a relative-time string in Spanish (e.g.
-    `Hoy`, `Hace 2 horas`, `hace 30+ días`, `Recién publicado`).
-    The parser maps the string to a UTC `datetime` based on
-    `datetime.now(UTC)` — this is a parser-level convention that
-    makes the test deterministic without freezing `now`.
+    Strategy:
+        1. If `soup` is provided, try `_posted_at_from_mosaic` to
+           read the `pubDate` from the document-level
+           `mosaic-provider-jobcards` JSON, matched by the
+           card's `data-jk`. The JSON lookup is the PRIMARY
+           path (the real es.indeed.com DOM as of 2026-06-02
+           renders no inline date).
+        2. Otherwise, try the legacy `span.date` relative-time
+           grammar. This is preserved for backward-compat with
+           older fixtures and any future DOM that DOES render
+           an inline date.
+        3. Return `None` when nothing resolves. The scraper
+           falls back to `datetime.now(UTC)` for the
+           `posted_at` field.
 
     A `span.date` element that is present but unparseable raises
-    `IndeedParseError` — that is "malformed", not "missing".
+    `IndeedParseError` — that is "malformed", not "missing". The
+    JSON path NEVER raises; it returns `None` on any error so
+    the parser fails closed.
+
+    MUST read `pubDate` (the original posting date), NEVER
+    `createDate` (the crawler index date). See
+    `tests/unit/test_indeed_parsers.py::test_real_fixture_pins_pubdate_value`
+    for the contract pin.
     """
+    # Primary path: read `pubDate` from the document-level
+    # `mosaic-provider-jobcards` JSON. Only attempted when the
+    # caller supplies the full `BeautifulSoup` (the scraper
+    # already has it in scope at `_parse_cards`).
+    if soup is not None:
+        data_jk = _extract_data_jk(card)
+        if data_jk is not None:
+            result = _posted_at_from_mosaic(soup, data_jk)
+            if result is not None:
+                return result
+    # Legacy fallback: `span.date` relative-time grammar. The
+    # selector and helper are reused unchanged so the existing
+    # raise-on-malformed semantic is preserved.
     tag = _to_tag(card)
     el = tag.select_one(_DATE_SELECTOR)
     if el is None:
@@ -298,6 +351,208 @@ def parse_indeed_posted_at(card: str | Tag) -> datetime | None:
         return _parse_relative_date(raw)
     except ValueError as e:
         raise _parse_error("parse_indeed_posted_at", str(e), tag) from e
+
+
+def _extract_data_jk(card: str | Tag) -> str | None:
+    """Return the card's `data-jk` attribute, or `None` when absent.
+
+    Looks at the title anchor first (real DOM shape observed
+    2026-06-02 against real es.indeed.com HTML:
+    `<a class="jcs-JobTitle" data-jk="<id>">`), then falls back
+    to the card div (backward-compat with older fixtures that
+    put `data-jk` on the card div directly).
+
+    Returns `None` (NOT raises) on missing — the JSON path is
+    opportunistic, and the caller can fall through to the
+    legacy `span.date` grammar. Contrast with
+    `parse_indeed_job_id` which raises `IndeedParseError` on
+    missing because the `id` field is required.
+    """
+    tag = _to_tag(card)
+    anchor = tag.select_one(_TITLE_ANCHOR_SELECTOR)
+    raw_jk: Any = None
+    if anchor is not None:
+        raw_jk = anchor.get(_JOB_ID_ATTR)
+    if not raw_jk:
+        raw_jk = tag.get(_JOB_ID_ATTR)
+    if not raw_jk:
+        return None
+    jk_str = str(raw_jk).strip()
+    if not jk_str:
+        return None
+    return jk_str
+
+
+def _find_record_by_jobkey(payload: object, target_jk: str) -> dict[str, Any] | None:
+    """Walk a JSON payload (dict / list / scalar) and return the
+    first dict whose `jobkey` matches `target_jk`.
+
+    Tolerant to Indeed's schema drift: the contract is "a
+    record anywhere in the payload that has
+    `jobkey == data-jk`", NOT a hard-coded path like
+    `payload["metaData"]["mosaicProviderJobCardsModel"]["jobs"]`.
+    The path is internal Indeed detail; the lookup is path-free.
+
+    Returns `None` on no match.
+    """
+    if isinstance(payload, dict):
+        if str(payload.get("jobkey", "")) == target_jk:
+            return payload
+        for value in payload.values():
+            found = _find_record_by_jobkey(value, target_jk)
+            if found is not None:
+                return found
+    elif isinstance(payload, list):
+        for item in payload:
+            found = _find_record_by_jobkey(item, target_jk)
+            if found is not None:
+                return found
+    return None
+
+
+def _posted_at_from_mosaic(soup: BeautifulSoup, data_jk: str) -> datetime | None:
+    """Read the `pubDate` (epoch ms) for the given `data_jk` from
+    the document-level `mosaic-provider-jobcards` JSON blob.
+
+    Algorithm:
+        1. Walk all `<script>` tags in the document.
+        2. Pick each one whose text contains the anchor
+           `"mosaic-provider-jobcards"` and look for the JSON
+           assignment specifically (`["<anchor>"]=<value>`
+           or `['<anchor>']=<value>`). The other
+           occurrences of the anchor in the script (e.g.
+           inside `getElementById("...")` or
+           `publicPaths["..."]="..."` string assignments) are
+           NOT followed by `"]=` / `']=` and are skipped.
+        3. Locate the first `{` after the assignment and
+           brace-count (with string-literal awareness) to the
+           matching `}`. The captured substring is the JSON
+           value of the mosaic entry.
+        4. `json.loads` the substring and recursively walk
+           the payload to find a dict whose `jobkey` matches
+           `data_jk`.
+        5. Read `pubDate` (NOT `createDate`); convert epoch
+           ms to a UTC `datetime` via `datetime.fromtimestamp(
+           pubDate / 1000, tz=UTC)`.
+
+    Returns `None` on ANY error (missing script, malformed
+    JSON, no `jobkey` match, missing or non-numeric `pubDate`,
+    `datetime` overflow). The caller falls through to the
+    legacy `span.date` grammar or the scraper's
+    `datetime.now(UTC)` fallback. The JSON path NEVER raises.
+    """
+    if soup is None:
+        return None
+    for script in soup.find_all("script"):
+        text = script.get_text() or ""
+        if _MOSAIC_ANCHOR not in text:
+            continue
+        result = _try_extract_pub_date_from_script(text, data_jk)
+        if result is not None:
+            return result
+    return None
+
+
+def _try_extract_pub_date_from_script(text: str, data_jk: str) -> datetime | None:
+    """Try to extract the `pubDate` for `data_jk` from a single
+    `<script>` text. Returns `None` if this script has the
+    anchor but no matching assignment / JSON / record.
+    """
+    idx = -1
+    anchor_len = len(_MOSAIC_ANCHOR)
+    while True:
+        idx = text.find(_MOSAIC_ANCHOR, idx + 1)
+        if idx < 0:
+            return None
+        after = text[idx + anchor_len :]
+        # Two valid assignment shapes for the JSON value:
+        # 1. Real Indeed SERP (observed 2026-06-02):
+        #      providerData["mosaic-provider-jobcards"]=<json>
+        #    The `"]=` (or `']=') signature distinguishes the
+        #    JSON assignment from incidental occurrences
+        #    (`getElementById("...")`, `publicPaths["..."]="..."`).
+        # 2. Object-literal shorthand (used in test helpers):
+        #      providerData: { "mosaic-provider-jobcards": <json> }
+        #    The `":` (or `':`) signature marks the key.
+        # In BOTH cases, the value starts with `{` after
+        # skipping whitespace — a string assignment like
+        # `publicPaths["..."]="<url>"` has `"` (not `{`) after
+        # the `=`, so the parser correctly skips it.
+        start = -1
+        if after.startswith('"]=') or after.startswith("']="):
+            start = _find_json_value_start_after(text, idx + anchor_len, "=")
+        elif after.startswith('":') or after.startswith("':"):
+            start = _find_json_value_start_after(text, idx + anchor_len, ":")
+        if start < 0:
+            continue
+        json_text = _extract_balanced_json(text, start)
+        if json_text is None:
+            continue
+        try:
+            payload = json.loads(json_text)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        record = _find_record_by_jobkey(payload, data_jk)
+        if record is None:
+            continue
+        pub_date = record.get("pubDate")
+        # `bool` is a subclass of `int` in Python; explicitly
+        # reject `True` / `False` to keep the contract tight.
+        if not isinstance(pub_date, (int, float)) or isinstance(pub_date, bool):
+            continue
+        try:
+            return datetime.fromtimestamp(float(pub_date) / 1000.0, tz=UTC)
+        except (OverflowError, OSError, ValueError):
+            continue
+
+
+def _find_json_value_start_after(text: str, after: int, delim: str) -> int:
+    """Return the index of the first `{` after `text[after]` that
+    is preceded (after optional whitespace) by the given
+    delimiter (`=` or `:`). Returns `-1` if no such `{` exists.
+    """
+    eq_pos = text.find(delim, after)
+    if eq_pos < 0:
+        return -1
+    pos = eq_pos + 1
+    while pos < len(text) and text[pos].isspace():
+        pos += 1
+    if pos >= len(text) or text[pos] != "{":
+        return -1
+    return pos
+
+
+def _extract_balanced_json(text: str, start: int) -> str | None:
+    """Return the balanced JSON object starting at `text[start]`.
+
+    String-literal aware: braces inside `"..."` (with
+    backslash-escape handling) are NOT counted. The first
+    character MUST be `{`; the returned substring includes the
+    matching closing `}`. Returns `None` if the braces don't
+    balance (truncated or malformed input).
+    """
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif c == "\\":
+                escape = True
+            elif c == '"':
+                in_string = False
+            continue
+        if c == '"':
+            in_string = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
 
 
 def is_indeed_blocked(soup: BeautifulSoup) -> bool:
