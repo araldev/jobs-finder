@@ -479,6 +479,101 @@ class Settings(BaseSettings):
             return frozenset(ipaddress.ip_network(str(s), strict=False) for s in parsed)
         raise ValueError(f"unparseable RATE_LIMIT_TRUSTED_PROXIES: {v!r}")
 
+    # ------------------------------------------------------------------
+    # Aggregator ranking settings (REQ-AR-008, jobs-aggregator-ranking)
+    #
+    # The 2 fields below configure the `rank_jobs` step that
+    # `SearchAllSourcesUseCase.search()` runs AFTER the dedup step
+    # (see `application/ranking.py` + `application/aggregator.py`).
+    # Each field declares its own `validation_alias` (same pattern
+    # used by the rate-limit, cache, and per-source fields above).
+    #
+    # - `aggregator_ranking_strategy`: `Literal["posted_at", "priority",
+    #   "none"]` — the default is `"posted_at"` (freshness DESC, the
+    #   most useful default for a job search). Pydantic's `Literal`
+    #   validator rejects unknown values at startup with a
+    #   `ValidationError`. `none` is the explicit escape hatch that
+    #   preserves the pre-change source-priority + scrape-order
+    #   behavior for clients depending on it.
+    # - `aggregator_priority_map`: `dict[str, int]` — the source-
+    #   priority map used as the primary sort key for
+    #   `strategy="priority"` AND as the tie-breaker for
+    #   `strategy="posted_at"`. Parsed from a JSON env var by the
+    #   `_parse_aggregator_priority_map` validator below. The
+    #   default is LinkedIn-first (matches the existing
+    #   `SOURCE_PRIORITY` tuple in `application/aggregator.py`).
+    #   Sources not in the map are treated as priority `999` (last)
+    #   by the `rank_jobs` consumer — the validator does NOT
+    #   reject unknown source names (forward compatibility for
+    #   future sources).
+    # ------------------------------------------------------------------
+
+    aggregator_ranking_strategy: Literal["posted_at", "priority", "none"] = Field(
+        default="posted_at",
+        validation_alias=AliasChoices("AGGREGATOR_RANKING_STRATEGY", "aggregator_ranking_strategy"),
+    )
+    aggregator_priority_map: dict[str, int] = Field(
+        default_factory=lambda: {"linkedin": 0, "indeed": 1, "infojobs": 2},
+        validation_alias=AliasChoices("AGGREGATOR_PRIORITY_MAP", "aggregator_priority_map"),
+    )
+
+    @field_validator("aggregator_priority_map", mode="before")
+    @classmethod
+    def _parse_aggregator_priority_map(cls, v: object) -> dict[str, int]:
+        """Parse `AGGREGATOR_PRIORITY_MAP` as a JSON object of `{source: int}`.
+
+        REQ-AR-004 (jobs-aggregator-ranking): a
+        `AGGREGATOR_PRIORITY_MAP='{"linkedin":0,"indeed":1,"infojobs":2}'`
+        env var parses to the corresponding `dict[str, int]`. Also
+        accepts a pre-parsed `dict` (programmatic `Settings(...)`
+        construction) and an empty string (yields the default).
+        Invalid JSON raises `ValueError`; non-dict JSON raises
+        `ValueError`; non-`int` values raise `ValueError` — all
+        surface as `pydantic.ValidationError` at app construction
+        time so misconfiguration fails fast at startup.
+
+        Mirrors the `_parse_exempt_paths` pattern at lines 418-442.
+        """
+        if isinstance(v, dict):
+            # Programmatic `Settings(aggregator_priority_map={...})` — already
+            # parsed. Validate the values are ints (Pydantic's outer
+            # `dict[str, int]` annotation handles the rest on
+            # assignment).
+            for k, val in v.items():
+                if not isinstance(k, str) or not isinstance(val, int) or isinstance(val, bool):
+                    raise ValueError(
+                        f"AGGREGATOR_PRIORITY_MAP keys must be str, values must be int: "
+                        f"{k!r}: {val!r}"
+                    )
+            return v
+        if isinstance(v, str):
+            if not v.strip():
+                # Empty env var → default. Returning the dict
+                # directly here would short-circuit the default
+                # factory; we want the default to take over, so we
+                # raise a sentinel that Pydantic treats as
+                # "use the default". `pydantic_core.PydanticUndefined`
+                # is the right sentinel, but importing it adds a
+                # dependency. Simpler: return the same default shape
+                # the factory produces.
+                return {"linkedin": 0, "indeed": 1, "infojobs": 2}
+            try:
+                parsed = json.loads(v)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"AGGREGATOR_PRIORITY_MAP must be JSON: {e}") from e
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    f"AGGREGATOR_PRIORITY_MAP must be a JSON object, got {type(parsed).__name__}"
+                )
+            for k, val in parsed.items():
+                if not isinstance(k, str) or not isinstance(val, int) or isinstance(val, bool):
+                    raise ValueError(
+                        f"AGGREGATOR_PRIORITY_MAP keys must be str, values must be int: "
+                        f"{k!r}: {val!r}"
+                    )
+            return parsed
+        raise ValueError(f"unparseable AGGREGATOR_PRIORITY_MAP: {v!r}")
+
     @model_validator(mode="after")
     def _fall_back_redis(self) -> Settings:
         """Copy `cache_redis_url` / `cache_redis_db` into the rate-limit fields when unset.

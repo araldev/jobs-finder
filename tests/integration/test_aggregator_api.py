@@ -134,9 +134,13 @@ async def test_aggregator_returns_200_and_deduped_jobs(
     """A successful aggregator call returns 200 with the deduped jobs and the `sources` field.
 
     The conftest's `app` fixture has LinkedIn empty, Indeed with 3
-    sample jobs, and InfoJobs with 3 sample jobs (no overlap). The
-    response should have 6 jobs in source-priority order, each with
-    a single-element `sources` list.
+    sample jobs (May 1, 2, 3), and InfoJobs with 3 sample jobs
+    (May 1, 2, 3 — same dates as Indeed). The default ranking
+    (`posted_at` DESC) interleaves by freshness: when Indeed and
+    InfoJobs share the same `posted_at`, the source-priority
+    tie-breaker picks Indeed first. The expected order is:
+    Indeed-May-3, InfoJobs-May-3, Indeed-May-2, InfoJobs-May-2,
+    Indeed-May-1, InfoJobs-May-1.
     """
     response = await client.get(
         "/jobs?q=python&location=madrid&limit=20&sources=linkedin,indeed,infojobs"
@@ -146,9 +150,18 @@ async def test_aggregator_returns_200_and_deduped_jobs(
     body = response.json()
     assert "jobs" in body
     assert len(body["jobs"]) == 6  # 0 LinkedIn + 3 Indeed + 3 InfoJobs
-    # Source-priority order: Indeed first, then InfoJobs (LinkedIn has 0 jobs).
-    assert [job["sources"] for job in body["jobs"][:3]] == [["indeed"]] * 3
-    assert [job["sources"] for job in body["jobs"][3:]] == [["infojobs"]] * 3
+    # Default ranking is `posted_at` DESC + source-priority tie-breaker.
+    # Both Indeed and InfoJobs have the same `posted_at` dates, so the
+    # source-priority tie-breaker interleaves them: [Indeed, InfoJobs]
+    # for each date.
+    assert [job["sources"] for job in body["jobs"]] == [
+        ["indeed"],  # May 3
+        ["infojobs"],  # May 3
+        ["indeed"],  # May 2
+        ["infojobs"],  # May 2
+        ["indeed"],  # May 1
+        ["infojobs"],  # May 1
+    ]
     # Every job has the documented fields.
     for job in body["jobs"]:
         assert set(job.keys()) == {

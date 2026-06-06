@@ -1,6 +1,7 @@
 """Aggregator use case: orchestrate the 3 source use cases in parallel + dedup.
 
-Spec: REQ-A-001..REQ-A-006.
+Spec: REQ-A-001..REQ-A-006 (jobs-aggregator-endpoint) +
+REQ-AR-001..REQ-AR-007 (jobs-aggregator-ranking).
 
 The aggregator is a thin composition layer over the 3 existing
 per-source `CachedJobSearchUseCase` instances. It:
@@ -21,16 +22,22 @@ per-source `CachedJobSearchUseCase` instances. It:
      (lowercased + whitespace-stripped). The first occurrence wins
      (LinkedIn > Indeed > InfoJobs); subsequent occurrences append
      their source name to the `sources` list.
-  6. Returns an `AggregatedResult` with the deduped jobs, the per-
+  6. (REQ-AR-002) Ranks the deduped list per the configured
+     `ranking_strategy` (default `posted_at` DESC; `priority`
+     groups by source; `none` preserves input order). Ranking is
+     post-cache: the cache key `(source, keywords, location, limit)`
+     does NOT include the strategy, so flipping the strategy does
+     not invalidate the cache.
+  7. Returns an `AggregatedResult` with the ranked jobs, the per-
      source breakdown (for the `X-Aggregator-Errors` header), and
      the per-source `cache_statuses` (for the joined `X-Cache`
      header).
 
-The module depends ONLY on `domain/`, `application/ports`, and
-`application/usecases/_cached_search`. It MUST NOT import
-`infrastructure/` or `presentation/` — the dependency rule
-`presentation → application → domain ← infrastructure` is enforced
-by `test_aggregator_does_not_import_infrastructure_or_presentation`.
+The module depends ONLY on `domain/`, `application/ports`,
+`application/usecases/_cached_search`, and `application/ranking`.
+It MUST NOT import `infrastructure/` or `presentation/` — the
+dependency rule `presentation → application → domain ← infrastructure`
+is enforced by `test_aggregator_does_not_import_infrastructure_or_presentation`.
 
 The constructor is typed against a private `_AggregatorSourcePort`
 Protocol that accepts BOTH `list[Job]` (raw port) and `SearchResult`
@@ -48,6 +55,11 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Protocol, cast
 
+from jobs_finder.application.ranking import (
+    DEFAULT_PRIORITY_MAP,
+    RankingStrategy,
+    rank_jobs,
+)
 from jobs_finder.application.usecases._cached_search import SearchResult
 from jobs_finder.domain.exceptions import JobSearchError
 from jobs_finder.domain.job import Job
@@ -138,7 +150,7 @@ class AggregatedResult:
 
 
 class SearchAllSourcesUseCase:
-    """Orchestrates the 3 source use cases in parallel + dedup.
+    """Orchestrates the 3 source use cases in parallel + dedup + rank.
 
     Constructor takes the 3 source use cases (typically the
     `CachedJobSearchUseCase` instances that the per-source routes
@@ -148,6 +160,25 @@ class SearchAllSourcesUseCase:
     The use case trusts the input: it validates the requested
     `sources` against the known 3 names and raises `ValueError`
     for any unknown name before invoking any port.
+
+    Two keyword-only `__init__` parameters (added in
+    `jobs-aggregator-ranking`) configure the post-dedup ranking
+    step (REQ-AR-002, REQ-AR-003, REQ-AR-004):
+
+    - `ranking_strategy`: closed set `Literal["posted_at", "priority",
+      "none"]` (default `"posted_at"`). The Pydantic `Literal` on
+      `Settings.aggregator_ranking_strategy` rejects unknown
+      values at startup; the `rank_jobs` function raises
+      `ValueError` as a defensive backstop for direct callers.
+    - `priority_map`: `dict[str, int]` mapping source name to
+      priority (default `DEFAULT_PRIORITY_MAP` —
+      LinkedIn=0, Indeed=1, InfoJobs=2). Used as the primary
+      sort key for `strategy="priority"` and as the tie-breaker
+      for `strategy="posted_at"`. Unknown source names get
+      `MISSING_SOURCE_PRIORITY` (999, last).
+
+    Both params have defaults so existing callers (with no
+    keyword args) keep working — backward-compatible.
     """
 
     def __init__(
@@ -155,12 +186,17 @@ class SearchAllSourcesUseCase:
         linkedin_use_case: _AggregatorSourcePort,
         indeed_use_case: _AggregatorSourcePort,
         infojobs_use_case: _AggregatorSourcePort,
+        *,
+        ranking_strategy: RankingStrategy = "posted_at",
+        priority_map: dict[str, int] = DEFAULT_PRIORITY_MAP,
     ) -> None:
         self._sources: dict[str, _AggregatorSourcePort] = {
             "linkedin": linkedin_use_case,
             "indeed": indeed_use_case,
             "infojobs": infojobs_use_case,
         }
+        self._ranking_strategy = ranking_strategy
+        self._priority_map = priority_map
 
     async def search(
         self,
@@ -260,8 +296,25 @@ class SearchAllSourcesUseCase:
                 else:
                     dedup_map[key] = AggregatedJob(job=job, sources=[result.source])
 
-        return AggregatedResult(
+        # REQ-AR-002 / REQ-AR-003: post-cache ranking step. The
+        # `rank_jobs` function is a pure function on the deduped
+        # `list[AggregatedJob]`; it returns a new list, leaving
+        # the dedup map (and the per-source + cache_statuses
+        # structures) untouched. Ranking is post-cache: the cache
+        # key `(source, keywords, location, limit)` is unchanged,
+        # so flipping `AGGREGATOR_RANKING_STRATEGY` does not
+        # invalidate the cache. The `sources` lists on each
+        # `AggregatedJob` are preserved through the ranking
+        # (REQ-AR-006 — pinned by
+        # `test_preserves_aggregated_job_sources_list_through_ranking`).
+        ranked_jobs = rank_jobs(
             jobs=list(dedup_map.values()),
+            strategy=self._ranking_strategy,
+            priority_map=self._priority_map,
+        )
+
+        return AggregatedResult(
+            jobs=ranked_jobs,
             per_source=per_source,
             cache_statuses=cache_statuses,
         )

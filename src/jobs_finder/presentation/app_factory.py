@@ -444,11 +444,28 @@ def build_app(  # noqa: PLR0915
     # cache-ttl behavior (REQ-C-001..REQ-C-006) without a separate
     # cache: a cache hit on LinkedIn from a prior per-source call is
     # ALSO a cache hit when the aggregator invokes LinkedIn.
+    #
+    # T-001 (jobs-aggregator-ranking): the default branch now also
+    # reads `effective_settings.aggregator_ranking_strategy` and
+    # `effective_settings.aggregator_priority_map` (both
+    # env-overridable; see `infrastructure/config.py`) and forwards
+    # them to the `SearchAllSourcesUseCase` constructor. The
+    # `ranking_strategy` is `Literal["posted_at", "priority", "none"]`
+    # — Pydantic's `Literal` validator rejects unknown values at
+    # startup, so the only error path here is the Pydantic
+    # `ValidationError` raised at `Settings()` construction time.
+    # The `priority_map` is a `dict[str, int]` whose keys are
+    # source names and whose values are priority integers (lower =
+    # higher priority; sources not in the map get
+    # `MISSING_SOURCE_PRIORITY = 999` at the `rank_jobs` call
+    # site, not here).
     if aggregator_use_case is None:
         aggregator_use_case = SearchAllSourcesUseCase(
             linkedin_use_case=use_case,
             indeed_use_case=indeed_use_case,
             infojobs_use_case=infojobs_use_case,
+            ranking_strategy=effective_settings.aggregator_ranking_strategy,
+            priority_map=effective_settings.aggregator_priority_map,
         )
     app.state.aggregator_use_case = aggregator_use_case
 

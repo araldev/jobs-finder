@@ -135,7 +135,14 @@ def test_source_priority_is_linkedin_indeed_infojobs() -> None:
 
 
 async def test_3_sources_all_succeed_returns_3_jobs_with_source_lists() -> None:
-    """3 sources return 3 distinct jobs; each `AggregatedJob.sources` is `[source]`."""
+    """3 sources return 3 distinct jobs; each `AggregatedJob.sources` is `[source]`.
+
+    The default ranking is `posted_at` DESC (REQ-AR-002): j3 has
+    `posted_at=2026-06-03` (latest), j2 has `2026-06-02`, j1 has
+    `2026-06-01` (earliest). All 3 jobs are from distinct sources
+    so the tie-breaker chain (source-priority ASC, then `id` ASC)
+    never engages. The result is ordered `[j3, j2, j1]`.
+    """
     linkedin_port = _FakeJobSearchPort(jobs=[_job(1, title="LinkedIn Job")])
     indeed_port = _FakeJobSearchPort(jobs=[_job(2, title="Indeed Job")])
     infojobs_port = _FakeJobSearchPort(jobs=[_job(3, title="InfoJobs Job")])
@@ -144,13 +151,15 @@ async def test_3_sources_all_succeed_returns_3_jobs_with_source_lists() -> None:
     result = await use_case.search("python", "madrid", 20, ["linkedin", "indeed", "infojobs"])
 
     assert len(result.jobs) == 3
-    # The dedup order is source-priority: LinkedIn first, then Indeed, then InfoJobs.
-    assert result.jobs[0].job.id == "j1"
-    assert result.jobs[0].sources == ["linkedin"]
+    # The default ranking is `posted_at` DESC: j3 (June 3) is first,
+    # j2 (June 2) second, j1 (June 1) last. The source lists on
+    # each `AggregatedJob` are preserved from the dedup step.
+    assert result.jobs[0].job.id == "j3"
+    assert result.jobs[0].sources == ["infojobs"]
     assert result.jobs[1].job.id == "j2"
     assert result.jobs[1].sources == ["indeed"]
-    assert result.jobs[2].job.id == "j3"
-    assert result.jobs[2].sources == ["infojobs"]
+    assert result.jobs[2].job.id == "j1"
+    assert result.jobs[2].sources == ["linkedin"]
 
 
 async def test_single_source_query_only_invokes_that_source() -> None:
@@ -247,6 +256,10 @@ async def test_dedup_preserves_source_priority_order_not_insertion_order() -> No
 async def test_one_source_fails_with_job_search_error_returns_others() -> None:
     """LinkedIn + InfoJobs succeed; Indeed raises `JobSearchError`; aggregator returns 2 jobs
     and tracks the failed source in `per_source`.
+
+    The default ranking is `posted_at` DESC: j3 (InfoJobs,
+    `posted_at=2026-06-03`) sorts before j1 (LinkedIn,
+    `posted_at=2026-06-01`).
     """
     linkedin_port = _FakeJobSearchPort(jobs=[_job(1, title="LinkedIn Job")])
     indeed_port = _FakeJobSearchPort(error=JobSearchError("indeed is down"))
@@ -257,8 +270,12 @@ async def test_one_source_fails_with_job_search_error_returns_others() -> None:
 
     # The 2 successful sources' jobs are in the deduped result.
     assert len(result.jobs) == 2
-    assert result.jobs[0].sources == ["linkedin"]
-    assert result.jobs[1].sources == ["infojobs"]
+    # Default ranking is `posted_at` DESC: j3 (June 3) is first,
+    # j1 (June 1) is second.
+    assert result.jobs[0].sources == ["infojobs"]
+    assert result.jobs[0].job.id == "j3"
+    assert result.jobs[1].sources == ["linkedin"]
+    assert result.jobs[1].job.id == "j1"
     # The failed source is tracked with its error.
     assert result.per_source["indeed"].error is not None
     assert isinstance(result.per_source["indeed"].error, JobSearchError)
