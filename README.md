@@ -596,6 +596,41 @@ the other sources' results. A 502 from one source does NOT take down
 the aggregator. The `X-Aggregator-Errors` response header lists
 the errored sources.
 
+### Result ordering
+
+Deduped results are **ranked** after the dedup step (REQ-AR-002,
+`jobs-aggregator-ranking` change). The default ranking is
+**`posted_at` DESC** (most recent first) with a deterministic
+tie-breaker chain: source-priority ASC, then `job.id` ASC. This
+means a LinkedIn job from yesterday appears BEFORE an Indeed job
+from last week — the default behavior is freshness-ordered, not
+source-priority-ordered. The ranking is post-cache: changing the
+strategy does not invalidate the cache.
+
+The strategy is configurable via 2 env vars (see the
+"Aggregator env vars" table below):
+
+- `AGGREGATOR_RANKING_STRATEGY=posted_at` (default): sort by
+  `posted_at` DESC, with the source-priority + `job.id`
+  tie-breaker. Most useful for a job search.
+- `AGGREGATOR_RANKING_STRATEGY=priority`: sort by source-priority
+  alone (LinkedIn > Indeed > InfoJobs), ignoring freshness.
+  Useful for "I trust LinkedIn more than Indeed" deployments.
+- `AGGREGATOR_RANKING_STRATEGY=none`: preserve the pre-change
+  source-priority + scrape-order behavior. **The escape hatch**
+  for clients depending on the pre-change order.
+- `AGGREGATOR_PRIORITY_MAP='{"linkedin":0,"indeed":1,"infojobs":2}'`
+  (default): the source-priority map used as the primary sort
+  key for `priority` AND as the tie-breaker for `posted_at`.
+  Sources not in the map are treated as priority `999` (last).
+  Invalid JSON raises a Pydantic `ValidationError` at startup.
+
+**None `posted_at` defensive branch**: the ranking function
+places `posted_at=None` jobs at the bottom (REQ-AR-007). This
+is a future-proofing safety net — all 3 scrapers fall back to
+`datetime.now(UTC)` when the parser returns `None`, so in
+practice every `posted_at` is non-`None`.
+
 ### Response shape
 
 ```json
@@ -635,14 +670,24 @@ canonical `JobResponse` shape (identical to the per-source routes).
 | `X-Aggregator-Sources` | The sources that were queried, in the caller's `sources` order. E.g. `linkedin,infojobs` when only those 2 are queried. |
 | `X-Aggregator-Errors` | ABSENT when all sources succeed; set to the comma-separated list of errored sources (in caller order) when at least one fails. E.g. `indeed` if only Indeed raised a `JobSearchError`. |
 
+### Aggregator env vars
+
+| Env var | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `AGGREGATOR_RANKING_STRATEGY` | `posted_at` \| `priority` \| `none` | `posted_at` | Ranking strategy applied AFTER the dedup step. `posted_at` (default) sorts by `posted_at` DESC with source-priority + `job.id` tie-breakers; `priority` sorts by source-priority alone (ignores freshness); `none` preserves the pre-change source-priority + scrape-order behavior (the escape hatch for clients depending on the old order). Unknown values raise `pydantic.ValidationError` at startup. |
+| `AGGREGATOR_PRIORITY_MAP` | JSON object | `{"linkedin": 0, "indeed": 1, "infojobs": 2}` | The source-priority map. Used as the primary sort key for `strategy="priority"` AND as the tie-breaker for `strategy="posted_at"`. Lower number = higher priority; sources not in the map are treated as priority `999` (last). Invalid JSON raises `pydantic.ValidationError` at startup. |
+
 ### Examples
 
 ```bash
-# Default: aggregate all 3 sources, deduped
+# Default: aggregate all 3 sources, deduped, ordered by posted_at DESC
 curl -i "http://localhost:8000/jobs?q=python&location=madrid&limit=20"
 # X-Cache: MISS,MISS,MISS (first call)
 # X-Aggregator-Sources: linkedin,indeed,infojobs
 # X-Aggregator-Errors: (absent)
+# Body: jobs ordered by posted_at DESC (most recent first);
+#       the first 6 jobs from 3 sources with the same posted_at
+#       are tied-broken by source-priority (LinkedIn > Indeed > InfoJobs).
 
 # 1-source: only LinkedIn
 curl -i "http://localhost:8000/jobs?q=python&location=madrid&sources=linkedin"
