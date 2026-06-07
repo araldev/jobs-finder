@@ -49,6 +49,7 @@ class Job:
     location: str
     url: str
     posted_at: datetime
+    description: str | None = None
 
     def __post_init__(self) -> None:
         if self.posted_at.tzinfo is None or self.posted_at.tzinfo.utcoffset(self.posted_at) is None:

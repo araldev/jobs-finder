@@ -63,6 +63,58 @@ def test_job_rejects_naive_datetime() -> None:
         )
 
 
+def test_description_default_is_none() -> None:
+    """`Job(...)` without a `description` argument defaults to `None`.
+
+    Spec: REQ-JOB-001 — `description: str | None = None` is
+    backward-compatible. Pre-existing `Job(...)` constructions that
+    omit `description` MUST keep working and MUST yield
+    `job.description is None`. The `frozen=True, slots=True`
+    contract is preserved.
+    """
+    job = Job(
+        id="100",
+        title="t",
+        company="c",
+        location="l",
+        url="https://www.linkedin.com/jobs/view/100/",
+        posted_at=_aware_utc(),
+    )
+    assert job.description is None
+
+
+def test_description_with_value() -> None:
+    """`Job(..., description="text")` stores the value and is included in equality.
+
+    Spec: REQ-JOB-001 — `description` is a first-class field.
+    Equality (`==`) MUST include the `description` value: two `Job`s
+    that differ only by `description` compare unequal. The field
+    survives the round-trip through the dataclass (it is NOT
+    dropped, NOT normalized to `""`).
+    """
+    job = Job(
+        id="200",
+        title="t",
+        company="c",
+        location="l",
+        url="https://www.linkedin.com/jobs/view/200/",
+        posted_at=_aware_utc(),
+        description="Senior Python role",
+    )
+    assert job.description == "Senior Python role"
+
+    other = Job(
+        id="200",
+        title="t",
+        company="c",
+        location="l",
+        url="https://www.linkedin.com/jobs/view/200/",
+        posted_at=_aware_utc(),
+        description="Other description",
+    )
+    assert job != other, "Jobs differing only by description must compare unequal"
+
+
 def test_job_accepts_other_aware_timezone() -> None:
     """An aware non-UTC tzinfo is acceptable; the spec only forbids naive."""
     # We don't reject non-UTC offsets here — the prompt's strictness is
