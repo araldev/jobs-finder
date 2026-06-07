@@ -330,6 +330,74 @@ async def test_search_returns_one_job_per_card_on_placeholder_fixture() -> None:
     assert first.posted_at.tzinfo is not None
 
 
+async def test_search_populates_description_from_offer_card_content() -> None:
+    """InfoJobs `_parse_cards` populates `Job.description` from `p.ij-...-description-description`.
+
+    Spec: REQ-PARSER-INFOJOBS-001 + T-005 wiring. The real
+    InfoJobs SERP (observed 2026-06-02) renders the description
+    in a `<p class="ij-OfferCardContent-description-description
+    [--hideOnMobile]">` element inside each card. The wiring
+    in `_parse_cards` MUST call `parse_infojobs_description(card)`
+    and pass the result to the `Job(...)` constructor. The test
+    builds a custom HTML page with a single card carrying a
+    known description (with the `--hideOnMobile` modifier so
+    the class-prefix match is exercised) and asserts the
+    resulting `Job.description` matches.
+    """
+    # The class string mirrors the real-DOM shape (the
+    # `--hideOnMobile` modifier is part of the real capture).
+    # We factor it into a variable to keep the f-string line
+    # length under the ruff `line-length=100` cap.
+    desc_class = (
+        "ij-OfferCardContent-description-description"
+        " ij-OfferCardContent-description-description--hideOnMobile"
+    )
+    html = f"""
+    <html><body><main><ul>
+      <li class="ij-List-item ij-OfferList-offerCardItem sui-PrimitiveLinkBox">
+        <div class="sui-AtomCard-Wrapper">
+          <div class="sui-AtomCard">
+            <div class="ij-OfferCard">
+              <div class="ij-OfferCardContent">
+                <div class="ij-OfferCardContent-media">
+                  <a class="ij-OfferCardContent-media-link"
+                     href="https://www.infojobs.net/acme/em-desc001">
+                    <img alt="Acme" />
+                  </a>
+                </div>
+                <div class="ij-OfferCardContent-description">
+                  <div class="ij-OfferCardContent-description-head">
+                    <h2 class="ij-OfferCardContent-description-title">Title desc001</h2>
+                  </div>
+                  <div class="ij-OfferCardContent-description-subtitle">
+                    <a class="ij-OfferCardContent-description-subtitle-link">Co desc001</a>
+                  </div>
+                  <ul class="ij-OfferCardContent-description-list">
+                    <li class="ij-OfferCardContent-description-list-item">City desc001</li>
+                  </ul>
+                  <p class="{desc_class}">
+                    Se busca desarrollador Python con experiencia en FastAPI
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </li>
+    </ul></main></body></html>
+    """
+    page = FakePage(html)
+    scraper, _ = await _make_scraper_with(page)
+    async with scraper:
+        jobs = await scraper.search("python", "madrid", limit=1)
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job.description is not None
+    # The text content of the `<p>`, stripped and whitespace-collapsed.
+    assert "FastAPI" in job.description
+    assert "desarrollador Python" in job.description
+
+
 async def test_search_uses_configured_domain_in_oferta_url() -> None:
     """Each `Job.url` is `https://{domain}/ofertas-trabajo/oferta-{id}`."""
     page = FakePage(SEARCH_PAGE_HTML)

@@ -280,6 +280,48 @@ async def test_search_returns_one_job_per_card() -> None:
     assert first.posted_at.tzinfo is not None
 
 
+async def test_search_populates_description_from_below_job_snippet() -> None:
+    """Indeed `_parse_cards` populates `Job.description` from `data-testid="belowJobSnippet"`.
+
+    Spec: REQ-PARSER-INDEED-001 + T-005 wiring. The real Indeed
+    SERP (observed 2026-06-02) renders the description in
+    `<div data-testid="belowJobSnippet" class="...">` blocks
+    inside each card. The wiring in `_parse_cards` MUST call
+    `parse_indeed_description(card)` and pass the result to the
+    `Job(...)` constructor. The test builds a custom HTML
+    page with a single card carrying a known description and
+    asserts the resulting `Job.description` matches.
+    """
+    html = """
+    <html><body><main><ul>
+      <div class="job_seen_beacon">
+        <h3 class="jobTitle">
+          <a class="jcs-JobTitle" data-jk="desc001">Title desc001</a>
+        </h3>
+        <span data-testid="company-name">Co desc001</span>
+        <div data-testid="text-location">City desc001</div>
+        <div data-testid="belowJobSnippet" class="css-1vlebyu eu4oa1w0">
+          <ul style="list-style-type:circle;">
+            <li>Estamos buscando a alguien con experiencia en Python</li>
+            <li>Modalidad remota opcional</li>
+          </ul>
+        </div>
+      </div>
+    </ul></main></body></html>
+    """
+    page = FakePage(html)
+    scraper, _ = await _make_scraper_with(page)
+    async with scraper:
+        jobs = await scraper.search("python", "madrid", limit=1)
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job.description is not None
+    # The two `<li>` items joined with ` | `, per the parser contract.
+    assert "Python" in job.description
+    assert "remota opcional" in job.description
+    assert " | " in job.description
+
+
 async def test_search_uses_configured_domain_in_viewjob_url() -> None:
     """Each `Job.url` is `https://{domain}/viewjob?jk={id}` for the configured domain."""
     page = FakePage(SEARCH_PAGE_HTML)

@@ -356,6 +356,36 @@ def test_parse_cards_extracts_from_malaga_canonical_fixture() -> None:
     ]
 
 
+def test_parse_cards_sets_description_to_none_for_linkedin_fixture() -> None:
+    """LinkedIn `_parse_cards` populates `description=None` until the D1 capture lands.
+
+    Spec: REQ-JOB-001 + REQ-PARSER-LINKEDIN-001. The current
+    LinkedIn parser skeleton returns `None` for every card
+    (the capture is pending per AGENTS.md rule #1). The wiring
+    in `_parse_cards` MUST surface that `None` as the
+    `Job.description` field — the contract is "if the parser
+    can extract, populate; otherwise leave as `None`". This
+    test pins that the LinkedIn `Job` instances built by
+    `_parse_cards` carry `description=None` (and that the
+    `Job` field is reachable — not silently dropped).
+    """
+    from jobs_finder.infrastructure.linkedin.scraper import _parse_cards  # noqa: PLC0415
+    from tests.fixtures.linkedin_malaga_canonical import MALAGA_CANONICAL_HTML  # noqa: PLC0415
+
+    soup = BeautifulSoup(MALAGA_CANONICAL_HTML, "html.parser")
+    jobs = _parse_cards(soup, remaining=10)
+    assert len(jobs) >= 1
+    for job in jobs:
+        # The skeleton returns `None`; the field MUST be
+        # present and `None` (not absent, not defaulted via
+        # `getattr` — the wiring must call the description
+        # parser explicitly).
+        assert job.description is None, (
+            f"LinkedIn skeleton MUST return description=None; "
+            f"got {job.description!r} for job {job.id}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Module purity
 # ---------------------------------------------------------------------------

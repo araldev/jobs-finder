@@ -73,6 +73,7 @@ from .exceptions import LinkedInBlockedError, LinkedInParseError, LinkedInTimeou
 from .parsers import (
     is_block_page,
     parse_company,
+    parse_description,
     parse_job_id,
     parse_location,
     parse_posted_at,
@@ -325,6 +326,7 @@ def _parse_cards(soup: BeautifulSoup, remaining: int) -> list[Job]:
                 location=parse_location(card),
                 url=parse_url(card),
                 posted_at=posted if posted is not None else datetime.now(UTC),
+                description=parse_description(card),
             )
             jobs.append(job)
         except LinkedInParseError as e:

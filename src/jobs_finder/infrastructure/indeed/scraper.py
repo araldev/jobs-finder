@@ -77,6 +77,7 @@ from .parsers import (
     _extract_posted_at_map,
     is_indeed_blocked,
     parse_indeed_company,
+    parse_indeed_description,
     parse_indeed_job_id,
     parse_indeed_location,
     parse_indeed_posted_at,
@@ -373,6 +374,7 @@ def _parse_cards(soup: BeautifulSoup, remaining: int, domain: str) -> list[Job]:
                 location=parse_indeed_location(card),
                 url=parse_indeed_url(card, domain=domain),
                 posted_at=posted if posted is not None else datetime.now(UTC),
+                description=parse_indeed_description(card),
             )
             jobs.append(job)
         except IndeedParseError as e:

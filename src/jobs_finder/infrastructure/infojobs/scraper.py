@@ -79,6 +79,7 @@ from .exceptions import InfoJobsBlockedError, InfoJobsParseError, InfoJobsTimeou
 from .parsers import (
     is_infojobs_blocked,
     parse_infojobs_company,
+    parse_infojobs_description,
     parse_infojobs_job_id,
     parse_infojobs_location,
     parse_infojobs_posted_at,
@@ -368,6 +369,7 @@ def _parse_cards(soup: BeautifulSoup, remaining: int, domain: str) -> list[Job]:
                 location=parse_infojobs_location(card),
                 url=parse_infojobs_url(card, domain=domain),
                 posted_at=posted if posted is not None else datetime.now(UTC),
+                description=parse_infojobs_description(card),
             )
             jobs.append(job)
         except InfoJobsParseError as e:
