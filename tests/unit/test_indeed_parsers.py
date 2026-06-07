@@ -30,6 +30,7 @@ from jobs_finder.infrastructure.indeed.parsers import (
     _find_json_value_start_after,
     is_indeed_blocked,
     parse_indeed_company,
+    parse_indeed_description,
     parse_indeed_job_id,
     parse_indeed_location,
     parse_indeed_posted_at,
@@ -812,3 +813,213 @@ def test_posted_at_map_kwarg_none_preserves_v1_soup_path() -> None:
     result = parse_indeed_posted_at(_card_with_data_jk("abc"), soup, posted_at_map=None)
 
     assert result == datetime(2025, 9, 24, 5, 0, 0, tzinfo=UTC)
+
+
+# ---------------------------------------------------------------------------
+# REQ-PARSER-INDEED-001: parse_indeed_description
+#
+# Indeed renders a job snippet in a `<div data-testid="belowJobSnippet">`
+# block (real DOM, observed 2026-06-02 against es.indeed.com). The
+# block typically wraps a `<ul>` of `<li>` bullet points; sometimes it
+# contains plain text. The parser concatenates the `<li>` items with
+# ` | ` so the LLM downstream gets a single, scrubbable string.
+#
+# IMPORTANT: the metadata selector `data-testid="attribute_snippet_testid"`
+# (used by the existing `parse_indeed_posted_at` for the LEGACY date
+# grammar) is a different field — it carries "Jornada completa",
+# "Hace 3 días", etc. The parser MUST NOT match the metadata
+# testid; only `belowJobSnippet` qualifies as the description.
+# ---------------------------------------------------------------------------
+
+
+def _card_with_description(items: list[str]) -> str:
+    """Wrap a list of `<li>` items into a card with a real-DOM-shaped description block.
+
+    Mirrors the real Indeed SERP shape (observed 2026-06-02):
+        <div data-testid="belowJobSnippet" class="...">
+          <ul style="...">
+            <li>...</li>
+          </ul>
+        </div>
+    """
+    li_html = "".join(f"<li>{item}</li>" for item in items)
+    return f"""
+    <div class="job_seen_beacon" data-jk="999900300">
+      <h3 class="jobTitle">
+        <a class="jcs-JobTitle" data-jk="999900300">Title</a>
+      </h3>
+      <span data-testid="company-name">Acme</span>
+      <div data-testid="text-location">Madrid</div>
+      <div data-testid="belowJobSnippet" class="css-1vlebyu eu4oa1w0">
+        <ul style="list-style-type:circle;margin-top:0;margin-bottom:0;padding-left:20px;">
+          {li_html}
+        </ul>
+      </div>
+    </div>
+    """
+
+
+def _card_with_metadata_only() -> str:
+    """A card that has ONLY the `attribute_snippet_testid` metadata block — NO description.
+
+    Pins the negative contract: the parser MUST NOT match
+    `attribute_snippet_testid` (that selector carries "Jornada
+    completa", "Hace 3 días", etc. — NOT the description).
+    """
+    return """
+    <div class="job_seen_beacon" data-jk="999900301">
+      <h3 class="jobTitle">
+        <a class="jcs-JobTitle" data-jk="999900301">Title</a>
+      </h3>
+      <span data-testid="company-name">Acme</span>
+      <div data-testid="text-location">Madrid</div>
+      <ul class="metadataContainer">
+        <li data-testid="attribute_snippet_testid">Jornada completa</li>
+      </ul>
+    </div>
+    """
+
+
+def _card_with_empty_description() -> str:
+    """A card with a `<div data-testid="belowJobSnippet">` wrapping an empty `<ul>`.
+
+    The description element IS present, but it has NO `<li>` items.
+    The contract is "empty == absent": the parser returns `None`
+    rather than an empty string (so the `Job.description` field
+    defaults to `None` for empty descriptions, NOT `""`).
+    """
+    return """
+    <div class="job_seen_beacon" data-jk="999900302">
+      <h3 class="jobTitle">
+        <a class="jcs-JobTitle" data-jk="999900302">Title</a>
+      </h3>
+      <span data-testid="company-name">Acme</span>
+      <div data-testid="text-location">Madrid</div>
+      <div data-testid="belowJobSnippet" class="css-1vlebyu eu4oa1w0">
+        <ul style="list-style-type:circle;margin-top:0;margin-bottom:0;padding-left:20px;"></ul>
+      </div>
+    </div>
+    """
+
+
+def test_parse_indeed_description_single_item() -> None:
+    """A description with a single `<li>` returns the item's text, stripped.
+
+    Real-DOM shape: the `belowJobSnippet` `<div>` wraps a `<ul>` of
+    `<li>` items. With one item, the result is just the item's
+    text — no ` | ` separator (the contract is "join with ` | `",
+    not "prefix/suffix with ` | `").
+    """
+    fragment = _card_with_description(["Estamos buscando a alguien que sepa Python"])
+    result = parse_indeed_description(fragment)
+    assert result == "Estamos buscando a alguien que sepa Python"
+
+
+def test_parse_indeed_description_multiple_items_concatenated() -> None:
+    """A description with multiple `<li>` items returns them joined with ` | `.
+
+    The join separator ` | ` matches the spec ("stripped, joined
+    with ' | ' or similar") and gives the LLM downstream a single
+    string it can split if needed. The order is the document
+    order of the `<li>` elements.
+    """
+    fragment = _card_with_description(
+        [
+            "Estamos buscando a alguien que sepa Python",
+            "Experiencia mínima de 2 años",
+            "Modalidad remota opcional",
+        ]
+    )
+    result = parse_indeed_description(fragment)
+    assert result == (
+        "Estamos buscando a alguien que sepa Python"
+        " | Experiencia mínima de 2 años"
+        " | Modalidad remota opcional"
+    )
+
+
+def test_parse_indeed_description_strips_whitespace_per_item() -> None:
+    """Leading/trailing whitespace per `<li>` is stripped before joining.
+
+    Real-DOM HTML may have leading newlines or trailing spaces
+    from the capture process. The contract is "stripped": each
+    `<li>` is `get_text(strip=True)` before the join.
+    """
+    fragment = _card_with_description(
+        [
+            "   \n  Estamos buscando   \n  ",
+            "  Experiencia mínima  \n",
+        ]
+    )
+    result = parse_indeed_description(fragment)
+    assert result == "Estamos buscando | Experiencia mínima"
+
+
+def test_parse_indeed_description_absent_returns_none() -> None:
+    """A card with NO `data-testid="belowJobSnippet"` element returns `None`.
+
+    The parser MUST NOT raise on absent — the `Job.description`
+    field is optional and defaults to `None`. The existing card
+    in the fixture (the `_card(0)` first card) does not
+    necessarily have a description; this test pins the
+    "absent == None" semantic with an explicit fragment.
+    """
+    fragment = """
+    <div class="job_seen_beacon" data-jk="999900303">
+      <h3 class="jobTitle">
+        <a class="jcs-JobTitle" data-jk="999900303">Title</a>
+      </h3>
+      <span data-testid="company-name">Acme</span>
+      <div data-testid="text-location">Madrid</div>
+    </div>
+    """
+    assert parse_indeed_description(fragment) is None
+
+
+def test_parse_indeed_description_does_not_match_metadata_selector() -> None:
+    """The parser MUST NOT match `attribute_snippet_testid` (metadata, not description).
+
+    `attribute_snippet_testid` is the JOB METADATA block ("Jornada
+    completa", "Hace 3 días") — using it as the description would
+    send wrong data to the LLM downstream. The parser targets
+    ONLY `belowJobSnippet`. A card that has ONLY the metadata
+    block (no `belowJobSnippet`) MUST return `None`.
+    """
+    assert parse_indeed_description(_card_with_metadata_only()) is None
+
+
+def test_parse_indeed_description_empty_list_returns_none() -> None:
+    """A description block with an EMPTY `<ul>` (no `<li>`) returns `None`.
+
+    "Empty == absent": a `belowJobSnippet` element with no
+    `<li>` children is treated the same as no element at all.
+    The `Job.description` field is `None`, NOT `""`.
+    """
+    assert parse_indeed_description(_card_with_empty_description()) is None
+
+
+def test_parse_indeed_description_handles_malformed_html() -> None:
+    """Malformed HTML around the description block does NOT crash the parser.
+
+    A truncated / unclosed-tag fragment MUST NOT raise. The
+    parser uses `BeautifulSoup` (which is lenient by default)
+    and `get_text()` (which is structural, not regex). With
+    BeautifulSoup's auto-closing, the `<li>` elements are still
+    surfaced even when surrounding tags are unclosed. The
+    assertion is "the parser does NOT crash and recovers the
+    description text".
+    """
+    # Unclosed `</div>` tags — BeautifulSoup closes them implicitly.
+    # The `<li>` items remain in the parsed tree.
+    fragment = (
+        '<div class="job_seen_beacon" data-jk="999900304">'
+        '<h3 class="jobTitle"><a class="jcs-JobTitle" data-jk="999900304">Title</a></h3>'
+        '<div data-testid="belowJobSnippet">'
+        "<ul><li>Recoverable first bullet</li><li>Recoverable second bullet</li>"
+        # NO closing tags below — truncated fragment
+    )
+    result = parse_indeed_description(fragment)
+    assert result is not None, "lenient parse must surface the <li> text"
+    assert "Recoverable first bullet" in result
+    assert "Recoverable second bullet" in result
+    assert " | " in result, "multiple items must be joined with ' | '"

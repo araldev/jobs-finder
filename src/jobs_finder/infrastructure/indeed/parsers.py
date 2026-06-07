@@ -101,6 +101,12 @@ _COMPANY_SELECTOR = '[data-testid="company-name"]'
 _LOCATION_SELECTOR = '[data-testid="text-location"]'
 _URL_SELECTOR = "a.jcs-JobTitle"
 _DATE_SELECTOR = "span.date"
+# `belowJobSnippet` is the actual description block (per the real
+# Indeed SERP observed 2026-06-02 against es.indeed.com). Note:
+# `data-testid="attribute_snippet_testid"` is a different element
+# (JOB METADATA like "Jornada completa") and MUST NOT be confused
+# with the description. The parser targets ONLY `belowJobSnippet`.
+_DESCRIPTION_SELECTOR = '[data-testid="belowJobSnippet"]'
 
 # Substring anchor for the document-level JSON blob that holds the
 # per-result `pubDate` (epoch ms). Indeed's stable cross-locale
@@ -380,6 +386,48 @@ def parse_indeed_posted_at(
         return _parse_relative_date(raw)
     except ValueError as e:
         raise _parse_error("parse_indeed_posted_at", str(e), tag) from e
+
+
+def parse_indeed_description(card: str | Tag) -> str | None:
+    """Extract the job description snippet from `[data-testid="belowJobSnippet"]`.
+
+    The real Indeed SERP (observed 2026-06-02 against es.indeed.com
+    HTML) renders a job snippet inside a
+    `<div data-testid="belowJobSnippet" class="...">` block that
+    typically wraps a `<ul style="list-style-type:circle;...">` of
+    `<li>` bullet points. The parser finds the description block,
+    collects every `<li>` inside, strips each, and joins them with
+    ` | ` so the LLM downstream gets a single scrubbable string.
+
+    IMPORTANT: the `data-testid="attribute_snippet_testid"` selector
+    is a DIFFERENT element (JOB METADATA like "Jornada completa" or
+    "Hace 3 días" — see `parse_indeed_posted_at`'s legacy grammar)
+    and MUST NOT be confused with the description. The parser
+    targets ONLY `belowJobSnippet`.
+
+    Contract (REQ-PARSER-INDEED-001):
+    - Returns the concatenated `<li>` text (each item stripped),
+      joined with ` | `, when the description block has at least
+      one `<li>`.
+    - Returns `None` when the description element is absent OR
+      when the element is present but has no `<li>` children
+      (`<ul></ul>` empty == absent).
+    - Does NOT raise on malformed HTML; the lenient BeautifulSoup
+      parse + `get_text()` is structural, not regex.
+    - The metadata `attribute_snippet_testid` element is
+      NOT matched (negative contract pinned by
+      `test_parse_indeed_description_does_not_match_metadata_selector`).
+    """
+    tag = _to_tag(card)
+    container = tag.select_one(_DESCRIPTION_SELECTOR)
+    if container is None:
+        return None
+    items = container.find_all("li")
+    if not items:
+        return None
+    parts = [item.get_text(strip=True) for item in items]
+    joined = " | ".join(parts)
+    return joined.strip() or None
 
 
 def _extract_data_jk(card: str | Tag) -> str | None:
