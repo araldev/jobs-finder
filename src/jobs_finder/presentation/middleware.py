@@ -370,3 +370,146 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         response.headers[RATE_LIMIT_HEADERS["remaining"]] = str(int(math.floor(decision.remaining)))
         response.headers[RATE_LIMIT_HEADERS["reset"]] = str(int(math.ceil(decision.reset_after)))
         return response
+
+
+# ---------------------------------------------------------------------------
+# Chat rate-limit middleware (REQ-CHAT-002, `ai-chat-filter` T-015)
+#
+# The chat endpoint is a separate bucket from the main
+# `RateLimitMiddleware` because the cost of a chat call is
+# materially different (a chat call costs ~$0.0025 in LLM tokens
+# — much higher than a scrape that costs nothing). The
+# composition root (`app_factory.build_app`, T-016) wires the
+# chat middleware AFTER the main rate-limit middleware so the 429
+# body still has the `request_id` from `RequestIdMiddleware`.
+#
+# The middleware mirrors the main `RateLimitMiddleware`'s
+# contract — same 429 body shape (`RateLimitedResponse`), same 4
+# `X-RateLimit-*` / `Retry-After` headers, same rightmost-
+# untrusted XFF resolution — but with 3 key differences:
+#
+#   1. **Path-scoped**: only requests whose
+#      `request.url.path == self._path` consult the limiter.
+#      Other paths pass through via `call_next` (the chat
+#      middleware does NOT touch `/jobs`, `/jobs/linkedin`, etc.).
+#   2. **Key prefix `chat:`**: `key = f"chat:{client_id_hash}"`
+#      isolates the bucket from the main bucket (which uses
+#      `{client_id_hash}` with no prefix). A busy chat user
+#      does NOT exhaust the main 20/min budget, and vice versa.
+#   3. **Cost is always 1**: the per-route cost map concept does
+#      not apply (the chat endpoint is a single route).
+# ---------------------------------------------------------------------------
+
+
+class ChatRateLimitMiddleware(BaseHTTPMiddleware):
+    """Per-IP /jobs/chat bucket. Reuses `RateLimitPort`.
+
+    Spec: REQ-CHAT-002. The chat route MUST enforce a per-user
+    rate limit, configurable via `LLM_FILTER_RATE_LIMIT_RPM`
+    (default `20`). The limit is ADDITIVE to (NOT replace) any
+    existing per-route rate limit. Overflow returns 429 with the
+    same `RateLimitedResponse` body shape and the same
+    `X-RateLimit-*` / `Retry-After` headers as the main
+    `RateLimitMiddleware`.
+
+    The middleware is constructed with the `RateLimitPort`
+    instance (production wires the same shared `InMemoryTokenBucket`
+    / `RedisTokenBucket` the main middleware uses; tests pass a
+    fresh `InMemoryTokenBucket` so the test does not share state
+    with the main rate limiter), the per-IP bucket capacity, and
+    the optional `trusted_proxies` CIDR set (the same semantics
+    as the main middleware's `trusted_proxies`).
+    """
+
+    __slots__ = ("_rate_limiter", "_max_per_minute", "_path", "_trusted_proxies")
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        rate_limiter: RateLimitPort,
+        max_per_minute: int,
+        path: str = "/jobs/chat",
+        trusted_proxies: frozenset[IPv4Network | IPv6Network]
+        | set[IPv4Network | IPv6Network]
+        | None = None,
+    ) -> None:
+        super().__init__(app)
+        self._rate_limiter: RateLimitPort = rate_limiter
+        self._max_per_minute: int = max_per_minute
+        # The path the middleware guards. Hardcoded to
+        # `/jobs/chat` by default; exposed as a kwarg for tests
+        # (and a future per-route chat variant, e.g. `/jobs/chat/v2`).
+        self._path: str = path
+        # The TRUSTED_PROXY CIDR set. Default `frozenset()` (the
+        # security default — `X-Forwarded-For` is IGNORED). When
+        # non-empty AND the socket IP is in a trusted CIDR, the
+        # rightmost-untrusted XFF walk produces the bucket key.
+        self._trusted_proxies: frozenset[IPv4Network | IPv6Network] = frozenset(
+            trusted_proxies or frozenset()
+        )
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        # 1. Path scope: the middleware ONLY consults the
+        #    limiter for the chat path. Every other path passes
+        #    through via `call_next` (REQ-CHAT-002: additive to
+        #    — not replace — the main per-route rate limit).
+        if request.url.path != self._path:
+            return await call_next(request)
+
+        # 2. Resolve the client_id. Reuses the main middleware's
+        #    static method so the XFF walk semantics stay
+        #    identical (rightmost-untrusted, WARNING on malformed
+        #    hops, fall back to socket IP on all-trusted chain).
+        #    The main middleware's `_resolve_client_id` is
+        #    `@staticmethod`; calling it as a class method keeps
+        #    the security defaults in lockstep.
+        resolved_client_id = RateLimitMiddleware._resolve_client_id(request, self._trusted_proxies)
+
+        # 3. Hash the resolved client_id for PII sanitization
+        #    (REQ-RL-012). The bucket key has the `chat:`
+        #    prefix so it does NOT collide with the main
+        #    middleware's `{client_id_hash}` keys.
+        client_id_hash = hash_client_id(resolved_client_id) if resolved_client_id else "unknown"
+        key = f"chat:{client_id_hash}"
+
+        # 4. Acquire a token. The cost is always 1 (the chat
+        #    endpoint has no per-route cost map concept).
+        decision = await self._rate_limiter.try_acquire(key=key, cost=1.0)
+
+        # 5. Denied: 429 + JSON body + Retry-After + 3
+        #    X-RateLimit-* headers. The body shape is the same
+        #    `RateLimitedResponse` the main middleware emits.
+        if not decision.allowed:
+            request_id = str(getattr(request.state, "request_id", "") or "")
+            body = RateLimitedResponse(
+                detail="rate limit exceeded",
+                request_id=request_id,
+            ).model_dump()
+            return JSONResponse(
+                status_code=429,
+                content=body,
+                headers={
+                    RATE_LIMIT_HEADERS["retry_after"]: str(int(math.ceil(decision.retry_after))),
+                    RATE_LIMIT_HEADERS["limit"]: str(self._max_per_minute),
+                    RATE_LIMIT_HEADERS["remaining"]: "0",
+                    RATE_LIMIT_HEADERS["reset"]: str(int(math.ceil(decision.reset_after))),
+                    # Echo the request id so the 429 is self-
+                    # contained for clients that don't merge
+                    # headers.
+                    REQUEST_ID_HEADER: request_id,
+                },
+            )
+
+        # 6. Allowed: forward the request, then decorate the
+        #    response. The 3 `X-RateLimit-*` headers mirror the
+        #    main middleware so clients can use a uniform parser.
+        response = await call_next(request)
+        response.headers[RATE_LIMIT_HEADERS["limit"]] = str(self._max_per_minute)
+        response.headers[RATE_LIMIT_HEADERS["remaining"]] = str(int(math.floor(decision.remaining)))
+        response.headers[RATE_LIMIT_HEADERS["reset"]] = str(int(math.ceil(decision.reset_after)))
+        return response
