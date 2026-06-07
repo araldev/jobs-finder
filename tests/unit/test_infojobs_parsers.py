@@ -36,6 +36,7 @@ from jobs_finder.infrastructure.infojobs.exceptions import InfoJobsParseError
 from jobs_finder.infrastructure.infojobs.parsers import (
     is_infojobs_blocked,
     parse_infojobs_company,
+    parse_infojobs_description,
     parse_infojobs_job_id,
     parse_infojobs_location,
     parse_infojobs_posted_at,
@@ -687,3 +688,186 @@ def test_parsers_legitimately_pass_shell_grep_for_infojobs() -> None:
         f"grep -E 'infojobs' {parsers_file} returned non-zero: {result.stderr!r}"
     )
     assert result.stdout, "grep stdout should contain matches"
+
+
+# ---------------------------------------------------------------------------
+# REQ-PARSER-INFOJOBS-001: parse_infojobs_description
+#
+# InfoJobs renders a job description in a `<p>` element with the
+# class `ij-OfferCardContent-description-description` (real DOM,
+# observed 2026-06-02 against es.infojobs.net). The `<p>` may also
+# carry the `--hideOnMobile` modifier class — a CLASS-PREFIX match
+# is used so the modifier doesn't break the match.
+#
+# The text content is multi-line (HTML rendered with newlines for
+# readability) and the parser strips + collapses whitespace.
+# ---------------------------------------------------------------------------
+
+
+def _card_with_description(text: str, *, with_hide_on_mobile: bool = False) -> str:
+    """Wrap a description string in a real-DOM-shaped InfoJobs card.
+
+    Mirrors the real InfoJobs SERP (observed 2026-06-02):
+        <p class="ij-OfferCardContent-description-description[--hideOnMobile]">
+            ...text...
+        </p>
+    `with_hide_on_mobile=True` adds the `--hideOnMobile` modifier
+    class so the class-prefix match is exercised.
+    """
+    class_attr = "ij-OfferCardContent-description-description"
+    if with_hide_on_mobile:
+        class_attr += " ij-OfferCardContent-description-description--hideOnMobile"
+    return f"""
+    <li class="ij-List-item ij-OfferList-offerCardItem sui-PrimitiveLinkBox">
+      <div class="sui-AtomCard-Wrapper">
+        <div class="sui-AtomCard">
+          <div class="ij-OfferCard">
+            <div class="ij-OfferCardContent">
+              <div class="ij-OfferCardContent-media">
+                <a class="ij-OfferCardContent-media-link"
+                   href="https://www.infojobs.net/acme/em-999900400">
+                  <img alt="Acme" />
+                </a>
+              </div>
+              <div class="ij-OfferCardContent-description">
+                <div class="ij-OfferCardContent-description-head">
+                  <h2 class="ij-OfferCardContent-description-title">Title</h2>
+                </div>
+                <div class="ij-OfferCardContent-description-subtitle">
+                  <a class="ij-OfferCardContent-description-subtitle-link">Acme</a>
+                </div>
+                <ul class="ij-OfferCardContent-description-list">
+                  <li class="ij-OfferCardContent-description-list-item">Madrid</li>
+                </ul>
+                <p class="{class_attr}">{text}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </li>
+    """
+
+
+def _card_missing_description() -> str:
+    """A card with NO matching `<p class="ij-...-description">` element.
+
+    The card has a title, subtitle, list, but the description
+    `<p>` is absent — the parser MUST return `None`.
+    """
+    return """
+    <li class="ij-List-item ij-OfferList-offerCardItem sui-PrimitiveLinkBox">
+      <div class="sui-AtomCard-Wrapper">
+        <div class="sui-AtomCard">
+          <div class="ij-OfferCard">
+            <div class="ij-OfferCardContent">
+              <div class="ij-OfferCardContent-description">
+                <h2 class="ij-OfferCardContent-description-title">Title</h2>
+                <div class="ij-OfferCardContent-description-subtitle">
+                  <a class="ij-OfferCardContent-description-subtitle-link">Acme</a>
+                </div>
+                <ul class="ij-OfferCardContent-description-list">
+                  <li class="ij-OfferCardContent-description-list-item">Madrid</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </li>
+    """
+
+
+def test_parse_infojobs_description_extracts_text_from_p() -> None:
+    """A card with a `<p class="...description-description">` returns the `<p>` text, stripped.
+
+    The single-class shape (no `--hideOnMobile` modifier) is the
+    baseline. The parser uses a class-prefix match so this card
+    (the simpler one) is matched too — not just the variant.
+    """
+    fragment = _card_with_description("Se busca Técnico en Farmacia para hacer 36h semanales.")
+    result = parse_infojobs_description(fragment)
+    assert result == "Se busca Técnico en Farmacia para hacer 36h semanales."
+
+
+def test_parse_infojobs_description_handles_hide_on_mobile_modifier() -> None:
+    """A `<p class="...description-description ...--hideOnMobile">` is matched (class-prefix).
+
+    The real InfoJobs SERP (observed 2026-06-02) renders the
+    description `<p>` with TWO classes:
+    `ij-OfferCardContent-description-description` AND
+    `ij-OfferCardContent-description-description--hideOnMobile`.
+    An exact class match (`p.ij-OfferCardContent-description-description`)
+    would NOT match this shape; the parser MUST use a class-prefix
+    match so the `--hideOnMobile` modifier doesn't break the
+    extraction.
+    """
+    fragment = _card_with_description(
+        "Vendedor/a 24h, CC Espai Gironés",
+        with_hide_on_mobile=True,
+    )
+    result = parse_infojobs_description(fragment)
+    assert result == "Vendedor/a 24h, CC Espai Gironés"
+
+
+def test_parse_infojobs_description_strips_and_collapses_whitespace() -> None:
+    """Leading / trailing / internal whitespace in the `<p>` text is collapsed.
+
+    Real-DOM HTML from InfoJobs uses newlines for readability
+    inside the `<p>` (e.g. `<p>Line 1\nLine 2\nLine 3</p>`).
+    The parser strips outer whitespace and collapses internal
+    runs of whitespace into a single space.
+    """
+    fragment = _card_with_description(
+        "\n   Hotel ES FIGUERAL NOU 4* sup\n   En plena naturaleza\n   "
+    )
+    result = parse_infojobs_description(fragment)
+    assert result == "Hotel ES FIGUERAL NOU 4* sup En plena naturaleza"
+
+
+def test_parse_infojobs_description_absent_returns_none() -> None:
+    """A card with no description `<p>` returns `None`.
+
+    The parser MUST NOT raise on absent — `Job.description` is
+    optional and defaults to `None`.
+    """
+    assert parse_infojobs_description(_card_missing_description()) is None
+
+
+def test_parse_infojobs_description_empty_returns_none() -> None:
+    """A `<p>` present but empty (`<p></p>`) returns `None`.
+
+    "Empty == absent": the parser treats whitespace-only or
+    empty content the same as a missing element. `Job.description`
+    is `None`, NOT `""`.
+    """
+    fragment = _card_with_description("")
+    assert parse_infojobs_description(fragment) is None
+
+
+def test_parse_infojobs_description_handles_malformed_html() -> None:
+    """Malformed HTML around the description `<p>` does NOT crash the parser.
+
+    A broken nesting or unclosed attribute does NOT raise. The
+    lenient BeautifulSoup parse + `get_text(strip=True)` is
+    structural, not regex. The parser returns whatever text
+    the lenient parse recovers.
+    """
+    # Unclosed `class` attribute — lenient parse still surfaces the `<p>`.
+    fragment = (
+        '<li><div class="ij-OfferCardContent-description">'
+        '<p class="ij-OfferCardContent-description-description'
+        # NO closing quote / `>` / `</p>` — truncated
+        "Recovered text after malformed markup"
+        # NO closing tags
+    )
+    # The lenient parse is "best effort": we assert the parser
+    # does NOT raise. Whether the text is recovered depends on
+    # the parser version; the contract is "no crash, return
+    # the best-effort result".
+    result = parse_infojobs_description(fragment)
+    # When the parse recovers at least the `<p>` text, we
+    # expect a non-None result containing the recovered text.
+    # If the parse loses the text entirely, `None` is also
+    # acceptable — the contract is "no exception + sane return".
+    assert result is None or "Recovered text" in result

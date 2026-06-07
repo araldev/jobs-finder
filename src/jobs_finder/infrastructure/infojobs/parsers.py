@@ -112,6 +112,12 @@ _LOCATION_SELECTOR = ".ij-OfferCardContent-description-list-item"
 _URL_SELECTOR = "a.ij-OfferCardContent-media-link"
 _DESCRIPTION_LINK_SELECTOR = "a.ij-OfferCardContent-description-link"
 _DATE_SELECTOR = "[data-testid='sincedate-tag']"
+# The description `<p>` carries the base class
+# `ij-OfferCardContent-description-description` AND may also carry
+# the `--hideOnMobile` modifier. The parser uses a CLASS-PREFIX
+# match (regex anchored to the start of the first class) so the
+# modifier doesn't break the match. Real DOM observed 2026-06-02.
+_DESCRIPTION_CLASS_RE = re.compile(r"^ij-OfferCardContent-description-description")
 
 # The id is embedded in one of two href patterns observed in the
 # real DOM (2026-06-02):
@@ -396,6 +402,44 @@ def parse_infojobs_posted_at(card: str | Tag) -> datetime | None:
         return _parse_relative_date(raw)
     except ValueError as e:
         raise _parse_error("parse_infojobs_posted_at", str(e), tag) from e
+
+
+def parse_infojobs_description(card: str | Tag) -> str | None:
+    """Extract the job description from the first matching `<p>` element.
+
+    The real InfoJobs SERP (observed 2026-06-02 against es.infojobs.net)
+    renders the job description in a `<p>` element with the class
+    `ij-OfferCardContent-description-description` (and may also
+    carry the `--hideOnMobile` modifier class). The parser uses a
+    CLASS-PREFIX match (regex anchored to the start of the first
+    class) so the `--hideOnMobile` modifier does not break the
+    match — an exact class match (`p.ij-OfferCardContent-description-description`)
+    would NOT match the two-class shape.
+
+    Contract (REQ-PARSER-INFOJOBS-001):
+    - Returns the `<p>` text, stripped and with internal
+      whitespace collapsed into single spaces, when the
+      description `<p>` is present and non-empty.
+    - Returns `None` when the description element is absent OR
+      when the element is present but empty (`<p></p>`).
+    - Does NOT raise on malformed HTML; the lenient BeautifulSoup
+      parse + `get_text(strip=True)` is structural, not regex.
+    - The `ij-OfferCardContent-description-subtitle-link` (company)
+      and the `ij-OfferCardContent-description-list-item` (location)
+      and the `ij-OfferCardContent-description-title` (title) are
+      NOT matched — only the `<p>` with the
+      `description-description` base class.
+    """
+    tag = _to_tag(card)
+    el = tag.find("p", class_=_DESCRIPTION_CLASS_RE)
+    if el is None:
+        return None
+    raw = el.get_text(" ", strip=True)
+    # Collapse any runs of internal whitespace that survived
+    # `get_text(" ", strip=True)` (multi-line text from real DOM
+    # may have non-breaking spaces, tabs, etc.).
+    collapsed = " ".join(raw.split())
+    return collapsed or None
 
 
 def is_infojobs_blocked(soup: BeautifulSoup) -> bool:
