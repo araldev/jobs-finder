@@ -723,6 +723,108 @@ curl -i "http://localhost:8000/jobs?q=python&location=madrid&sources=glassdoor"
 # {"detail": "unknown sources: ['glassdoor']; valid: ['indeed', 'infojobs', 'linkedin']"}
 ```
 
+## AI Chat Filter
+
+> **Optional feature.** Code merged with `LLM_FILTER_ENABLED=false` (the
+> default). The chat endpoint is **OFF** until an operator sets
+> `LLM_FILTER_ENABLED=true` AND `LLM_API_KEY=<key>` in production.
+> See "Rollout" below for the 2-stage rollout.
+
+`POST /jobs/chat` is an additive, **Spanish-natural-language** intent
+filter on top of the 3-source aggregator. The user types a free-form
+request (e.g. "solo remoto, junior Python, Madrid"); the server runs
+the existing aggregator, sends the aggregated jobs to
+[MiniMax's](https://api.minimax.io) OpenAI-compatible chat-completions
+endpoint as a Spanish system-prompted filter call, and returns only
+the jobs the LLM selected. Strict ID-subset validation drops any
+hallucinated IDs before they reach the response.
+
+The chat endpoint is **read-only and additive** — it does not modify
+`/jobs`, `/jobs/linkedin`, `/jobs/indeed`, or `/jobs/infojobs`, and it
+does NOT introduce an LLM result cache (the 60s per-source aggregator
+cache is the only cache layer; two identical chat payloads within
+60s trigger ONE full re-aggregation and TWO LLM calls).
+
+### Curl smoke test
+
+```bash
+# Start the app with the chat filter ENABLED (operator-supplied key).
+export LLM_API_KEY="<your-minimax-key>"
+export LLM_FILTER_ENABLED=true
+uv run python -m jobs_finder.main
+# In another terminal:
+curl -X POST http://localhost:8000/jobs/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"ingeniero < 2 anos en Malaga"}'
+# HTTP/1.1 200
+# {"jobs": [...3 of 5...], "explanation": "...", "total_considered": 5, "total_matched": 3}
+```
+
+### Chat env vars
+
+| Env var | Default | Purpose |
+| --- | --- | --- |
+| `LLM_API_KEY` | `None` (route OFF) | MiniMax API key (`SecretStr` in the Settings). The chat route is NOT registered when this is `None`. |
+| `LLM_BASE_URL` | `https://api.minimax.io` | OpenAI-compatible base URL. |
+| `LLM_MODEL` | `MiniMax-M3` | Pinned to M3 + `thinking: {type: disabled}` (the only model that honors the disabled flag). |
+| `LLM_TEMPERATURE` | `0.0` | Deterministic filter. |
+| `LLM_MAX_TOKENS` | `1024` | Upper bound on the response size. |
+| `LLM_REQUEST_TIMEOUT_SECONDS` | `15.0` | Per-request timeout for the `httpx.AsyncClient`. |
+| `LLM_MAX_MESSAGE_CHARS` | `1000` | Hard cap on the user `message` length. Exceeding it returns `400 {"detail": "message exceeds 1000 chars (got N)"}`. |
+| `LLM_FILTER_ENABLED` | `false` | Feature flag. `true` + key set → route is registered; otherwise the route returns 404. |
+| `LLM_FILTER_RATE_LIMIT_RPM` | `20` | Per-user chat bucket (default 20 req/min, matches the main `RATE_LIMIT_REQUESTS`). |
+
+### Cost
+
+~$0.0025/req with MiniMax-M3 + `thinking: {type: disabled}` (D3 target).
+At 1000 queries/day, ~$2.50/day. The per-user
+`LLM_FILTER_RATE_LIMIT_RPM` cap (default 20) bounds the worst case
+to 20 calls/user/min regardless of overall traffic. The shared
+`httpx.AsyncClient` is built in the app's lifespan and reuses the
+connection pool across requests.
+
+### Rollout
+
+The chat filter follows a **2-stage rollout**:
+
+1. **Stage 1 (default)**: code merged with `LLM_FILTER_ENABLED=false`
+   (the default). The chat route is **NOT** registered; the chat
+   middleware is **NOT** mounted; the LLM client is **NOT** built.
+   `GET /jobs`, `GET /jobs/linkedin`, `GET /jobs/indeed`,
+   `GET /jobs/infojobs` behave identically to the pre-feature baseline.
+2. **Stage 2 (ops enables in prod)**: set
+   `LLM_API_KEY=<key>` + `LLM_FILTER_ENABLED=true` in the prod env.
+   The chat route is registered; the LLM client is constructed; the
+   chat middleware is mounted. No redeploy is required to disable —
+   flip `LLM_FILTER_ENABLED=false` and the route returns 404 again.
+
+### LinkedIn description capture (T-004 follow-up)
+
+The LinkedIn `parse_linkedin_description` function (T-004, shipped
+in PR1 as a skeleton) currently returns `None` for every card. The
+function needs a real-DOM capture of `linkedin.com/jobs/search` to
+pin the description selector. The capture is a **sanctioned
+one-time** procedure (per AGENTS.md rule #1; never executed in CI):
+
+1. Install Playwright Chromium: `uv run playwright install chromium`.
+2. Start the app with a real LinkedIn session cookie (the `li_at`
+   cookie; do NOT commit it).
+3. Run a one-off Playwright script that navigates to the search
+   page, scrolls to load cards, and saves the rendered HTML to
+   `tests/fixtures/linkedin_search_with_description.py`.
+4. Update `_DESCRIPTION_SELECTOR` in
+   `src/jobs_finder/infrastructure/linkedin/parsers.py` to the
+   captured selector.
+5. Convert the `pytest.mark.skip` in `tests/unit/test_parsers.py`
+   to a real test that pins the selector.
+6. Commit the new fixture + selector + test (NEVER commit the
+   `li_at` cookie or any session material).
+
+This follow-up lands in a separate change/PR — it is **not** in the
+`ai-chat-filter` change (the chat filter works without the LinkedIn
+description; the LLM treats the description as `null` and filters
+only on `title + company + location`).
+
 ## Manual verification
 
 > **Re-read the Legal Notice above before proceeding.** Scraping LinkedIn
