@@ -33,14 +33,29 @@ _LOCATION_SELECTOR = ".job-search-card__location"
 _URL_SELECTOR = "a.base-card__full-link"
 _TIME_SELECTOR = "time.job-search-card__listdate"
 _URN_ATTR = "data-entity-urn"
-# Description selector is TBD pending the sanctioned one-time
-# Playwright capture of `linkedin.com/jobs/search` (AGENTS.md
-# rule #1). The current `tests/fixtures/linkedin_search.py`
-# fixture (synthetic 3-card capture from 2026-06-02) does NOT
-# contain a description element; the parser MUST return `None`
-# for that fixture. The follow-up work unit (T-004b) pins the
-# real selector once the capture lands.
-_DESCRIPTION_SELECTOR = "TBD_PENDING_CAPTURE"
+# Description selector — pinned by the sanctioned one-time Playwright
+# capture of `linkedin.com/jobs/search` (AGENTS.md rule #1), committed
+# to `tests/fixtures/linkedin_search_with_description.py`.
+#
+# IMPORTANT FINDING (see `sdd/linkedin-description-capture/explore`):
+# LinkedIn search results page does NOT expose description text on the
+# individual job cards in the results list. Descriptions are only
+# available in the "detail panel" that appears when a user clicks a
+# card, rendered as:
+#     <section class="show-more-less-html">
+#       <div class="show-more-less-html__markup show-more-less-html__markup--clamp-after-5 ...">
+#         <the actual description text with <br> separators and <li> bullets>
+#       </div>
+#     </section>
+#
+# The parser is "detail-panel aware": given a search-result card, it
+# returns `None` (cards don't carry descriptions); given the detail
+# panel element (section or its inner div), it returns the description
+# text. The chat filter (POST /jobs/chat) handles `description=None`
+# for LinkedIn rows gracefully via the no-assumption rule in
+# `src/jobs_finder/infrastructure/llm/_prompt.py` (REQ-LLM-004).
+_DESCRIPTION_SELECTOR = "div.show-more-less-html__markup"
+_DESCRIPTION_SELECTOR_CLASS = "show-more-less-html__markup"
 
 
 def _ensure_tag(fragment: str | Tag) -> Tag:
@@ -149,43 +164,50 @@ def parse_posted_at(card: str | Tag) -> datetime | None:
 
 
 def parse_description(card: str | Tag) -> str | None:
-    """Extract the job description snippet from a LinkedIn card.
+    """Extract the LinkedIn job description text from a card or detail panel.
 
-    SKELETON — pending the sanctioned one-time Playwright capture
-    of `linkedin.com/jobs/search` (AGENTS.md rule #1). The current
-    `tests/fixtures/linkedin_search.py` fixture (synthetic 3-card
-    capture from 2026-06-02) does NOT contain a description
-    element, so the parser returns `None` for every card in the
-    fixture — the same "absent" semantic a real description
-    parser would return when the selector is not present.
+    Spec: REQ-PARSER-LINKEDIN-001 (pinned by `linkedin-description-capture`,
+    Branch B).
 
-    The contract (REQ-PARSER-LINKEDIN-001):
-    - Returns the description text (whitespace-stripped) when the
-      captured selector matches a non-empty element.
-    - Returns `None` when the element is absent OR empty.
-    - Does NOT raise on malformed HTML; lenient BeautifulSoup
-      parse + `get_text()` is structural, not regex.
-    - The current fixture has no description, so the function
-      always returns `None` until the capture lands.
+    LinkedIn's public search page renders job cards in a results list
+    with only title, company, location, and date. The full description
+    is NOT exposed on the card itself — it lives in a separate "detail
+    panel" (`<section class="show-more-less-html">` containing a
+    `<div class="show-more-less-html__markup">`) that the page shows
+    when a user clicks a card. The parser handles both shapes:
 
-    Follow-up work unit T-004b will:
-      1. Perform the sanctioned one-time Playwright capture.
-      2. Update `_DESCRIPTION_SELECTOR` with the captured value.
-      3. Convert the `pytest.mark.skip` test in
-         `tests/unit/test_parsers.py` to a real test that pins
-         the chosen selector's behaviour.
+    - Given a search-result card (e.g. a `<div class="base-search-card">`):
+      the selector is not found inside, returns `None`.
+    - Given the detail panel element (the section OR its inner div):
+      the selector matches, returns the text content with
+      `separator=" "` and `strip=True` (handling the `<br>` line breaks
+      and `<li>` bullets that LinkedIn uses inside the markup).
+    - Given an empty/absent element: returns `None`.
 
-    For now, the function exists with the right signature,
-    returns `None` (the "absent" semantic), and is importable.
+    The chat filter (POST /jobs/chat) handles `description=None` for
+    LinkedIn rows gracefully via the no-assumption rule in
+    `src/jobs_finder/infrastructure/llm/_prompt.py` (REQ-LLM-004).
+
+    Real capture used to pin this selector lives in
+    `tests/fixtures/linkedin_search_with_description.py` (sanctioned
+    one-time Playwright capture per AGENTS.md rule #1).
     """
-    # The selector is a placeholder. Even if it were a real
-    # selector, the current fixture has no matching element, so
-    # `tag.select_one(...)` returns `None` and we propagate
-    # `None` to the caller. Once D1 lands and the selector is
-    # pinned, the implementation will read the element's text
-    # and return it stripped (or `None` when empty/absent).
-    _ = _ensure_tag(card)  # mirror the signature for future use
-    return None
+    tag = _ensure_tag(card)
+    # Accept either the inner markup div itself OR any element that
+    # CONTAINS the markup (e.g., the section.show-more-less-html).
+    # `tag.get("class")` may be a `str` (single class) or a `list[str]`
+    # (multi-class); normalise to a list before the `in` check.
+    classes_raw = tag.get("class")
+    classes: list[str] = [classes_raw] if isinstance(classes_raw, str) else list(classes_raw or [])
+    if _DESCRIPTION_SELECTOR_CLASS in classes:
+        desc: Tag = tag
+    else:
+        found = tag.select_one(_DESCRIPTION_SELECTOR)
+        if found is None:
+            return None
+        desc = found
+    text = desc.get_text(separator=" ", strip=True)
+    return text or None
 
 
 def is_block_page(soup: BeautifulSoup) -> bool:

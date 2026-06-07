@@ -839,32 +839,52 @@ The chat filter follows a **2-stage rollout**:
    chat middleware is mounted. No redeploy is required to disable —
    flip `LLM_FILTER_ENABLED=false` and the route returns 404 again.
 
-### LinkedIn description capture (T-004 follow-up)
+### LinkedIn description: empirical finding (Branch B)
 
-The LinkedIn `parse_linkedin_description` function (T-004, shipped
-in PR1 as a skeleton) currently returns `None` for every card. The
-function needs a real-DOM capture of `linkedin.com/jobs/search` to
-pin the description selector. The capture is a **sanctioned
-one-time** procedure (per AGENTS.md rule #1; never executed in CI):
+The `parse_linkedin_description` function was a skeleton in the
+`ai-chat-filter` PR1 (returned `None` for every card). The sanctioned
+one-time Playwright capture (AGENTS.md rule #1) was performed on
+2026-06-07 and the captured HTML is committed at
+`tests/fixtures/linkedin_search_with_description.py`. The
+selector was pinned: `div.show-more-less-html__markup`.
 
-1. Install Playwright Chromium: `uv run playwright install chromium`.
-2. Start the app with a real LinkedIn session cookie (the `li_at`
-   cookie; do NOT commit it).
-3. Run a one-off Playwright script that navigates to the search
-   page, scrolls to load cards, and saves the rendered HTML to
-   `tests/fixtures/linkedin_search_with_description.py`.
-4. Update `_DESCRIPTION_SELECTOR` in
-   `src/jobs_finder/infrastructure/linkedin/parsers.py` to the
-   captured selector.
-5. Convert the `pytest.mark.skip` in `tests/unit/test_parsers.py`
-   to a real test that pins the selector.
-6. Commit the new fixture + selector + test (NEVER commit the
-   `li_at` cookie or any session material).
+**Empirical finding** (the result that shaped Branch B):
 
-This follow-up lands in a separate change/PR — it is **not** in the
-`ai-chat-filter` change (the chat filter works without the LinkedIn
-description; the LLM treats the description as `null` and filters
-only on `title + company + location`).
+LinkedIn's public search results page does **NOT** expose
+description text on the individual job cards in the results list.
+Each `<div class="base-search-card">` card carries only title,
+company, location, and date. The full description is only visible
+in a separate **detail panel** that the page renders when a user
+clicks a card:
+
+```html
+<section class="show-more-less-html">
+  <div class="show-more-less-html__markup ...">
+    <the actual description text, with <br> separators and <li> bullets>
+  </div>
+</section>
+```
+
+The captured page had the detail panel open for the "active" card,
+so the fixture contains 3 cards + 1 detail panel. The parser
+`parse_description` is "detail-panel aware":
+
+- Given a search-result card → returns `None` (cards don't carry
+  descriptions).
+- Given the detail panel element (the section OR its inner div) →
+  returns the text content with `separator=" "` and `strip=True`.
+
+**Chat filter behavior**: the chat filter (POST /jobs/chat) handles
+`description=None` for LinkedIn rows gracefully via the
+no-assumption rule in the system prompt (REQ-LLM-004). The LLM
+matches on `title + company + location` for LinkedIn rows (vs the
+full 5-field match for Indeed + InfoJobs rows that DO have
+descriptions). Quality is acceptable for v1.
+
+**Future work**: scraping each job's detail page individually would
+yield descriptions for all 3 sources at 5-10× the request cost.
+Tracked as a separate potential change (`linkedin-job-detail`,
+not yet scheduled).
 
 ## Manual verification
 

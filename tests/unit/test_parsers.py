@@ -7,6 +7,13 @@ real-DOM shape of LinkedIn's public job search results page. It uses
 `base-search-card__title` / `base-search-card__subtitle` /
 `job-search-card__location` / `job-search-card__listdate` children.
 The `slug + numeric-id` URL format is exercised here too.
+
+The fixture in `tests/fixtures/linkedin_search_with_description.py` is a
+sanctioned one-time Playwright capture (AGENTS.md rule #1) that
+includes both the search-result cards AND the detail panel (which is
+the only place LinkedIn exposes the job description text on the
+public search page — see REQ-PARSER-LINKEDIN-001 / Branch B of
+`linkedin-description-capture`).
 """
 
 from __future__ import annotations
@@ -28,6 +35,12 @@ from jobs_finder.infrastructure.linkedin.parsers import (
     parse_url,
 )
 from tests.fixtures.linkedin_search import BLOCK_PAGE_HTML, SEARCH_PAGE_HTML
+from tests.fixtures.linkedin_search_with_description import (
+    EXPECTED_DESCRIPTION,
+)
+from tests.fixtures.linkedin_search_with_description import (
+    SEARCH_PAGE_HTML as SEARCH_PAGE_HTML_WITH_DESC,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers — load cards out of the shared fixture
@@ -439,54 +452,90 @@ def test_parsers_accept_string_or_tag() -> None:
 
 
 # ---------------------------------------------------------------------------
-# REQ-PARSER-LINKEDIN-001: parse_description (SKELETON — gated on D1)
+# REQ-PARSER-LINKEDIN-001: parse_description (pinned by `linkedin-description-capture`, Branch B)
 #
-# The LinkedIn description parser is a SKELETON in PR1. The
-# selector is TBD pending a sanctioned one-time Playwright
-# capture of `linkedin.com/jobs/search` (AGENTS.md rule #1).
-# The test below is `pytest.mark.skip` until the capture lands;
-# the function exists, returns `None` gracefully, and is
-# importable. The follow-up work unit (T-004b) will:
-#   1. Perform the capture.
-#   2. Update the selector in `parsers.py::_DESCRIPTION_SELECTOR`.
-#   3. Convert the skip below to a real test that pins the
-#      chosen selector's behaviour.
+# The sanctioned one-time Playwright capture (AGENTS.md rule #1)
+# landed on 2026-06-07 and is committed to
+# `tests/fixtures/linkedin_search_with_description.py` (3 cards +
+# 1 detail panel). The selector is
+# `div.show-more-less-html__markup` — the inner div inside the
+# `<section class="show-more-less-html">` that the page shows when
+# a user clicks a card.
+#
+# Key behaviour (Branch B of `linkedin-description-capture`):
+# - Cards in the results list do NOT have descriptions, the parser
+#   returns `None`.
+# - The detail panel HAS the description, the parser returns the
+#   text content (joined with " " and stripped).
+# - The chat filter (POST /jobs/chat) handles `None` for LinkedIn
+#   rows gracefully via REQ-LLM-004 (no-assumption rule in
+#   `src/jobs_finder/infrastructure/llm/_prompt.py`).
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason=(
-        "LinkedIn description selector pending real-DOM capture "
-        "(AGENTS.md rule #1 — sanctioned one-time Playwright capture). "
-        "Until the capture lands, the function returns None gracefully; "
-        "remove the skip and pin the chosen selector once D1 lands."
-    )
-)
-def test_parse_description_returns_none_until_linkedin_capture_lands() -> None:
-    """The skeleton returns `None` until the LinkedIn description selector is captured.
+def test_parse_description_returns_none_for_search_cards() -> None:
+    """Search-result cards have no description element — the parser returns `None`.
 
-    Once the sanctioned one-time Playwright capture (AGENTS.md
-    rule #1) lands, this test is un-skipped and asserts that
-    `parse_description(card)` returns the captured description
-    text for a card from the new fixture. Until then, the
-    function returns `None` (the "no description" semantic) so
-    downstream code (`Job.description` defaulting) is correct.
+    LinkedIn's public search results page renders the description in
+    a separate "detail panel" that only appears when the user clicks
+    a card. The card itself carries only title, company, location,
+    and date. The parser MUST return `None` for any card in the
+    results list (otherwise the test would be invalidating the
+    "cards don't have descriptions" finding from
+    `sdd/linkedin-description-capture/explore`).
     """
-    # The current `tests/fixtures/linkedin_search.py` fixture is
-    # a synthetic 3-card capture from 2026-06-02 with no
-    # description element. The skeleton MUST return `None` for
-    # this fixture; once D1 lands with a real capture, the
-    # assertion below changes to pin the captured text.
-    from bs4 import BeautifulSoup  # noqa: PLC0415
+    soup = BeautifulSoup(SEARCH_PAGE_HTML_WITH_DESC, "html.parser")
+    cards = soup.select("div.base-search-card")
+    assert len(cards) >= 1, "fixture must have at least one card"
+    for card in cards:
+        result = parse_description(card)
+        assert result is None, f"card should have no description element; got {result[:80]!r}"
 
-    from tests.fixtures.linkedin_search import SEARCH_PAGE_HTML  # noqa: PLC0415
 
-    soup = BeautifulSoup(SEARCH_PAGE_HTML, "html.parser")
-    card = soup.select_one("div[data-entity-urn]")
-    assert card is not None, "fixture must have at least one card"
-    result = parse_description(card)
-    # The skeleton contract: `None` is the "absent" semantic
-    # — the same value a real description parser would return
-    # when the selector is not present. Once D1 lands, this
-    # assertion is replaced with the captured text.
-    assert result is None
+def test_parse_description_extracts_text_from_detail_panel() -> None:
+    """The detail panel has the description — the parser returns the text.
+
+    The capture happened to have the detail panel open for the
+    "active" card (LinkedIn's UX shows the clicked job's details on
+    the same page). The panel is rendered as
+    `<section class="show-more-less-html">` containing
+    `<div class="show-more-less-html__markup">`. The parser uses
+    `select_one("div.show-more-less-html__markup")` on whatever
+    element it's given (the section or the inner div) and returns
+    the text content with `separator=" "` and `strip=True`.
+    """
+    soup = BeautifulSoup(SEARCH_PAGE_HTML_WITH_DESC, "html.parser")
+
+    # The detail panel exists in the fixture
+    detail_markup = soup.select_one("div.show-more-less-html__markup")
+    assert detail_markup is not None, (
+        "fixture should contain the detail panel with show-more-less-html__markup"
+    )
+
+    # The parser returns the full text content (joined with " ")
+    result = parse_description(detail_markup)
+    assert result is not None
+    assert isinstance(result, str)
+    # The text should contain key content from the job description
+    assert "Ingeniero" in result, "result should contain the job title text"
+    # The result should match the expected text (joined with " ", stripped)
+    assert result == EXPECTED_DESCRIPTION, (
+        f"description text mismatch.\n"
+        f"Expected start: {EXPECTED_DESCRIPTION[:100]!r}\n"
+        f"Actual   start: {result[:100]!r}"
+    )
+
+
+def test_parse_description_returns_none_for_unrelated_element() -> None:
+    """The parser returns `None` for elements without the description markup."""
+    # Build a small unrelated fragment — no description element here
+    fragment = "<div><span>Some random content</span></div>"
+    result = parse_description(fragment)
+    assert result is None, "unrelated element should not match the description selector"
+
+
+def test_parse_description_handles_empty_markup() -> None:
+    """The parser returns `None` when the markup element is empty."""
+    fragment = '<div class="show-more-less-html__markup"></div>'
+    result = parse_description(fragment)
+    assert result is None, "empty markup should return None (not empty string)"
