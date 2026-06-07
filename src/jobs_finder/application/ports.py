@@ -5,6 +5,14 @@ source (LinkedIn, Indeed, InfoJobs, ...) and with any TTL cache
 Spec: REQ-008 (search port), REQ-C-001 (cache port), REQ-C-005
 (per-source key isolation), REQ-RL-001 (rate-limit port), REQ-RL-004
 (NoOp pre-condition).
+
+The `ai-chat-filter` change (T-010) adds `LLMClientPort` to this
+module — the application's seam to any LLM provider. The
+infrastructure layer implements it (e.g. `MiniMaxLLMClient`);
+the use case depends on the Protocol only, never on the concrete
+client. A `FakeLLMClient` in the test layer satisfies the Protocol
+structurally so the use case can be unit-tested without invoking
+a real LLM.
 """
 
 from __future__ import annotations
@@ -140,6 +148,73 @@ class RateLimitPort(Protocol):
         decremented the bucket (or is a no-op for `NoOpRateLimiter`).
         On `allowed=False`, the bucket state is unchanged and
         `retry_after` is the seconds-until-enough-tokens.
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
+# LLM client (REQ-LLM-001, `ai-chat-filter` change T-010)
+#
+# `LLMClientPort` is the application layer's seam for "any LLM
+# provider that can complete a chat-completion-style request". The
+# concrete implementation lives in `infrastructure/llm/_client.py`
+# (added in T-011) and conforms to the Protocol structurally — no
+# explicit base-class inheritance is required.
+#
+# The Protocol is NOT `@runtime_checkable`. Structural conformance
+# is enforced by mypy --strict at type-check time; the test layer
+# uses a `FakeLLMClient` (or any class with a matching
+# `async def complete(*, system, user) -> str` method) and the
+# Protocol never runs `isinstance(...)` checks. This keeps the
+# runtime cost zero and matches the existing pattern used by
+# `JobSearchPort`, `CachePort`, and `RateLimitPort` in this file.
+#
+# The `system` and `user` parameters are keyword-only (the `*`)
+# so the call site reads `llm.complete(system=..., user=...)` —
+# the LLM API has exactly two message roles, and the order is
+# semantically meaningful (system first, user second). A
+# positional call would obscure that.
+#
+# The return type is `str` — the raw `choices[0].message.content`
+# from the OpenAI-compatible response. The use case (T-013) feeds
+# this string into the defensive parser (T-008); the parser
+# tolerates markdown fences, trailing prose, and other model quirks.
+# ---------------------------------------------------------------------------
+
+
+class LLMClientPort(Protocol):
+    """An LLM provider. Implementations live in `infrastructure/llm/`.
+
+    Spec: REQ-LLM-001 — the use case depends on this Protocol; the
+    concrete client is injected at composition-root time. A
+    `FakeLLMClient` with the right method signature satisfies the
+    Protocol structurally (mypy --strict enforces this at
+    type-check time).
+    """
+
+    async def complete(self, *, system: str, user: str) -> str:
+        """Complete a chat-completion request with a system + user message pair.
+
+        Args:
+            system: The system prompt (Spanish intent-filter rules,
+                per REQ-LLM-004). Pre-built by the caller.
+            user: The user message (typically a JSON-serialized
+                intent + jobs list, per `_prompt.build_user_message`).
+
+        Returns:
+            The raw assistant message content as a string. May
+            include markdown fences, trailing prose, or other
+            model quirks — the defensive parser
+            (`infrastructure.llm._parser.parse_llm_response`) is
+            designed to handle them.
+
+        Raises:
+            LLMUnavailableError: on 5xx, timeout, 429, or MiniMax
+                error codes 1002/1013 (after retry exhaustion) and
+                1004/1008/1001 (no retry).
+            LLMResponseParseError: NOT raised here — the parser
+                raises it when the returned content cannot be
+                extracted as a JSON object.
         """
         ...
 
