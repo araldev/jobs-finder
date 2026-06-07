@@ -37,7 +37,7 @@ import json
 from ipaddress import IPv4Network, IPv6Network
 from typing import Literal
 
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # A plausible stealth desktop UA. The exact fingerprint is not load-bearing;
@@ -594,6 +594,91 @@ class Settings(BaseSettings):
         if self.rate_limit_redis_db == -1:
             self.rate_limit_redis_db = self.cache_redis_db
         return self
+
+    # ------------------------------------------------------------------
+    # LLM (chat filter) settings (REQ-CHAT-001, REQ-CHAT-002,
+    # `ai-chat-filter` change T-006)
+    #
+    # The 9 fields below configure the `MiniMaxLLMClient` (T-011) and
+    # the chat filter route (T-014, T-016 — both OUT of this PR).
+    # Each field declares its own `validation_alias` (the same
+    # pattern used by the `indeed_*`, `infojobs_*`, `linkedin_*`
+    # pagination, cache, rate-limit, and aggregator fields above).
+    # The model-level `env_prefix="LINKEDIN_"` does not apply to
+    # these fields because each declares its own alias.
+    #
+    # - `llm_api_key`: `SecretStr | None` — the kill switch. When
+    #   `None`, the chat route is NOT registered. Pydantic's
+    #   `SecretStr` masks the value in `repr()` / `str()` to prevent
+    #   accidental leakage into logs; the actual key is only
+    #   accessible via `.get_secret_value()`. This is a security
+    #   contract — a regression to plain `str` would silently leak
+    #   the key into tracebacks + log lines.
+    # - `llm_base_url`: the OpenAI-compatible chat-completions base.
+    #   Default `"https://api.minimax.io"` (the documented public
+    #   endpoint per `sdd/ai-chat-filter/explore` §4).
+    # - `llm_model`: the model identifier. Default `"MiniMax-M3"`
+    #   (preflight D2 — the ONLY model that actually honors
+    #   `thinking: {"type": "disabled"}`; M2.x cannot disable
+    #   thinking).
+    # - `llm_temperature`: 0.0 by default — the chat filter is a
+    #   deterministic selection, not a creative writing task.
+    # - `llm_max_tokens`: 1024 — large enough for the JSON
+    #   `{"matching_ids": [...], "explanation": "..."}` response
+    #   plus a safety margin.
+    # - `llm_request_timeout_seconds`: 15.0 — the per-request
+    #   timeout for the httpx client.
+    # - `llm_max_message_chars`: 1000 — the chat-message length cap
+    #   enforced by the route (Q2 — 400 explicit reject when the
+    #   user message exceeds this).
+    # - `llm_filter_enabled`: `False` by default (Q3) — the chat
+    #   route is OFF by default. Operators flip the switch via
+    #   `LLM_FILTER_ENABLED=true` + `LLM_API_KEY=<key>` in prod.
+    #   The 2-stage rollout (code merged disabled, ops enables
+    #   later) is the zero-risk path.
+    # - `llm_filter_rate_limit_rpm`: 20 — per-user chat bucket
+    #   (Q3). Matches the existing `RATE_LIMIT_REQUESTS` default
+    #   so the chat bucket has the same per-minute capacity as the
+    #   main bucket.
+    # ------------------------------------------------------------------
+
+    llm_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("LLM_API_KEY", "llm_api_key"),
+    )
+    llm_base_url: str = Field(
+        default="https://api.minimax.io",
+        validation_alias=AliasChoices("LLM_BASE_URL", "llm_base_url"),
+    )
+    llm_model: str = Field(
+        default="MiniMax-M3",
+        validation_alias=AliasChoices("LLM_MODEL", "llm_model"),
+    )
+    llm_temperature: float = Field(
+        default=0.0,
+        validation_alias=AliasChoices("LLM_TEMPERATURE", "llm_temperature"),
+    )
+    llm_max_tokens: int = Field(
+        default=1024,
+        validation_alias=AliasChoices("LLM_MAX_TOKENS", "llm_max_tokens"),
+    )
+    llm_request_timeout_seconds: float = Field(
+        default=15.0,
+        validation_alias=AliasChoices("LLM_REQUEST_TIMEOUT_SECONDS", "llm_request_timeout_seconds"),
+    )
+    llm_max_message_chars: int = Field(
+        default=1000,
+        validation_alias=AliasChoices("LLM_MAX_MESSAGE_CHARS", "llm_max_message_chars"),
+    )
+    llm_filter_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("LLM_FILTER_ENABLED", "llm_filter_enabled"),
+    )
+    llm_filter_rate_limit_rpm: int = Field(
+        default=20,
+        validation_alias=AliasChoices("LLM_FILTER_RATE_LIMIT_RPM", "llm_filter_rate_limit_rpm"),
+        ge=1,
+    )
 
 
 def load_settings() -> Settings:
