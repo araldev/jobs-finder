@@ -20,6 +20,7 @@ from jobs_finder.infrastructure.linkedin.exceptions import LinkedInParseError
 from jobs_finder.infrastructure.linkedin.parsers import (
     is_block_page,
     parse_company,
+    parse_description,
     parse_job_id,
     parse_location,
     parse_posted_at,
@@ -405,3 +406,57 @@ def test_parsers_accept_string_or_tag() -> None:
     assert parse_company(fragment) == "Y"
     assert parse_location(fragment) == "Z"
     assert "linkedin.com/jobs/view/x-at-y-1234567890" in parse_url(fragment)
+
+
+# ---------------------------------------------------------------------------
+# REQ-PARSER-LINKEDIN-001: parse_description (SKELETON — gated on D1)
+#
+# The LinkedIn description parser is a SKELETON in PR1. The
+# selector is TBD pending a sanctioned one-time Playwright
+# capture of `linkedin.com/jobs/search` (AGENTS.md rule #1).
+# The test below is `pytest.mark.skip` until the capture lands;
+# the function exists, returns `None` gracefully, and is
+# importable. The follow-up work unit (T-004b) will:
+#   1. Perform the capture.
+#   2. Update the selector in `parsers.py::_DESCRIPTION_SELECTOR`.
+#   3. Convert the skip below to a real test that pins the
+#      chosen selector's behaviour.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skip(
+    reason=(
+        "LinkedIn description selector pending real-DOM capture "
+        "(AGENTS.md rule #1 — sanctioned one-time Playwright capture). "
+        "Until the capture lands, the function returns None gracefully; "
+        "remove the skip and pin the chosen selector once D1 lands."
+    )
+)
+def test_parse_description_returns_none_until_linkedin_capture_lands() -> None:
+    """The skeleton returns `None` until the LinkedIn description selector is captured.
+
+    Once the sanctioned one-time Playwright capture (AGENTS.md
+    rule #1) lands, this test is un-skipped and asserts that
+    `parse_description(card)` returns the captured description
+    text for a card from the new fixture. Until then, the
+    function returns `None` (the "no description" semantic) so
+    downstream code (`Job.description` defaulting) is correct.
+    """
+    # The current `tests/fixtures/linkedin_search.py` fixture is
+    # a synthetic 3-card capture from 2026-06-02 with no
+    # description element. The skeleton MUST return `None` for
+    # this fixture; once D1 lands with a real capture, the
+    # assertion below changes to pin the captured text.
+    from bs4 import BeautifulSoup  # noqa: PLC0415
+
+    from tests.fixtures.linkedin_search import SEARCH_PAGE_HTML  # noqa: PLC0415
+
+    soup = BeautifulSoup(SEARCH_PAGE_HTML, "html.parser")
+    card = soup.select_one("div[data-entity-urn]")
+    assert card is not None, "fixture must have at least one card"
+    result = parse_description(card)
+    # The skeleton contract: `None` is the "absent" semantic
+    # — the same value a real description parser would return
+    # when the selector is not present. Once D1 lands, this
+    # assertion is replaced with the captured text.
+    assert result is None

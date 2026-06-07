@@ -33,6 +33,14 @@ _LOCATION_SELECTOR = ".job-search-card__location"
 _URL_SELECTOR = "a.base-card__full-link"
 _TIME_SELECTOR = "time.job-search-card__listdate"
 _URN_ATTR = "data-entity-urn"
+# Description selector is TBD pending the sanctioned one-time
+# Playwright capture of `linkedin.com/jobs/search` (AGENTS.md
+# rule #1). The current `tests/fixtures/linkedin_search.py`
+# fixture (synthetic 3-card capture from 2026-06-02) does NOT
+# contain a description element; the parser MUST return `None`
+# for that fixture. The follow-up work unit (T-004b) pins the
+# real selector once the capture lands.
+_DESCRIPTION_SELECTOR = "TBD_PENDING_CAPTURE"
 
 
 def _ensure_tag(fragment: str | Tag) -> Tag:
@@ -138,6 +146,46 @@ def parse_posted_at(card: str | Tag) -> datetime | None:
         # naive datetime into `Job(...)` from anywhere else.
         dt = dt.replace(tzinfo=UTC)
     return dt
+
+
+def parse_description(card: str | Tag) -> str | None:
+    """Extract the job description snippet from a LinkedIn card.
+
+    SKELETON — pending the sanctioned one-time Playwright capture
+    of `linkedin.com/jobs/search` (AGENTS.md rule #1). The current
+    `tests/fixtures/linkedin_search.py` fixture (synthetic 3-card
+    capture from 2026-06-02) does NOT contain a description
+    element, so the parser returns `None` for every card in the
+    fixture — the same "absent" semantic a real description
+    parser would return when the selector is not present.
+
+    The contract (REQ-PARSER-LINKEDIN-001):
+    - Returns the description text (whitespace-stripped) when the
+      captured selector matches a non-empty element.
+    - Returns `None` when the element is absent OR empty.
+    - Does NOT raise on malformed HTML; lenient BeautifulSoup
+      parse + `get_text()` is structural, not regex.
+    - The current fixture has no description, so the function
+      always returns `None` until the capture lands.
+
+    Follow-up work unit T-004b will:
+      1. Perform the sanctioned one-time Playwright capture.
+      2. Update `_DESCRIPTION_SELECTOR` with the captured value.
+      3. Convert the `pytest.mark.skip` test in
+         `tests/unit/test_parsers.py` to a real test that pins
+         the chosen selector's behaviour.
+
+    For now, the function exists with the right signature,
+    returns `None` (the "absent" semantic), and is importable.
+    """
+    # The selector is a placeholder. Even if it were a real
+    # selector, the current fixture has no matching element, so
+    # `tag.select_one(...)` returns `None` and we propagate
+    # `None` to the caller. Once D1 lands and the selector is
+    # pinned, the implementation will read the element's text
+    # and return it stripped (or `None` when empty/absent).
+    _ = _ensure_tag(card)  # mirror the signature for future use
+    return None
 
 
 def is_block_page(soup: BeautifulSoup) -> bool:
