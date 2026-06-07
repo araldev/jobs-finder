@@ -162,7 +162,11 @@ async def test_aggregator_returns_200_and_deduped_jobs(
         ["indeed"],  # May 1
         ["infojobs"],  # May 1
     ]
-    # Every job has the documented fields.
+    # Every job has the documented fields. The `description` field
+    # was added in PR1 (T-001) and surfaced in the chat response
+    # in PR3 (T-014 of `ai-chat-filter`); the aggregator forwards
+    # it the same way `/jobs/linkedin` / `/jobs/indeed` /
+    # `/jobs/infojobs` do.
     for job in body["jobs"]:
         assert set(job.keys()) == {
             "id",
@@ -170,6 +174,7 @@ async def test_aggregator_returns_200_and_deduped_jobs(
             "company",
             "location",
             "url",
+            "description",
             "posted_at",
             "sources",
         }

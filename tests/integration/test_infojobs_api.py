@@ -23,7 +23,15 @@ from fastapi import FastAPI
 from jobs_finder.infrastructure.infojobs.exceptions import InfoJobsBlockedError
 from tests.conftest import FakeJobSearchPort
 
-JOB_FIELDS: set[str] = {"id", "title", "company", "location", "url", "posted_at"}
+JOB_FIELDS: set[str] = {
+    "id",
+    "title",
+    "company",
+    "location",
+    "url",
+    "description",
+    "posted_at",
+}
 
 
 # ---------------------------------------------------------------------------

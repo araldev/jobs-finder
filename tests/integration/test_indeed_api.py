@@ -26,7 +26,15 @@ from jobs_finder.infrastructure.indeed.scraper import _parse_cards
 from tests.conftest import FakeJobSearchPort
 from tests.fixtures.indeed_search import SEARCH_PAGE_HTML
 
-JOB_FIELDS: set[str] = {"id", "title", "company", "location", "url", "posted_at"}
+JOB_FIELDS: set[str] = {
+    "id",
+    "title",
+    "company",
+    "location",
+    "url",
+    "description",
+    "posted_at",
+}
 
 
 # ---------------------------------------------------------------------------

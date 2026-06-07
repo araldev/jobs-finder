@@ -66,10 +66,18 @@ class InfoJobsJobsQuery(BaseModel):
 class JobResponse(BaseModel):
     """One job in the API response.
 
-    Spec: REQ-017, REQ-I-012, REQ-J-005. Exactly the six documented
-    fields, no more, no less. `posted_at` is nullable at the API
-    contract boundary; the `Job` domain object currently requires it,
-    so the conversion is one-way.
+    Spec: REQ-017, REQ-I-012, REQ-J-005. Six documented fields
+    plus an OPTIONAL `description: str | None` (added in the
+    `ai-chat-filter` change so the chat endpoint can return the
+    description the LLM filtered on). `posted_at` is nullable at
+    the API contract boundary; the `Job` domain object currently
+    requires it, so the conversion is one-way.
+
+    The `description` field defaults to `None` so the existing
+    API consumers (`/jobs`, `/jobs/linkedin`, etc.) keep working
+    unchanged: pre-existing tests do NOT need to update because
+    `None` is the Pydantic default. A test pins the backward-
+    compat behavior in `test_chat_route.py`.
     """
 
     id: str
@@ -77,6 +85,7 @@ class JobResponse(BaseModel):
     company: str
     location: str
     url: HttpUrl
+    description: str | None = None
     posted_at: datetime | None = None
 
 
@@ -123,8 +132,19 @@ def to_response(job: Job) -> JobResponse:
     `Job.posted_at` is currently a required `datetime`; the API contract
     types it as `datetime | None`. A non-None `datetime` is a valid
     `datetime | None`, so the conversion is loss-free. Shared by all
-    three route handlers (LinkedIn + Indeed + InfoJobs) — a future
-    refactor can colocate this helper if the duplication bothers.
+    three route handlers (LinkedIn + Indeed + InfoJobs) AND the chat
+    route (T-014 of `ai-chat-filter`) — a future refactor can colocate
+    this helper if the duplication bothers.
+
+    The `description` field is forwarded from `Job.description`
+    (added in T-001 of `ai-chat-filter`, PR1 SUGGESTION #2). The
+    `description` is `None` for sources where the parser did not
+    extract one (e.g. LinkedIn until the D1 real-DOM capture lands).
+    The Pydantic default is also `None`, so a `Job` with
+    `description=None` round-trips to `"description": null` in
+    the JSON response — the chat endpoint's LLM caller can rely
+    on this to distinguish "no description parsed" from "explicitly
+    empty description".
     """
     return JobResponse(
         id=job.id,
@@ -132,6 +152,7 @@ def to_response(job: Job) -> JobResponse:
         company=job.company,
         location=job.location,
         url=HttpUrl(job.url),
+        description=job.description,
         posted_at=job.posted_at,
     )
 
@@ -192,6 +213,12 @@ class AggregatedJobResponse(BaseModel):
     `sources` list is sorted in source-priority order
     (LinkedIn > Indeed > InfoJobs) and is always non-empty
     (a job from 0 sources is impossible by construction).
+
+    The `description` field is forwarded from `Job.description`
+    (PR1 SUGGESTION #2). It is `None` for sources where the
+    parser did not extract one. Mirrors the `JobResponse` field
+    set so the chat endpoint and the `/jobs` endpoint return
+    the same per-job shape (modulo `sources`).
     """
 
     id: str
@@ -199,6 +226,7 @@ class AggregatedJobResponse(BaseModel):
     company: str
     location: str
     url: HttpUrl
+    description: str | None = None
     posted_at: datetime | None = None
     sources: list[_SourceName]
 
@@ -235,3 +263,53 @@ class RateLimitedResponse(BaseModel):
 
     detail: str
     request_id: str
+
+
+# ---------------------------------------------------------------------------
+# Chat filter schemas (REQ-CHAT-001, T-014 of `ai-chat-filter`)
+#
+# The chat endpoint accepts a single `message` field and returns
+# a `ChatResponse` with the filtered jobs, the LLM's Spanish
+# explanation, and the `total_considered` / `total_matched` counts.
+#
+# The `message` field has NO `max_length` constraint at the
+# Pydantic layer — the explicit cap is enforced in the route
+# handler (with a 400 + descriptive `detail`) so the rejection
+# body shape is the route's `HTTPException` shape (not Pydantic's
+# `RequestValidationError` shape). This mirrors the `sources`
+# validation pattern in `aggregator.py:78-106`.
+# ---------------------------------------------------------------------------
+
+
+class ChatRequest(BaseModel):
+    """`POST /jobs/chat` body.
+
+    Spec: REQ-CHAT-001. A single `message` field — the user's
+    natural-language intent. The explicit length cap is enforced
+    in the route handler (with a 400) so the rejection body
+    matches the route's `HTTPException` shape.
+    """
+
+    message: str = Field(..., min_length=1)
+
+
+class ChatResponse(BaseModel):
+    """`POST /jobs/chat` response.
+
+    Spec: REQ-CHAT-001. The body has 4 top-level fields:
+
+      - `jobs`: the filtered `Job` instances in the aggregator's
+        order. Each item is the same `JobResponse` shape used by
+        `/jobs/linkedin` / `/jobs/indeed` / `/jobs/infojobs` so
+        clients can reuse their per-job renderers.
+      - `explanation`: the LLM's Spanish explanation (always
+        present, even when the list is empty — REQ-LLM-004).
+      - `total_considered`: how many jobs the LLM saw (the
+        aggregator's count, before filtering).
+      - `total_matched`: how many jobs made it through the filter.
+    """
+
+    jobs: list[JobResponse]
+    explanation: str
+    total_considered: int
+    total_matched: int

@@ -63,7 +63,15 @@ def _sample(idx: int) -> Job:
     )
 
 
-JOB_FIELDS: set[str] = {"id", "title", "company", "location", "url", "posted_at"}
+JOB_FIELDS: set[str] = {
+    "id",
+    "title",
+    "company",
+    "location",
+    "url",
+    "description",
+    "posted_at",
+}
 
 
 # ---------------------------------------------------------------------------
