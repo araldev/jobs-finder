@@ -40,3 +40,8 @@ htmlcov/
 
 # Agent / tooling
 .atl/
+
+# Local environment files (NEVER commit; use `.env.example` as template)
+.env
+.env.local
+.env.*.local

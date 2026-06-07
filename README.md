@@ -517,13 +517,54 @@ response, and any error logged during processing. Set
 Three ways to start the API, depending on whether you want the
 default in-memory cache, a Redis-backed cache, or no cache at all.
 
+### Environment variables — `.env` workflow
+
+The service reads **46 environment variables** (LinkedIn / Indeed /
+InfoJobs scrapers, cache, rate limiter, aggregator ranking, LLM chat
+filter). The full annotated list lives in **`.env.example`** (committed
+to the repo). Your local overrides go in **`.env`** (gitignored, never
+committed).
+
+**First-time setup**:
+
+```bash
+# 1. Copy the template.
+cp .env.example .env
+
+# 2. Edit the values you want to override. The minimum for the
+#    chat filter to work is LLM_API_KEY (set it) and LLM_FILTER_ENABLED
+#    (set to `true` to register the /jobs/chat route).
+$EDITOR .env
+
+# 3. Start the API. pydantic-settings reads `.env` automatically
+#    (see SettingsConfigDict in src/jobs_finder/infrastructure/config.py).
+uv run uvicorn jobs_finder.main:app --port 8000
+```
+
+**Precedence** (standard pydantic-settings order):
+
+1. **Shell env vars** — `export LLM_API_KEY=sk-...` wins over everything
+2. **`.env` file** — your local overrides
+3. **Code defaults** in `src/jobs_finder/infrastructure/config.py::Settings`
+
+So you can keep `.env` minimal (just `LLM_API_KEY=` and the overrides
+you actively tweak) and use shell exports for one-off experiments.
+
+**Per-source / per-feature env-var tables** appear in the relevant
+sections below (Caching, Rate limiting, Aggregator, AI Chat Filter).
+Use those for context on what each var does — `.env.example` is the
+canonical template.
+
 ### Default: in-memory cache
 
 ```bash
 # 1. Install dependencies into a project-local virtualenv
 uv sync
 
-# 2. Start the API. The default CACHE_BACKEND=memory uses
+# 2. (Optional) copy the env template and edit values.
+cp .env.example .env
+
+# 3. Start the API. The default CACHE_BACKEND=memory uses
 #    InMemoryTTLCache (60s TTL, per-process, no external deps).
 uv run uvicorn jobs_finder.main:app --port 8000
 ```

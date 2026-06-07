@@ -90,6 +90,12 @@ class Settings(BaseSettings):
         env_prefix="LINKEDIN_",
         case_sensitive=False,
         extra="ignore",
+        # Load from a local `.env` file (gitignored) on top of the
+        # process environment. Shell env vars take precedence over
+        # `.env` entries (pydantic-settings standard precedence). The
+        # template lives at `.env.example` (committed, no secrets).
+        env_file=".env",
+        env_file_encoding="utf-8",
     )
 
     throttle_seconds: float = 3.0
