@@ -55,6 +55,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from types import MappingProxyType
 
+import httpx
 import redis.asyncio as redis_async
 import redis.exceptions
 from fastapi import FastAPI
@@ -64,6 +65,9 @@ from playwright_stealth import Stealth  # type: ignore[import-untyped]
 from jobs_finder.application.aggregator import SearchAllSourcesUseCase
 from jobs_finder.application.ports import RateLimitPort
 from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase
+from jobs_finder.application.usecases.filter_jobs_by_intent import (
+    FilterJobsByIntentUseCase,
+)
 from jobs_finder.application.usecases.search_indeed_jobs import (
     RawSearchJobsUseCase as RawIndeedJobsUseCase,
 )
@@ -97,17 +101,20 @@ from jobs_finder.infrastructure.linkedin.scraper import (
     LinkedInScraperSettings,
 )
 from jobs_finder.infrastructure.linkedin.throttle import AsyncThrottle
+from jobs_finder.infrastructure.llm._factory import build_minimax_llm_client
 from jobs_finder.infrastructure.rate_limit._factory import build_rate_limiter
 from jobs_finder.presentation.exception_handlers import (
     register_exception_handlers,
 )
 from jobs_finder.presentation.logging_config import configure_logging
 from jobs_finder.presentation.middleware import (
+    ChatRateLimitMiddleware,
     LogOnRequestMiddleware,
     RateLimitMiddleware,
     RequestIdMiddleware,
 )
 from jobs_finder.presentation.routes import aggregator as aggregator_routes
+from jobs_finder.presentation.routes import chat as chat_routes
 from jobs_finder.presentation.routes import health as health_routes
 from jobs_finder.presentation.routes import indeed as indeed_routes
 from jobs_finder.presentation.routes import infojobs as infojobs_routes
@@ -176,6 +183,36 @@ def build_app(  # noqa: PLR0915
             effective_settings.cache_redis_url,
             db=effective_settings.cache_redis_db,
         )
+
+    # T-016 (chat filter wiring): the chat filter is OFF by
+    # default (Q3 — 2-stage rollout: code merged disabled, ops
+    # enables in prod via `LLM_FILTER_ENABLED=true` +
+    # `LLM_API_KEY=<key>`). The 3 conditions that gate the
+    # chat feature:
+    #   1. `llm_filter_enabled=True` (operator enables the
+    #      feature flag).
+    #   2. `llm_api_key is not None` (the LLM provider key is
+    #      set — without it, the route would 502 on every call).
+    #   3. (Implicit: the chat route is registered below in
+    #      the routers section.)
+    # When OFF, the chat route is NOT registered (404), the
+    # chat middleware is NOT mounted, the use case is NOT
+    # built, and the LLM client is NOT built. The `httpx`
+    # client lifetime is managed in the lifespan's `finally`
+    # block (mirror the Redis client pattern).
+    chat_enabled: bool = (
+        effective_settings.llm_filter_enabled and effective_settings.llm_api_key is not None
+    )
+    llm_http_client: httpx.AsyncClient | None = None
+    if chat_enabled:
+        # Build the shared httpx client (design §11 #1 —
+        # connection pooling across requests). The
+        # `MiniMaxLLMClient` is ctor-injected with this
+        # client; on `aclose()` (in the lifespan's
+        # `finally`), the client is closed. The timeout
+        # comes from the LLM-specific setting (NOT the
+        # per-source request timeout).
+        llm_http_client = httpx.AsyncClient(timeout=effective_settings.llm_request_timeout_seconds)
 
     if use_case is None:
         scraper = LinkedInPlaywrightScraper(
@@ -389,6 +426,17 @@ def build_app(  # noqa: PLR0915
             # doesn't delay the LIFO scraper-shutdown order.
             if redis_client is not None:
                 await redis_client.aclose()
+            # T-016 (chat filter wiring): close the shared
+            # `httpx.AsyncClient` (built above when chat is
+            # enabled) on shutdown. The client is the one
+            # passed to `build_minimax_llm_client` via the
+            # `http_client` kwarg; closing it here is the
+            # documented shutdown hook (the `MiniMaxLLMClient`
+            # uses it but does NOT own it — `aclose()` on the
+            # LLM client would be a no-op for an injected
+            # client, per T-012 deviation #5).
+            if llm_http_client is not None:
+                await llm_http_client.aclose()
             # T-003 (rate-limiting): close the rate-limiter Redis
             # client on shutdown. The factory constructs a separate
             # client when `RATE_LIMIT_BACKEND="redis"` and the
@@ -469,6 +517,25 @@ def build_app(  # noqa: PLR0915
         )
     app.state.aggregator_use_case = aggregator_use_case
 
+    # T-016 (chat filter wiring): build the LLM client + the
+    # chat-filter use case ONLY when the chat feature is enabled
+    # (the `chat_enabled` flag computed above). The factory
+    # `build_minimax_llm_client` raises `ValueError` on a
+    # missing key as a defense-in-depth check; the conditional
+    # registration above is the primary gate.
+    chat_use_case: FilterJobsByIntentUseCase | None = None
+    if chat_enabled:
+        llm_client = build_minimax_llm_client(effective_settings, http_client=llm_http_client)
+        chat_use_case = FilterJobsByIntentUseCase(
+            aggregator=aggregator_use_case,
+            llm=llm_client,
+        )
+    # Expose the use case on `app.state` regardless of the
+    # flag (a future caller that constructs the use case
+    # externally can still find it; the route itself is
+    # registered conditionally below).
+    app.state.filter_use_case = chat_use_case
+
     # Middleware — order matters. Starlette runs middlewares outermost
     # first; the LAST `add_middleware` call wraps everything else.
     # 1. `LogOnRequest` is innermost: it runs inside `RequestId` so
@@ -525,6 +592,27 @@ def build_app(  # noqa: PLR0915
             # (security default — `X-Forwarded-For` ignored).
             trusted_proxies=effective_settings.rate_limit_trusted_proxies,
         )
+    # T-016 (chat filter wiring): mount the `ChatRateLimitMiddleware`
+    # AFTER the main `RateLimitMiddleware` in code (so it runs
+    # OUTSIDE the main rate limit at request time — the main
+    # rate limit is checked first; if it allows, the chat limit
+    # is checked next) and BEFORE `RequestIdMiddleware` in code
+    # (so it runs AFTER RequestId at request time — the 429
+    # body reads `request.state.request_id` set by RequestId).
+    # The middleware is mounted ONLY when the chat feature is
+    # enabled (mirrors the chat route's conditional registration
+    # — no chat route means no chat bucket).
+    if chat_use_case is not None:
+        app.add_middleware(
+            ChatRateLimitMiddleware,
+            # Reuse the same `RateLimitPort` instance the main
+            # middleware uses. The `chat:` key prefix isolates
+            # the chat bucket from the main bucket (the same
+            # `RateLimitPort` instance, different key namespace).
+            rate_limiter=rate_limiter,
+            max_per_minute=effective_settings.llm_filter_rate_limit_rpm,
+            trusted_proxies=effective_settings.rate_limit_trusted_proxies,
+        )
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(
         CORSMiddleware,
@@ -545,5 +633,18 @@ def build_app(  # noqa: PLR0915
     # `GET /jobs` aggregator. Mounted LAST so its `/{source}`-less
     # path is not shadowed by the per-source routers.
     app.include_router(aggregator_routes.router)
+    # T-016 (chat filter wiring): the chat route is registered
+    # ONLY when the chat feature is enabled. When disabled,
+    # `POST /jobs/chat` returns 404 (the safest default per
+    # design §2 — operators get a clear "this feature is off"
+    # signal in logs). The chat router is mounted LAST so it
+    # does not shadow any per-source route.
+    if chat_use_case is not None:
+        app.include_router(
+            chat_routes.build_chat_router(
+                use_case=chat_use_case,
+                max_message_chars=effective_settings.llm_max_message_chars,
+            )
+        )
 
     return app
