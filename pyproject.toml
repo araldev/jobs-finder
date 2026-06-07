@@ -99,6 +99,16 @@ ignore = [
 "tests/**" = ["PLR2004", "S101"]  # magic numbers, asserts are fine in tests
 "tests/fixtures/**" = ["E501"]  # raw captured HTML has long lines
 "tests/unit/test_infojobs_parsers.py" = ["E501"]  # raw HTML fixtures with long InfoJobs class names
+# The LLM client's complete() method has many branches + statements by
+# necessity: the selective retry policy distinguishes 5 failure modes
+# (401/403, 429, 5xx, transient MiniMax codes, permanent MiniMax codes)
+# and each needs its own error-mapping + retry decision. The
+# alternative (extracting per-mode helpers) would scatter the policy
+# across 5 small functions and make the retry contract harder to
+# audit. The `cause=...` field on the exception is the documented
+# chaining mechanism, so B904 is also silenced (we use `cause=`,
+# not `raise ... from err`).
+"src/jobs_finder/infrastructure/llm/_client.py" = ["PLR0912", "PLR0915", "B904", "PLR2004"]
 
 [tool.ruff.format]
 quote-style = "double"
