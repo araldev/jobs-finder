@@ -164,11 +164,19 @@ def build_chat_router(
         #    response is a NEW `ChatResponse` schema — the
         #    client gets the LLM's `explanation` + the
         #    `total_considered` / `total_matched` counts.
+        # The `used_fallback` flag (NEW in `chat-filter-2stage`,
+        # REQ-CHAT-INT-004) tells the client whether the
+        # 2-stage path ran (`False`) or the v1 single-stage
+        # fallback ran (`True`). The use case's
+        # `FilteredJobsResult.used_fallback` is `True` by
+        # default (safe v1 behavior); the route forwards
+        # whatever the use case set.
         return ChatResponse(
             jobs=[to_response(j) for j in result.jobs],
             explanation=result.explanation,
             total_considered=result.total_considered,
             total_matched=result.total_matched,
+            used_fallback=result.used_fallback,
         )
 
     return router

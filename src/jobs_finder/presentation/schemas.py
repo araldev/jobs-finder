@@ -296,7 +296,8 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     """`POST /jobs/chat` response.
 
-    Spec: REQ-CHAT-001. The body has 4 top-level fields:
+    Spec: REQ-CHAT-001, REQ-CHAT-INT-004 (`chat-filter-2stage`).
+    The body has 5 top-level fields:
 
       - `jobs`: the filtered `Job` instances in the aggregator's
         order. Each item is the same `JobResponse` shape used by
@@ -307,9 +308,21 @@ class ChatResponse(BaseModel):
       - `total_considered`: how many jobs the LLM saw (the
         aggregator's count, before filtering).
       - `total_matched`: how many jobs made it through the filter.
+      - `used_fallback`: `True` when the v1 single-stage path
+        served the request (low confidence, stage-1 parse
+        failure, `intent_extraction_enabled=False`, or no
+        `intent_extractor` injected). `False` when the 2-stage
+        path ran. Default `False` keeps the contract
+        backward-compatible with the v1 `ChatResponse` (the
+        field is new in the `chat-filter-2stage` change;
+        pre-existing clients that ignore unknown fields are
+        unaffected). The Pydantic `bool` type rejects
+        non-booleans (defensive — the use case's
+        `FilteredJobsResult.used_fallback` is `bool`).
     """
 
     jobs: list[JobResponse]
     explanation: str
     total_considered: int
     total_matched: int
+    used_fallback: bool = False
