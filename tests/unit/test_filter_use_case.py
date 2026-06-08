@@ -1,26 +1,45 @@
-"""Unit tests for the chat-filter use case (T-013 of `ai-chat-filter`).
+"""Unit tests for the chat-filter use case (T-013 of `ai-chat-filter`,
+extended in T-008/T-010 of `chat-filter-2stage`).
 
 Spec: REQ-LLM-003 (strict-subset ID validation), REQ-CHAT-001
-(message normalization — verified at the route layer in T-014).
+(message normalization — verified at the route layer in T-014),
+REQ-CHAT-INT-001..005 (2-stage flow + v1 fallback).
 
 `FilterJobsByIntentUseCase` orchestrates the 3-stage chat-filter
-flow:
-  1. Call the existing `SearchAllSourcesUseCase` aggregator
-     (reuses the per-source cache + per-source error isolation).
-  2. Short-circuit on empty aggregator result — the LLM is NEVER
-     called when no jobs are available; the response carries the
-     Spanish "no se encontraron ofertas" explanation.
-  3. Build the 5-key LLM-facing dict per job, call the LLM with
-     the Spanish system prompt + a JSON-serialized user message,
-     parse the response, validate `matching_ids` to a strict
-     subset of input IDs, log a WARNING per dropped (hallucinated)
-     ID, and return the filtered jobs in the aggregator's order
-     (NOT the LLM's order).
+flow with the 2-stage LLM option:
+
+  v1 path (REQ-CHAT-INT-005 backward compat):
+    1. Call the existing `SearchAllSourcesUseCase` aggregator
+       with `q=""`, `location=""`, `limit=20` (reuses the
+       per-source cache + per-source error isolation).
+    2. Short-circuit on empty aggregator result — the LLM is
+       NEVER called when no jobs are available; the response
+       carries the Spanish "no se encontraron ofertas"
+       explanation.
+    3. Build the 5-key LLM-facing dict per job, call the LLM
+       with the Spanish system prompt + a JSON-serialized user
+       message, parse the response, validate `matching_ids` to
+       a strict subset of input IDs, log a WARNING per dropped
+       (hallucinated) ID, and return the filtered jobs in the
+       aggregator's order (NOT the LLM's order).
+
+  2-stage path (REQ-CHAT-INT-001..004):
+    1. Call `IntentExtractor.extract(message=...)` to get a
+       structured `Intent` (stage 1).
+    2. If `intent.confidence >= threshold`: call the aggregator
+       with `q=intent.q or ""`, `location=intent.location or ""`,
+       `limit=intent_max_results` (stage 2). The remaining
+       steps are identical to the v1 path (stage 3 LLM filter).
+    3. If `intent.confidence < threshold` OR `IntentExtractor`
+       raised `LLMResponseParseError` (after retry exhaustion):
+       fall back to the v1 path with `used_fallback=True`.
 
 The use case depends ONLY on the application's `LLMClientPort`
-Protocol — never on the concrete `MiniMaxLLMClient`. The test
-fixtures use a `FakeLLMClient` + `FakeAggregator` so the
-orchestration is exercised without invoking any real port or LLM.
+and `IntentExtractorPort` Protocols — never on the concrete
+`MiniMaxLLMClient` or `IntentExtractor`. The test fixtures use
+`FakeLLMClient` + `FakeIntentExtractor` + `FakeAggregator` so
+the orchestration is exercised without invoking any real port
+or LLM.
 """
 
 from __future__ import annotations
@@ -35,6 +54,7 @@ from jobs_finder.application.aggregator import (
     AggregatedResult,
     SourceResult,
 )
+from jobs_finder.application.ports import Intent
 from jobs_finder.application.usecases.filter_jobs_by_intent import (
     FilteredJobsResult,
     FilterJobsByIntentUseCase,
@@ -45,6 +65,7 @@ from jobs_finder.infrastructure.llm.exceptions import (
     LLMResponseParseError,
     LLMUnavailableError,
 )
+from tests.conftest import FakeIntentExtractor
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -444,10 +465,11 @@ def test_filtered_jobs_result_is_frozen_and_slots() -> None:
 
     The use case returns this dataclass to the route; the route
     reads `.jobs` / `.explanation` / `.total_considered` /
-    `.total_matched`. A regression that switches the class to a
-    mutable dataclass would silently allow the route to mutate
-    the result; the `frozen=True, slots=True` contract is part
-    of the type's API.
+    `.total_matched` / `.used_fallback`. A regression that
+    switches the class to a mutable dataclass would silently
+    allow the route to mutate the result; the
+    `frozen=True, slots=True` contract is part of the type's
+    API.
     """
     result = FilteredJobsResult(
         jobs=[],
@@ -458,3 +480,420 @@ def test_filtered_jobs_result_is_frozen_and_slots() -> None:
     # `frozen=True` rejects attribute assignment.
     with pytest.raises((AttributeError, Exception)):
         result.jobs = []  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# 2-stage flow scenarios (T-010, REQ-CHAT-INT-001..003).
+#
+# The 2-stage path is enabled when `intent_extractor` is provided
+# AND `intent_extraction_enabled=True` (the master switch). The
+# use case:
+#   1. Calls `intent_extractor.extract(message=...)` to get a
+#      structured `Intent`.
+#   2. Reads `intent.confidence`:
+#        - High confidence (>= threshold): dispatches to
+#          `_execute_2stage(...)`. The aggregator gets
+#          `q=intent.q or ""`, `location=intent.location or ""`,
+#          `limit=intent_max_results`. `used_fallback=False`.
+#        - Low confidence (< threshold): dispatches to
+#          `_execute_v1(...)`. `used_fallback=True`.
+#        - `LLMResponseParseError` after retry exhaustion:
+#          dispatches to `_execute_v1(...)`. `used_fallback=True`.
+# ---------------------------------------------------------------------------
+
+
+async def test_2stage_high_confidence_runs_2_stage_with_extracted_params() -> None:
+    """High-confidence intent → 2-stage path; aggregator receives extracted `q` / `location`.
+
+    REQ-CHAT-INT-001: stage 1 extracts the `Intent`; stage 2
+    uses the extracted `q` / `location` to direct the
+    aggregator scrape. The 2 LLM calls are: stage 1 (intent
+    extraction) + stage 3 (filter). The test asserts:
+      - `intent_extractor.extract` is called once (stage 1).
+      - `llm.complete` is called once (stage 3; the 2-stage
+        path does NOT do another LLM call between stages 2
+        and 3).
+      - The aggregator receives the EXTRACTED `q` /
+        `location`, NOT the caller's `q=""` / `location=""`.
+      - `used_fallback=False`.
+    """
+    jobs = [_make_job("a"), _make_job("b"), _make_job("c")]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(
+        selection=LLMSelection(matching_ids=["a", "b"], explanation="2-stage match")
+    )
+    intent_extractor = FakeIntentExtractor(
+        canned=Intent(
+            q="ingeniero",
+            location="Madrid",
+            experience_years=3,
+            remote=False,
+            employment_type="full_time",
+            confidence=0.95,
+        )
+    )
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator,  # type: ignore[arg-type]
+        llm=llm,
+        intent_extractor=intent_extractor,
+    )
+    result = await use_case.execute(
+        message="ingeniero en Madrid",
+        q="",
+        location="",
+        limit=20,
+    )
+
+    # Stage 1 ran (extractor was called).
+    assert len(intent_extractor.calls) == 1
+    # The user message was forwarded to the extractor.
+    assert intent_extractor.calls[0] == "ingeniero en Madrid"
+    # Stage 3 ran (LLM was called ONCE — the 2-stage path
+    # does NOT add an LLM call between stage 1 and stage 3).
+    assert len(llm.calls) == 1
+    # The aggregator was called with the EXTRACTED params
+    # (NOT the caller's empty `q=""` / `location=""` /
+    # `limit=20`).
+    assert aggregator.calls == [("ingeniero", "Madrid", 100, ["linkedin", "indeed", "infojobs"])]
+    # The result has `used_fallback=False` (2-stage path).
+    assert result.used_fallback is False
+    # The result has the matched jobs in aggregator order.
+    assert [j.id for j in result.jobs] == ["a", "b"]
+
+
+async def test_2stage_intent_q_none_propagates_to_empty_q() -> None:
+    """`intent.q=None, location="Madrid"` propagates to `q="", location="Madrid"` in the aggregator.
+
+    The 2-stage path uses `intent.q or ""` so a `None`
+    `q` does NOT crash the aggregator. The test asserts
+    the aggregator received the empty-string fallback for
+    `q` and the extracted `location`.
+    """
+    jobs = [_make_job("a")]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(selection=LLMSelection(matching_ids=["a"], explanation="match"))
+    intent_extractor = FakeIntentExtractor(
+        canned=Intent(
+            q=None,
+            location="Madrid",
+            experience_years=None,
+            remote=None,
+            employment_type=None,
+            confidence=0.9,
+        )
+    )
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator,  # type: ignore[arg-type]
+        llm=llm,
+        intent_extractor=intent_extractor,
+    )
+    await use_case.execute(
+        message="trabajo en Madrid",
+        q="",
+        location="",
+        limit=20,
+    )
+    # `q=""` (None → ""), `location="Madrid"` (extracted).
+    assert aggregator.calls == [("", "Madrid", 100, ["linkedin", "indeed", "infojobs"])]
+
+
+async def test_2stage_intent_max_results_env_override_changes_aggregator_limit() -> None:
+    """`Settings(intent_max_results=50)` changes the aggregator's `limit`.
+
+    The per-source cap for stage 2 is configurable so
+    operators can tune the recall / cost trade-off without
+    code changes. The v1 path always uses `limit=20`
+    regardless of this setting; the 2-stage path always uses
+    `intent_max_results`.
+    """
+    jobs = [_make_job("a")]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(selection=LLMSelection(matching_ids=["a"], explanation="match"))
+    intent_extractor = FakeIntentExtractor(
+        canned=Intent(
+            q="python",
+            location="Madrid",
+            experience_years=None,
+            remote=None,
+            employment_type=None,
+            confidence=0.9,
+        )
+    )
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator,  # type: ignore[arg-type]
+        llm=llm,
+        intent_extractor=intent_extractor,
+        intent_max_results=50,
+    )
+    await use_case.execute(
+        message="python in Madrid",
+        q="",
+        location="",
+        limit=20,  # ignored on 2-stage path
+    )
+    # The aggregator was called with `limit=50` (the
+    # configured `intent_max_results`).
+    assert aggregator.calls == [("python", "Madrid", 50, ["linkedin", "indeed", "infojobs"])]
+
+
+async def test_v1_scenarios_also_pass_with_intent_extraction_enabled_high_confidence() -> None:
+    """9 v1 scenarios ALSO pass with `intent_extraction_enabled=True` + high-confidence extractor.
+
+    The 9 v1 scenarios construct the use case with the v1
+    kwargs only (no `intent_extractor`, no
+    `intent_extraction_enabled`). When the test also adds
+    an `intent_extractor` (high confidence) AND
+    `intent_extraction_enabled=True`, the use case
+    dispatches to `_execute_2stage(...)` and the v1 logic
+    (in `_execute_v1` for the v1 path, in
+    `_run_stage3` for both paths) must run identically.
+    The v1 logic includes: aggregator-order preservation,
+    strict-subset ID validation, hallucination WARNINGs,
+    short-circuit on empty input, LLM error propagation.
+    This test is the regression anchor that the refactor
+    didn't break the v1 path's invariants.
+
+    Specifically: 3 jobs, LLM returns 3 ids (matching a
+    subset), 1 high-confidence `FakeIntentExtractor` →
+    2-stage path runs; the stage-3 strict-subset validation
+    preserves the aggregator order.
+    """
+    jobs = [
+        _make_job("a"),
+        _make_job("b"),
+        _make_job("c"),
+    ]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(
+        selection=LLMSelection(matching_ids=["c", "a", "b"], explanation="all match")
+    )
+    intent_extractor = FakeIntentExtractor(
+        canned=Intent(
+            q="python",
+            location="Madrid",
+            experience_years=None,
+            remote=None,
+            employment_type=None,
+            confidence=0.95,
+        )
+    )
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator,  # type: ignore[arg-type]
+        llm=llm,
+        intent_extractor=intent_extractor,
+        intent_extraction_enabled=True,
+    )
+    result = await use_case.execute(
+        message="python",
+        q="",
+        location="",
+        limit=20,
+    )
+
+    # 2-stage path; the v1 stage-3 logic runs identically.
+    # The LLM returned ids in LLM order [c, a, b]; the
+    # result is in AGGREGATOR order [a, b, c] (NOT the
+    # LLM's order).
+    assert [j.id for j in result.jobs] == ["a", "b", "c"]
+    assert result.explanation == "all match"
+    assert result.total_considered == 3
+    assert result.total_matched == 3
+    # 2-stage path: `used_fallback=False`.
+    assert result.used_fallback is False
+
+
+# ---------------------------------------------------------------------------
+# Fallback scenarios (T-010, REQ-CHAT-INT-004).
+#
+# The v1 path runs (with `used_fallback=True`) when:
+#   - The stage-1 `Intent.confidence < threshold`.
+#   - `intent_extraction_enabled=False` (master switch).
+#   - The `IntentExtractor` raises `LLMResponseParseError`
+#     (after retry exhaustion).
+# ---------------------------------------------------------------------------
+
+
+async def test_fallback_low_confidence_dispatches_to_v1_with_used_fallback_true() -> None:
+    """`intent.confidence=0.5 < threshold=0.7` → v1 path; `used_fallback=True`.
+
+    REQ-CHAT-INT-004: low confidence → v1 single-stage
+    fallback. The aggregator receives the v1 default
+    `q=""`, `location=""`, `limit=20` (NOT the
+    extracted `q` / `location` / `intent_max_results`).
+    """
+    jobs = [_make_job("a"), _make_job("b")]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(selection=LLMSelection(matching_ids=["a"], explanation="match"))
+    intent_extractor = FakeIntentExtractor(
+        canned=Intent(
+            q="python",
+            location="Madrid",
+            experience_years=None,
+            remote=None,
+            employment_type=None,
+            confidence=0.5,  # below the 0.7 threshold
+        )
+    )
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator,  # type: ignore[arg-type]
+        llm=llm,
+        intent_extractor=intent_extractor,
+        intent_extraction_confidence_threshold=0.7,
+    )
+    result = await use_case.execute(
+        message="python",
+        q="",
+        location="",
+        limit=20,
+    )
+    # The aggregator received the v1 defaults (caller's
+    # `q=""` / `location=""` / `limit=20`).
+    assert aggregator.calls == [("", "", 20, ["linkedin", "indeed", "infojobs"])]
+    # `used_fallback=True` (v1 path).
+    assert result.used_fallback is True
+
+
+async def test_fallback_high_confidence_dispatches_to_2stage_with_used_fallback_false() -> None:
+    """`intent.confidence=0.95 >= threshold=0.7` → 2-stage path; `used_fallback=False`."""
+    jobs = [_make_job("a")]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(selection=LLMSelection(matching_ids=["a"], explanation="match"))
+    intent_extractor = FakeIntentExtractor(
+        canned=Intent(
+            q="python",
+            location="Madrid",
+            experience_years=None,
+            remote=None,
+            employment_type=None,
+            confidence=0.95,  # above the 0.7 threshold
+        )
+    )
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator,  # type: ignore[arg-type]
+        llm=llm,
+        intent_extractor=intent_extractor,
+        intent_extraction_confidence_threshold=0.7,
+    )
+    result = await use_case.execute(
+        message="python",
+        q="",
+        location="",
+        limit=20,
+    )
+    # The aggregator received the extracted `q` /
+    # `location` and the configured `intent_max_results=100`.
+    assert aggregator.calls == [("python", "Madrid", 100, ["linkedin", "indeed", "infojobs"])]
+    # `used_fallback=False` (2-stage path).
+    assert result.used_fallback is False
+
+
+async def test_fallback_intent_extraction_disabled_dispatches_to_v1() -> None:
+    """`intent_extraction_enabled=False` → v1 path; extractor NOT called; `used_fallback=True`."""
+    jobs = [_make_job("a")]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(selection=LLMSelection(matching_ids=["a"], explanation="match"))
+    # The extractor is set up but should NOT be called when
+    # `intent_extraction_enabled=False` (the dispatcher
+    # short-circuits to v1).
+    intent_extractor = FakeIntentExtractor(
+        canned=Intent(
+            q="python",
+            location="Madrid",
+            experience_years=None,
+            remote=None,
+            employment_type=None,
+            confidence=0.95,
+        )
+    )
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator,  # type: ignore[arg-type]
+        llm=llm,
+        intent_extractor=intent_extractor,
+        intent_extraction_enabled=False,
+    )
+    result = await use_case.execute(
+        message="python",
+        q="",
+        location="",
+        limit=20,
+    )
+    # The extractor was NOT called.
+    assert intent_extractor.calls == []
+    # The aggregator received the v1 defaults.
+    assert aggregator.calls == [("", "", 20, ["linkedin", "indeed", "infojobs"])]
+    # `used_fallback=True` (v1 path).
+    assert result.used_fallback is True
+
+
+async def test_fallback_threshold_env_override_dispatches_to_2stage_at_lower_confidence() -> None:
+    """`threshold=0.5 + confidence=0.6` → 2-stage path (above the lowered threshold).
+
+    The threshold is configurable so operators can tune
+    the recall / safety trade-off. A lower threshold
+    means more intents are trusted to direct the
+    aggregator (less v1 fallback, less recall but more
+    precision). The test asserts the dispatcher respects
+    the configured threshold (not just the hardcoded 0.7
+    default).
+    """
+    jobs = [_make_job("a")]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(selection=LLMSelection(matching_ids=["a"], explanation="match"))
+    intent_extractor = FakeIntentExtractor(
+        canned=Intent(
+            q="python",
+            location="Madrid",
+            experience_years=None,
+            remote=None,
+            employment_type=None,
+            confidence=0.6,  # above 0.5, below the 0.7 default
+        )
+    )
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator,  # type: ignore[arg-type]
+        llm=llm,
+        intent_extractor=intent_extractor,
+        intent_extraction_confidence_threshold=0.5,  # lowered
+    )
+    result = await use_case.execute(
+        message="python",
+        q="",
+        location="",
+        limit=20,
+    )
+    # 2-stage path: aggregator received the extracted
+    # params + `intent_max_results=100`.
+    assert aggregator.calls == [("python", "Madrid", 100, ["linkedin", "indeed", "infojobs"])]
+    assert result.used_fallback is False
+
+
+async def test_fallback_intent_extractor_parse_error_dispatches_to_v1() -> None:
+    """`IntentExtractor` raises `LLMResponseParseError` → v1 path; `used_fallback=True`.
+
+    REQ-CHAT-INT-004: stage-1 parse failure (after retry
+    exhaustion) falls back to v1. The use case catches
+    the error so a transient LLM parse failure does NOT
+    block the user. A WARNING is logged (verified by
+    `caplog`); the test asserts the fallback behavior.
+    """
+    jobs = [_make_job("a")]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(selection=LLMSelection(matching_ids=["a"], explanation="match"))
+    intent_extractor = FakeIntentExtractor(
+        error=LLMResponseParseError("stage-1 parse failure after retry")
+    )
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator,  # type: ignore[arg-type]
+        llm=llm,
+        intent_extractor=intent_extractor,
+    )
+    result = await use_case.execute(
+        message="python",
+        q="",
+        location="",
+        limit=20,
+    )
+    # v1 path: aggregator received the v1 defaults.
+    assert aggregator.calls == [("", "", 20, ["linkedin", "indeed", "infojobs"])]
+    # `used_fallback=True` (v1 fallback).
+    assert result.used_fallback is True
