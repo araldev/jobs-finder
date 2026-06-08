@@ -46,3 +46,4 @@ htmlcov/
 .envrc
 .env.local
 .env.*.local
+capture_log.txt

@@ -1,0 +1,44 @@
+location_key,location_label,geo_id,source_url,captured_at
+madrid,"Madrid, Spain",103374081,"https://www.linkedin.com/jobs/search?keywords=&location=Madrid,+Spain",2026-06-08T16:22:20.575850+00:00
+barcelona,"Barcelona, Spain",105088894,"https://www.linkedin.com/jobs/search?keywords=&location=Barcelona,+Spain",2026-06-08T16:22:20.575850+00:00
+valencia,"Valencia, Spain",105512687,"https://www.linkedin.com/jobs/search?keywords=&location=Valencia,+Spain",2026-06-08T16:22:20.575850+00:00
+sevilla,"Sevilla, Spain",104893466,"https://www.linkedin.com/jobs/search?keywords=&location=Sevilla,+Spain",2026-06-08T16:22:20.575850+00:00
+zaragoza,"Zaragoza, Spain",106356396,"https://www.linkedin.com/jobs/search?keywords=&location=Zaragoza,+Spain",2026-06-08T16:22:20.575850+00:00
+malaga,"Málaga, Spain",104401670,"https://www.linkedin.com/jobs/search?keywords=&location=Málaga,+Spain",2026-06-08T16:22:20.575850+00:00
+murcia,"Murcia, Spain",102253611,"https://www.linkedin.com/jobs/search?keywords=&location=Murcia,+Spain",2026-06-08T16:22:20.575850+00:00
+bilbao,"Bilbao, Spain",101962740,"https://www.linkedin.com/jobs/search?keywords=&location=Bilbao,+Spain",2026-06-08T16:22:20.575850+00:00
+comunidad_de_madrid,"Comunidad de Madrid, Spain",103335767,"https://www.linkedin.com/jobs/search?keywords=&location=Comunidad+de+Madrid,+Spain",2026-06-08T16:22:20.575850+00:00
+cataluna,"Cataluña, Spain",105646813,"https://www.linkedin.com/jobs/search?keywords=&location=Cataluña,+Spain",2026-06-08T16:22:20.575850+00:00
+comunidad_valenciana,"Comunidad Valenciana, Spain",100076887,"https://www.linkedin.com/jobs/search?keywords=&location=Comunidad+Valenciana,+Spain",2026-06-08T16:22:20.575850+00:00
+andalucia,"Andalucía, Spain",106151489,"https://www.linkedin.com/jobs/search?keywords=&location=Andalucía,+Spain",2026-06-08T16:22:20.575850+00:00
+pais_vasco,"País Vasco, Spain",105646813,"https://www.linkedin.com/jobs/search?keywords=&location=País+Vasco,+Spain",2026-06-08T16:22:20.575850+00:00
+aragon,"Aragón, Spain",105646813,"https://www.linkedin.com/jobs/search?keywords=&location=Aragón,+Spain",2026-06-08T16:22:20.575850+00:00
+galicia,"Galicia, Spain",103189018,"https://www.linkedin.com/jobs/search?keywords=&location=Galicia,+Spain",2026-06-08T16:22:20.575850+00:00
+castilla_y_leon,"Castilla y León, Spain",104802667,"https://www.linkedin.com/jobs/search?keywords=&location=Castilla+y+León,+Spain",2026-06-08T16:22:20.575850+00:00
+castilla_la_mancha,"Castilla-La Mancha, Spain",100096545,"https://www.linkedin.com/jobs/search?keywords=&location=Castilla-La+Mancha,+Spain",2026-06-08T16:22:20.575850+00:00
+canarias,"Canarias, Spain",105646813,"https://www.linkedin.com/jobs/search?keywords=&location=Canarias,+Spain",2026-06-08T16:22:20.575850+00:00
+extremadura,"Extremadura, Spain",102727695,"https://www.linkedin.com/jobs/search?keywords=&location=Extremadura,+Spain",2026-06-08T16:22:20.575850+00:00
+murcia_region,"Región de Murcia, Spain",106901295,"https://www.linkedin.com/jobs/search?keywords=&location=Región+de+Murcia,+Spain",2026-06-08T16:22:20.575850+00:00
+asturias,"Asturias, Spain",104351060,"https://www.linkedin.com/jobs/search?keywords=&location=Asturias,+Spain",2026-06-08T16:22:20.575850+00:00
+cantabria,"Cantabria, Spain",106413664,"https://www.linkedin.com/jobs/search?keywords=&location=Cantabria,+Spain",2026-06-08T16:22:20.575850+00:00
+la_rioja,"La Rioja, Spain",102952772,"https://www.linkedin.com/jobs/search?keywords=&location=La+Rioja,+Spain",2026-06-08T16:22:20.575850+00:00
+navarra,"Navarra, Spain",102688677,"https://www.linkedin.com/jobs/search?keywords=&location=Navarra,+Spain",2026-06-08T16:22:20.575850+00:00
+illes_balears,"Illes Balears, Spain",101388828,"https://www.linkedin.com/jobs/search?keywords=&location=Illes+Balears,+Spain",2026-06-08T16:22:20.575850+00:00
+ceuta,"Ceuta, Spain",100110826,"https://www.linkedin.com/jobs/search?keywords=&location=Ceuta,+Spain",2026-06-08T16:22:20.575850+00:00
+melilla,"Melilla, Spain",101887739,"https://www.linkedin.com/jobs/search?keywords=&location=Melilla,+Spain",2026-06-08T16:22:20.575850+00:00
+es,España,103644278,https://www.linkedin.com/jobs/search?keywords=&location=España,2026-06-08T16:22:20.575850+00:00
+ciudad_de_mexico,"Ciudad de México, Mexico",112558473,"https://www.linkedin.com/jobs/search?keywords=&location=Ciudad+de+México,+Mexico",2026-06-08T16:22:20.575850+00:00
+guadalajara,"Guadalajara, Mexico",100870198,"https://www.linkedin.com/jobs/search?keywords=&location=Guadalajara,+Mexico",2026-06-08T16:22:20.575850+00:00
+monterrey,"Monterrey, Mexico",104201579,"https://www.linkedin.com/jobs/search?keywords=&location=Monterrey,+Mexico",2026-06-08T16:22:20.575850+00:00
+mx,México,103644278,https://www.linkedin.com/jobs/search?keywords=&location=México,2026-06-08T16:22:20.575850+00:00
+buenos_aires,"Buenos Aires, Argentina",90009870,"https://www.linkedin.com/jobs/search?keywords=&location=Buenos+Aires,+Argentina",2026-06-08T16:22:20.575850+00:00
+cordoba_ar,"Córdoba, Argentina",102399085,"https://www.linkedin.com/jobs/search?keywords=&location=Córdoba,+Argentina",2026-06-08T16:22:20.575850+00:00
+ar,Argentina,100446943,https://www.linkedin.com/jobs/search?keywords=&location=Argentina,2026-06-08T16:22:20.575850+00:00
+bogota,"Bogotá, Colombia",102361989,"https://www.linkedin.com/jobs/search?keywords=&location=Bogotá,+Colombia",2026-06-08T16:22:20.575850+00:00
+medellin,"Medellín, Colombia",112085362,"https://www.linkedin.com/jobs/search?keywords=&location=Medellín,+Colombia",2026-06-08T16:22:20.575850+00:00
+co,Colombia,100876405,https://www.linkedin.com/jobs/search?keywords=&location=Colombia,2026-06-08T16:22:20.575850+00:00
+santiago,"Santiago, Chile",104555257,"https://www.linkedin.com/jobs/search?keywords=&location=Santiago,+Chile",2026-06-08T16:22:20.575850+00:00
+cl,Chile,104621616,https://www.linkedin.com/jobs/search?keywords=&location=Chile,2026-06-08T16:22:20.575850+00:00
+lima,"Lima, Peru",101312395,"https://www.linkedin.com/jobs/search?keywords=&location=Lima,+Peru",2026-06-08T16:22:20.575850+00:00
+pe,Perú,103644278,https://www.linkedin.com/jobs/search?keywords=&location=Perú,2026-06-08T16:22:20.575850+00:00
+remote,Remote / Anywhere (worldwide,118424786,https://www.linkedin.com/jobs/search?keywords=&location=Remote+/+Anywhere+(worldwide,2026-06-08T16:22:20.575850+00:00
