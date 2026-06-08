@@ -60,10 +60,64 @@ def test_cache_port_get_is_a_method() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_job_search_cache_key_has_four_fields() -> None:
-    """`JobSearchCacheKey` declares exactly the 4 documented fields."""
+def test_job_search_cache_key_has_five_fields() -> None:
+    """`JobSearchCacheKey` declares exactly the 5 documented fields.
+
+    The 5th `geo_id: int | None = None` field was added in the
+    `fix-linkedin-geoid` change so a query with
+    `location="Madrid", geo_id=103374081` (resolved) is
+    byte-distinct from `location="Madrid", geo_id=None` (not
+    resolved) — they return different jobs, so a cache HIT on
+    one would silently corrupt the other. The field is `None`
+    by default for Indeed + InfoJobs (they accept `location=`
+    strings; they don't need a `geoId=`).
+    """
     hints = getattr(JobSearchCacheKey, "__annotations__", {})
-    assert set(hints.keys()) == {"source", "keywords", "location", "limit"}
+    assert set(hints.keys()) == {"source", "keywords", "location", "limit", "geo_id"}
+
+
+def test_job_search_cache_key_geo_id_field_default_is_none() -> None:
+    """`geo_id` defaults to `None` (backward compat with pre-`fix-linkedin-geoid` callers).
+
+    The pre-change signature is `(source, keywords, location,
+    limit)` (4 fields, all required). The 5th `geo_id` is
+    optional with a `None` default so existing test fixtures
+    that construct a 4-tuple continue to work. The
+    `CachedJobSearchUseCase._search(...)` call site uses
+    keyword args exclusively, so adding a 5th field with a
+    `None` default is a non-breaking change.
+    """
+    key = JobSearchCacheKey(source="linkedin", keywords="python", location="madrid", limit=20)
+    assert key.geo_id is None
+
+
+def test_job_search_cache_key_different_geo_id_is_not_equal() -> None:
+    """A different `geo_id` field makes the key distinct.
+
+    `location="Madrid", geo_id=103374081` (resolved) and
+    `location="Madrid", geo_id=None` (not resolved) return
+    different jobs (one with the correct geo filter, one
+    without), so they MUST be different cache keys.
+    """
+    resolved = JobSearchCacheKey(
+        source="linkedin", keywords="python", location="madrid", limit=20, geo_id=103374081
+    )
+    unresolved = JobSearchCacheKey(
+        source="linkedin", keywords="python", location="madrid", limit=20, geo_id=None
+    )
+    assert resolved != unresolved
+
+
+def test_job_search_cache_key_same_geo_id_is_equal() -> None:
+    """Two keys with the same 5 fields are equal (same query + same source)."""
+    a = JobSearchCacheKey(
+        source="linkedin", keywords="python", location="madrid", limit=20, geo_id=103374081
+    )
+    b = JobSearchCacheKey(
+        source="linkedin", keywords="python", location="madrid", limit=20, geo_id=103374081
+    )
+    assert a == b
+    assert hash(a) == hash(b)
 
 
 def test_job_search_cache_key_is_a_named_tuple() -> None:

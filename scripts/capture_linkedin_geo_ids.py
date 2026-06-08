@@ -50,9 +50,11 @@ where:
 - `source_url`: the URL that was visited to extract the geoId
 - `captured_at`: ISO 8601 UTC timestamp
 """
+
 from __future__ import annotations
 
 import csv
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -136,13 +138,11 @@ def extract_geo_id(html: str) -> str | None:
     search auto-redirected to a different page). In that case, return None.
     """
     # Use a simple regex; BeautifulSoup is overkill for a single input field.
-    import re
-
     match = re.search(r'<input name="geoId" type="hidden" value="(\d+)"', html)
     if match:
         return match.group(1)
     # Also try the form action variant (less common)
-    match = re.search(r'geoId=(\d+)', html)
+    match = re.search(r"geoId=(\d+)", html)
     if match:
         return match.group(1)
     return None
@@ -167,7 +167,8 @@ def main() -> int:
         page = context.new_page()
 
         for key, label in LOCATION_LIST:
-            url = f"https://www.linkedin.com/jobs/search?keywords=&location={label.replace(' ', '+').replace(',', '%2C')}"
+            encoded_label = label.replace(" ", "+").replace(",", "%2C")
+            url = f"https://www.linkedin.com/jobs/search?keywords=&location={encoded_label}"
             print(f"Capturing {key!r} ({label}) ...", file=sys.stderr)
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=15000)
@@ -187,7 +188,10 @@ def main() -> int:
                     )
                     print(f"  → geoId={geo_id}", file=sys.stderr)
                 else:
-                    print(f"  → NO geoId found in HTML (page may have auto-redirected)", file=sys.stderr)
+                    print(
+                        "  → NO geoId found in HTML (page may have auto-redirected)",
+                        file=sys.stderr,
+                    )
             except Exception as exc:
                 print(f"  → ERROR: {exc}", file=sys.stderr)
 
