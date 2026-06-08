@@ -324,3 +324,74 @@ def test_app_factory_forwards_intent_extraction_retry_to_intent_extractor() -> N
     extractor = use_case._intent_extractor  # noqa: SLF001
     assert extractor is not None
     assert extractor._max_retries == 2  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# `LocationResolverPort` wiring (REQ-LOC-GEO-001, WU4 of `fix-linkedin-geoid`).
+#
+# `app_factory.build_app()` constructs a
+# `HardcodedLocationResolver` and injects it into the chat
+# use case. The v1 implementation is a hardcoded dict
+# (43 entries; 8 Spanish cities + 16 autonomous communities
+# + 9 LATAM cities + 1 remote). The future
+# `HybridLocationResolver` (geocoding API fallback) is a
+# drop-in replacement.
+# ---------------------------------------------------------------------------
+
+
+def test_app_factory_wires_location_resolver_when_chat_enabled() -> None:
+    """`Settings(llm_filter_enabled=True, llm_api_key=...)` → `HardcodedLocationResolver` injected.
+
+    The 2-stage chat filter requires a `LocationResolverPort`
+    to translate `intent.location` → LinkedIn `geoId`. The
+    composition root constructs the resolver once (a
+    `HardcodedLocationResolver` with the 34-entry canonical
+    dict) and injects it via the use case's ctor. The test
+    pins the wire-up: the use case's `_location_resolver`
+    is non-None and conforms to the Protocol.
+    """
+    settings = _settings_with_chat(enabled=True, api_key=SecretStr("test-key"))
+    app = build_app(
+        use_case=_build_fake_cached_use_case("linkedin"),
+        indeed_use_case=_build_fake_cached_use_case("indeed"),
+        infojobs_use_case=_build_fake_cached_use_case("infojobs"),
+        settings=settings,
+    )
+    use_case = app.state.filter_use_case
+    assert use_case is not None
+    # The location resolver is wired.
+    resolver = use_case._location_resolver  # noqa: SLF001
+    assert resolver is not None
+    # The resolver implements the `LocationResolverPort` Protocol
+    # (the `resolve(location) -> int | None` method exists).
+    assert hasattr(resolver, "resolve")
+    # The resolver is a `HardcodedLocationResolver` (the v1
+    # implementation) — the type check is intentionally
+    # narrow so a future swap to `HybridLocationResolver`
+    # surfaces in this test.
+    from jobs_finder.infrastructure.location.hardcoded_resolver import (  # noqa: PLC0415
+        HardcodedLocationResolver,
+    )
+
+    assert isinstance(resolver, HardcodedLocationResolver)
+    # The resolver can resolve a known city (Madrid → 103374081).
+    assert resolver.resolve("Madrid") == 103374081
+
+
+def test_app_factory_does_not_wire_location_resolver_when_chat_disabled() -> None:
+    """`Settings(llm_filter_enabled=False)` → no chat use case → no resolver wiring.
+
+    The chat feature is OFF; the use case is NOT built
+    (`app.state.filter_use_case` is `None`); the resolver
+    is NOT constructed (no point building infrastructure
+    that's not used). The 2-stage path is OFF.
+    """
+    settings = _settings_with_chat(enabled=False, api_key=SecretStr("test-key"))
+    app = build_app(
+        use_case=_build_fake_cached_use_case("linkedin"),
+        indeed_use_case=_build_fake_cached_use_case("indeed"),
+        infojobs_use_case=_build_fake_cached_use_case("infojobs"),
+        settings=settings,
+    )
+    use_case = app.state.filter_use_case
+    assert use_case is None
