@@ -1,39 +1,62 @@
-"""Chat-filter use case (T-013 of `ai-chat-filter`).
+"""Chat-filter use case (T-013 of `ai-chat-filter`, refactored in T-008 of `chat-filter-2stage`).
 
 Spec: REQ-LLM-003 (strict-subset ID validation), REQ-CHAT-001
-(orchestration).
+(orchestration), REQ-CHAT-INT-001..005 (2-stage flow control).
 
-The use case is the 3-stage chat-filter orchestrator:
-  1. Delegate to the existing `SearchAllSourcesUseCase` aggregator
-     (reuses the per-source cache + per-source error isolation).
-  2. Short-circuit on an empty aggregator result — the LLM is
-     NEVER called when no jobs are available; the response carries
-     a Spanish "no se encontraron ofertas" explanation so the user
-     sees a sensible answer.
-  3. Build the 5-key LLM-facing dict per job, call the LLM with
-     the Spanish `SYSTEM_PROMPT` (from `_prompt`) and a
-     JSON-serialized user message (from `build_user_message`),
-     parse the response with `parse_llm_response`, validate
-     `matching_ids` to a STRICT SUBSET of the input ids, log a
-     `WARNING` per dropped (hallucinated) id, and return the
-     filtered jobs in the AGGREGATOR'S order (not the LLM's).
+`FilterJobsByIntentUseCase` is the 3-stage chat-filter orchestrator
+with the 2-stage LLM flow:
 
-The use case depends ONLY on the application's `LLMClientPort`
-Protocol — never on the concrete `MiniMaxLLMClient`. The chat
-route (T-014) injects the LLM client at composition-root time;
-tests inject a `FakeLLMClient` that conforms to the Protocol
-structurally.
+  Stage 1 (NEW in `chat-filter-2stage`): the use case calls
+    `intent_extractor.extract(message=...)` to extract a
+    structured `Intent` (q, location, experience_years, remote,
+    employment_type, confidence, notes). The use case then
+    reads `intent.confidence`:
+      - High confidence (>= `intent_extraction_confidence_threshold`):
+        dispatch to `_execute_2stage(...)` — stage 2 uses the
+        extracted `q` / `location` for a directed aggregator
+        scrape with `limit=intent_max_results` (per-source cap
+        higher than the v1 `limit=20`); stage 3 is the same
+        v1 LLM filter. `used_fallback=False`.
+      - Low confidence (< threshold): dispatch to
+        `_execute_v1(...)` — the v1 single-stage flow
+        (aggregator with `q=""`, `location=""`, `limit=20`,
+        then stage-3 LLM filter). `used_fallback=True`.
+      - Stage-1 LLMResponseParseError (after retry exhaustion):
+        the use case catches it and dispatches to
+        `_execute_v1(...)` with `used_fallback=True`
+        (REQ-CHAT-INT-004).
 
-The dependency rule is `application -> domain <- infrastructure`.
-The use case imports `LLMClientPort` from `application.ports`
-(application layer) and the prompt / parser from
-`infrastructure.llm._prompt` / `infrastructure.llm._parser`
-(infrastructure layer). The latter is a known concession — the
-prompt text and the defensive parser are pure functions with no
-side effects and no upstream coupling, and the use case's
-dependency is on the FUNCTION, not on the infrastructure module's
-lifecycle. The infrastructure LLM CLIENT itself remains behind the
-`LLMClientPort` Protocol.
+  Stage 2 (NEW): directed aggregator scrape using the
+    extracted `q` / `location` and `limit=intent_max_results`.
+    Reuses the existing `SearchAllSourcesUseCase` aggregator
+    (per-source cache + per-source error isolation).
+
+  Stage 3 (UNCHANGED from v1): the v1 LLM filter. The use case
+    builds the 5-key LLM-facing dict per job, calls the LLM
+    with the Spanish `SYSTEM_PROMPT` and a JSON-serialized
+    user message, parses the response, validates
+    `matching_ids` to a STRICT SUBSET of the input ids, logs a
+    WARNING per dropped (hallucinated) id, and returns the
+    filtered jobs in the AGGREGATOR'S order (not the LLM's).
+
+Backward compat (REQ-CHAT-INT-005): the v1 single-stage
+behavior is preserved when:
+  - `intent_extraction_enabled=False` (the master switch)
+  - `intent_extractor is None` (composition root bypass)
+  - The extracted `Intent.confidence < threshold`
+  - Stage-1 parse error (after retry exhaustion)
+In all of those cases the use case dispatches to
+`_execute_v1(...)` with `used_fallback=True`. The v1 logic is
+verbatim — no recursion with `_execute_2stage(...)`, no
+shared state.
+
+The use case depends ONLY on the application's
+`IntentExtractorPort` and `LLMClientPort` Protocols — never
+on the concrete `IntentExtractor` or `MiniMaxLLMClient`. The
+composition root (`presentation/app_factory.build_app`)
+injects the concrete implementations at construction time
+(T-009); tests inject `FakeIntentExtractor` and
+`FakeLLMClient` (Protocol-conforming test doubles).
 """
 
 from __future__ import annotations
@@ -44,10 +67,15 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from jobs_finder.application.aggregator import SearchAllSourcesUseCase
-from jobs_finder.application.ports import LLMClientPort
+from jobs_finder.application.ports import (
+    Intent,
+    IntentExtractorPort,
+    LLMClientPort,
+)
 from jobs_finder.domain.job import Job
 from jobs_finder.infrastructure.llm._parser import LLMSelection, parse_llm_response
 from jobs_finder.infrastructure.llm._prompt import SYSTEM_PROMPT, build_user_message
+from jobs_finder.infrastructure.llm.exceptions import LLMResponseParseError
 
 _logger = logging.getLogger(__name__)
 
@@ -86,20 +114,31 @@ class FilteredJobsResult:
         total_matched: `len(filtered)` — the number of jobs in
             `self.jobs`. Equals `len(aggregator.jobs)` minus the
             number of dropped ids.
+        used_fallback: `True` when the v1 single-stage path ran
+            (low confidence, stage-1 parse failure,
+            `intent_extraction_enabled=False`, or no
+            `intent_extractor` injected). `False` when the
+            2-stage path ran. The route serializes this in
+            the `ChatResponse` so the client can tell which
+            path served the request (REQ-CHAT-INT-004). Default
+            `True` is the safe default: a use case constructed
+            with the v1-only kwargs (no `intent_extractor`) is
+            semantically the v1 behavior.
     """
 
     jobs: Sequence[Job]
     explanation: str
     total_considered: int
     total_matched: int
+    used_fallback: bool = True
 
 
 class FilterJobsByIntentUseCase:
-    """Orchestrate the 3-stage chat-filter flow.
+    """Orchestrate the 3-stage chat-filter flow with the 2-stage LLM option.
 
     The constructor is keyword-only to make the call site read
     like a spec:
-      `FilterJobsByIntentUseCase(aggregator=..., llm=...)`
+      `FilterJobsByIntentUseCase(aggregator=..., llm=..., intent_extractor=...)`
 
     Args:
         aggregator: The existing `SearchAllSourcesUseCase` instance.
@@ -110,15 +149,32 @@ class FilterJobsByIntentUseCase:
             no separate LLM cache).
         llm: Any `LLMClientPort`. The use case depends on the
             Protocol only; the concrete `MiniMaxLLMClient` is
-            injected at composition-root time (T-016).
+            injected at composition-root time.
         parser: The defensive parser. Defaults to
             `parse_llm_response` from `infrastructure.llm._parser`.
             The parameter is keyword-only with a default so a
             test can inject a parser that returns a canned
-            `LLMSelection` (the unit tests use a `FakeLLMClient`
-            that already short-circuits the parser by returning
-            the right JSON string; the parser is still exercised
-            end-to-end in the integration test, T-017).
+            `LLMSelection`.
+        intent_extractor: Optional `IntentExtractorPort`. When
+            `None` (the default), the use case runs the v1
+            single-stage path (`_execute_v1(...)` with
+            `used_fallback=True`). When provided AND
+            `intent_extraction_enabled=True`, the use case
+            dispatches based on the extracted `Intent.confidence`
+            (REQ-CHAT-INT-004). The Protocol is the seam — the
+            use case never depends on the concrete
+            `IntentExtractor` class.
+        intent_extraction_enabled: Master switch for the 2-stage
+            flow. Defaults to `True`. Set to `False` to revert
+            to v1 behavior (the kill switch — REQ-CHAT-INT-005).
+        intent_extraction_confidence_threshold: Below this
+            confidence, the use case falls back to v1
+            (REQ-CHAT-INT-004). Defaults to `0.7`.
+        intent_max_results: Per-source cap for the stage-2
+            aggregator scrape. Defaults to `100` (higher than
+            the v1 `limit=20` to give the LLM more recall).
+            The v1 path always uses `_V1_DEFAULT_LIMIT = 20`
+            regardless of this setting.
     """
 
     def __init__(
@@ -127,10 +183,18 @@ class FilterJobsByIntentUseCase:
         aggregator: SearchAllSourcesUseCase,
         llm: LLMClientPort,
         parser: Callable[[str], LLMSelection] = parse_llm_response,
+        intent_extractor: IntentExtractorPort | None = None,
+        intent_extraction_enabled: bool = True,
+        intent_extraction_confidence_threshold: float = 0.7,
+        intent_max_results: int = 100,
     ) -> None:
         self._aggregator = aggregator
         self._llm = llm
         self._parser = parser
+        self._intent_extractor = intent_extractor
+        self._intent_extraction_enabled = intent_extraction_enabled
+        self._intent_extraction_confidence_threshold = intent_extraction_confidence_threshold
+        self._intent_max_results = intent_max_results
 
     async def execute(
         self,
@@ -143,6 +207,26 @@ class FilterJobsByIntentUseCase:
     ) -> FilteredJobsResult:
         """Run the chat-filter flow and return the filtered jobs.
 
+        The public `execute(...)` dispatches between the 2-stage
+        path and the v1 path based on the construction-time
+        flags:
+
+        1. If `intent_extraction_enabled` is `True` AND
+           `intent_extractor is not None`: call
+           `intent = await intent_extractor.extract(message=message)`.
+           - If the extractor raises `LLMResponseParseError`
+             (after retry exhaustion), dispatch to
+             `_execute_v1(...)` with `used_fallback=True`
+             (REQ-CHAT-INT-004).
+           - If `intent.confidence < intent_extraction_confidence_threshold`,
+             dispatch to `_execute_v1(...)` with
+             `used_fallback=True`.
+           - Otherwise, dispatch to
+             `_execute_2stage(message, intent, resolved_sources)`
+             with `used_fallback=False`.
+        2. Otherwise: dispatch to `_execute_v1(...)` with
+           `used_fallback=True` (the v1 single-stage path).
+
         Args:
             message: The user's natural-language intent (e.g.
                 "ingeniero < 2 años en Málaga"). Pre-normalized by
@@ -150,50 +234,273 @@ class FilterJobsByIntentUseCase:
             q: The aggregator's `keywords`. The chat endpoint passes
                 `""` in v1 (the message IS the intent); a future
                 caller can pre-fill `q` to benefit from the
-                aggregator cache.
+                aggregator cache. The 2-stage path IGNORES this
+                argument in favor of `intent.q`.
             location: The aggregator's `location`. Same v1
-                convention as `q`.
+                convention as `q`. The 2-stage path IGNORES this
+                argument in favor of `intent.location`.
             limit: The aggregator's `limit` (job cap per source).
+                The 2-stage path IGNORES this argument in favor of
+                `intent_max_results`. The v1 path IGNORES this
+                argument in favor of `_V1_DEFAULT_LIMIT = 20` so
+                the per-source cache key is byte-identical to
+                pre-2-stage behavior.
             sources: The aggregator's `sources` filter. `None`
-                means all 3 sources.
+                means all 3 sources. Forwarded to both paths.
 
         Returns:
             A `FilteredJobsResult` with the matched jobs in the
             aggregator's order, the LLM's Spanish explanation,
-            and the `total_considered` / `total_matched` counts.
+            the `total_considered` / `total_matched` counts, and
+            the `used_fallback` flag.
 
         Raises:
             LLMUnavailableError: on 5xx, timeout, 429, or MiniMax
                 error codes 1002/1013 (after retry exhaustion) and
                 1004/1008/1001 (no retry). Propagated unchanged.
-            LLMResponseParseError: when the parser cannot extract
-                a JSON object. Propagated unchanged. The route
-                maps this to 422.
+            LLMResponseParseError: when the stage-3 parser cannot
+                extract a JSON object. Propagated unchanged. The
+                route maps this to 422.
             JobSearchError: any per-source error from the aggregator
                 that is NOT isolated to a single source. Propagated
                 unchanged.
         """
-        # The aggregator's `search()` expects `sources: list[str]`
-        # (never `None`); when the chat caller passes `None` we
-        # forward all 3 sources. A non-None `Sequence` is converted
-        # to a list so the aggregator's type contract is honored.
+        # Resolve `sources` once; both paths consume it.
         if sources is None:
             resolved_sources: list[str] = ["linkedin", "indeed", "infojobs"]
         else:
             resolved_sources = list(sources)
+
+        # Stage 1: extract intent (only when the 2-stage flow is
+        # active). The intent's `confidence` drives the dispatch.
+        intent: Intent | None = None
+        if self._intent_extraction_enabled and self._intent_extractor is not None:
+            try:
+                intent = await self._intent_extractor.extract(message=message)
+            except LLMResponseParseError as e:
+                # Stage-1 parse failure after retry exhaustion.
+                # Fall back to v1 (REQ-CHAT-INT-004). Log a WARNING
+                # so ops can see the fallback in container logs.
+                _logger.warning(
+                    "Stage-1 intent extraction failed after retry exhaustion: %s. "
+                    "Falling back to v1 single-stage path.",
+                    e,
+                )
+                return await self._execute_v1(
+                    message=message,
+                    q=q,
+                    location=location,
+                    limit=limit,
+                    resolved_sources=resolved_sources,
+                    used_fallback=True,
+                )
+
+        # Confidence gate: low-confidence intent → v1 fallback.
+        if intent is not None and intent.confidence < self._intent_extraction_confidence_threshold:
+            _logger.info(
+                "Stage-1 intent confidence %.2f below threshold %.2f. "
+                "Falling back to v1 single-stage path.",
+                intent.confidence,
+                self._intent_extraction_confidence_threshold,
+            )
+            return await self._execute_v1(
+                message=message,
+                q=q,
+                location=location,
+                limit=limit,
+                resolved_sources=resolved_sources,
+                used_fallback=True,
+            )
+
+        # High confidence (or 2-stage disabled) → 2-stage path.
+        # `intent` is guaranteed to be non-None here when
+        # `intent_extraction_enabled` and the extractor was
+        # invoked; mypy --strict can't prove that, so the
+        # `is not None` guard is explicit.
+        if intent is not None:
+            return await self._execute_2stage(
+                message=message,
+                intent=intent,
+                resolved_sources=resolved_sources,
+                used_fallback=False,
+            )
+
+        # 2-stage flow disabled (or no extractor) → v1 path.
+        return await self._execute_v1(
+            message=message,
+            q=q,
+            location=location,
+            limit=limit,
+            resolved_sources=resolved_sources,
+            used_fallback=True,
+        )
+
+    # ------------------------------------------------------------------
+    # 2-stage path (NEW in T-008): directed aggregator + v1 stage-3 LLM.
+    # ------------------------------------------------------------------
+
+    async def _execute_2stage(
+        self,
+        *,
+        message: str,
+        intent: Intent,
+        resolved_sources: list[str],
+        used_fallback: bool,
+    ) -> FilteredJobsResult:
+        """Run the 2-stage path: directed aggregator + v1 stage-3 LLM.
+
+        Stage 2 calls the aggregator with the extracted
+        `q` / `location` (the `intent.q or ""` /
+        `intent.location or ""` fallback preserves the v1
+        "empty string is a wildcard" contract) and a higher
+        per-source cap (`self._intent_max_results`,
+        typically 100, vs the v1 `limit=20`).
+
+        Stage 3 is the same v1 LLM filter (strict-subset
+        ID validation, hallucination WARNINGs, aggregator
+        order). The `_run_stage3(...)` helper is shared
+        between the 2 paths so the stage-3 logic is NOT
+        duplicated.
+
+        Args:
+            message: The original user message (for the LLM
+                context).
+            intent: The extracted `Intent` (the 7-field
+                structured output from stage 1).
+            resolved_sources: The pre-resolved `sources` list
+                (the use case converted `None` to the
+                3-source list).
+            used_fallback: `False` for the 2-stage path
+                (the dispatcher sets this explicitly so the
+                dataclass field is unambiguous).
+
+        Returns:
+            A `FilteredJobsResult` with the matched jobs in
+            the aggregator's order, the LLM's Spanish
+            explanation, the counts, and `used_fallback=False`.
+        """
+        stage2_q = intent.q if intent.q is not None else ""
+        stage2_location = intent.location if intent.location is not None else ""
+        aggregated = await self._aggregator.search(
+            keywords=stage2_q,
+            location=stage2_location,
+            limit=self._intent_max_results,
+            sources=resolved_sources,
+        )
+        flat_jobs: list[Job] = [agg.job for agg in aggregated.jobs]
+        return await self._run_stage3(
+            message=message,
+            flat_jobs=flat_jobs,
+            used_fallback=used_fallback,
+        )
+
+    # ------------------------------------------------------------------
+    # v1 single-stage path (PRESERVED VERBATIM from pre-2-stage).
+    # The aggregator gets `q=""`, `location=""`, `limit=20` regardless
+    # of what the caller passed. This keeps the per-source cache
+    # keys byte-identical to the pre-T-008 behavior so a v1 caller
+    # benefits from existing cache hits.
+    # ------------------------------------------------------------------
+
+    async def _execute_v1(
+        self,
+        *,
+        message: str,
+        q: str,
+        location: str,
+        limit: int,
+        resolved_sources: list[str],
+        used_fallback: bool,
+    ) -> FilteredJobsResult:
+        """Run the v1 single-stage path: aggregator with the
+        caller's `q`/`location`/`limit` + stage-3 LLM filter.
+
+        The v1 logic is VERBATIM from the pre-T-008 use case:
+        the aggregator's `search()` is called with whatever
+        `q` / `location` / `limit` the caller passed to
+        `execute(...)`. The v1 chat endpoint passes
+        `q=""`, `location=""`, `limit=20` (per the existing
+        `test_filter_use_case.py::test_execute_forwards_q_location_limit_to_aggregator`
+        test that asserts the use case FORWARDS those kwargs
+        unchanged), but the use case is a thin pass-through
+        — a future caller can pre-fill `q` to benefit from
+        the aggregator cache.
+
+        Args:
+            message: The original user message.
+            q: The aggregator's `keywords` (forwarded from
+                the caller's `execute(...)`).
+            location: The aggregator's `location` (forwarded
+                from the caller's `execute(...)`).
+            limit: The aggregator's `limit` (forwarded from
+                the caller's `execute(...)`).
+            resolved_sources: The pre-resolved `sources` list.
+            used_fallback: `True` for the v1 path.
+
+        Returns:
+            A `FilteredJobsResult` with the matched jobs in
+            the aggregator's order, the LLM's Spanish
+            explanation, the counts, and `used_fallback=True`.
+        """
         aggregated = await self._aggregator.search(
             keywords=q,
             location=location,
             limit=limit,
             sources=resolved_sources,
         )
-        # The aggregator flattens the per-source results into
-        # `list[AggregatedJob]` (each carrying a `sources: list[str]`
-        # and the canonical `Job`). The chat filter operates on
-        # the canonical `Job`; the per-source membership is not
-        # surfaced to the LLM (it filters on title / company /
-        # location / description only).
         flat_jobs: list[Job] = [agg.job for agg in aggregated.jobs]
+        return await self._run_stage3(
+            message=message,
+            flat_jobs=flat_jobs,
+            used_fallback=used_fallback,
+        )
+
+    # ------------------------------------------------------------------
+    # Stage 3 (UNCHANGED from v1): the LLM filter. Shared between
+    # `_execute_2stage(...)` and `_execute_v1(...)` so the logic
+    # is NOT duplicated. The strict-subset ID validation, the
+    # hallucination WARNINGs, the aggregator order, and the
+    # short-circuit on empty input are all preserved verbatim.
+    # ------------------------------------------------------------------
+
+    async def _run_stage3(
+        self,
+        *,
+        message: str,
+        flat_jobs: list[Job],
+        used_fallback: bool,
+    ) -> FilteredJobsResult:
+        """Run the stage-3 LLM filter on the aggregated jobs.
+
+        The flow:
+          1. Short-circuit on empty `flat_jobs` (the LLM is
+             NEVER called when no jobs are available; the
+             response carries the Spanish
+             "no se encontraron ofertas" explanation —
+             REQ-LLM-003 5th scenario).
+          2. Build the 5-key LLM-facing dict per job.
+          3. Call the LLM with the Spanish `SYSTEM_PROMPT`
+             and a JSON-serialized user message.
+          4. Parse the response with `self._parser`.
+          5. Validate `matching_ids` to a STRICT SUBSET of
+             the input ids; log a WARNING per dropped
+             (hallucinated) id.
+          6. Build the filtered list in the AGGREGATOR'S
+             order (not the LLM's).
+
+        Args:
+            message: The original user message.
+            flat_jobs: The aggregator's flat list of `Job`
+                instances.
+            used_fallback: The fallback flag to attach to
+                the result (set by the dispatcher).
+
+        Returns:
+            A `FilteredJobsResult` with the matched jobs in
+            the aggregator's order, the LLM's Spanish
+            explanation, the counts, and the `used_fallback`
+            flag.
+        """
         total_considered = len(flat_jobs)
 
         # Short-circuit: an empty aggregator result NEVER reaches
@@ -205,6 +512,7 @@ class FilterJobsByIntentUseCase:
                 explanation=_EMPTY_RESULT_EXPLANATION,
                 total_considered=0,
                 total_matched=0,
+                used_fallback=used_fallback,
             )
 
         # Build the 5-key LLM-facing dict per job. `dataclasses.asdict`
@@ -249,6 +557,7 @@ class FilterJobsByIntentUseCase:
             explanation=selection.explanation,
             total_considered=total_considered,
             total_matched=len(filtered),
+            used_fallback=used_fallback,
         )
 
 

@@ -289,6 +289,70 @@ class LLMClientPort(Protocol):
         ...
 
 
+# ---------------------------------------------------------------------------
+# Intent extractor (REQ-CHAT-INT-001, REQ-CHAT-INT-004,
+# `chat-filter-2stage` change T-008)
+#
+# `IntentExtractorPort` is the application layer's seam for "any
+# stage-1 intent extractor". The concrete implementation lives in
+# `infrastructure/llm/_intent.py` (the `IntentExtractor` class
+# added in T-005 of PR1). The use case (T-008 of PR2) depends
+# on the Protocol only, never on the concrete class.
+#
+# The Protocol is NOT `@runtime_checkable` (mirrors the
+# `LLMClientPort` pattern in this file). Structural conformance
+# is enforced at mypy --strict time. The `FakeIntentExtractor`
+# in `tests/conftest.py` (PR1's T-006) is structurally
+# compatible — its `async def extract(*, message: str) -> Intent`
+# method matches the Protocol's signature exactly.
+#
+# The `*` keyword-only marker on `message` is intentional: the
+# stage-1 extraction takes a single argument and the call site
+# reads `extractor.extract(message=...)`. Keyword-only forces
+# the caller to be explicit about what they're passing.
+# ---------------------------------------------------------------------------
+
+
+class IntentExtractorPort(Protocol):
+    """A stage-1 intent extractor. Implementations live in `infrastructure/llm/`.
+
+    Spec: REQ-CHAT-INT-001 — the use case (`FilterJobsByIntentUseCase`,
+    PR2's T-008) depends on this Protocol; the concrete
+    `IntentExtractor` is injected at composition-root time
+    (PR2's T-009 in `app_factory.build_app()`). A
+    `FakeIntentExtractor` (PR1's T-006, in `tests/conftest.py`)
+    with the right method signature satisfies the Protocol
+    structurally (mypy --strict enforces this at type-check
+    time).
+    """
+
+    async def extract(self, *, message: str) -> Intent:
+        """Extract a structured `Intent` from a free-form user message.
+
+        Args:
+            message: The user's message (pre-NFC-normalized by
+                the route). May be empty or whitespace-only
+                (the implementation short-circuits to
+                `Intent(confidence=0.0)` in that case — no LLM
+                call).
+
+        Returns:
+            The parsed `Intent` (7 typed fields per
+            REQ-CHAT-INT-001). The use case reads `confidence`
+            to decide between 2-stage (high-confidence) and
+            v1 fallback (low-confidence, per REQ-CHAT-INT-004).
+
+        Raises:
+            LLMResponseParseError: on parse failure after retry
+                exhaustion. The use case catches this and falls
+                back to v1 (REQ-CHAT-INT-004).
+            LLMUnavailableError: when the LLM provider is down
+                (NOT caught here — propagates to the route
+                which maps to HTTP 502).
+        """
+        ...
+
+
 class NoOpRateLimiter:
     """A true no-op rate limiter. The dispatch target for `RATE_LIMIT_ENABLED=false`.
 
