@@ -18,7 +18,9 @@ a real LLM.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NamedTuple, Protocol, TypeVar
+from typing import Literal, NamedTuple, Protocol, TypeVar
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from jobs_finder.domain.job import Job
 
@@ -150,6 +152,74 @@ class RateLimitPort(Protocol):
         `retry_after` is the seconds-until-enough-tokens.
         """
         ...
+
+
+# ---------------------------------------------------------------------------
+# LLM intent extraction (REQ-CHAT-INT-001, REQ-LLM-SEC-002,
+# `chat-filter-2stage` change T-002)
+#
+# `Intent` is the structured value object the stage-1 LLM call
+# returns. It is the PORT'S CONTRACT — defined in the application
+# layer so the use case (which lives in `application/`) can import
+# it without depending on infrastructure. The Pydantic-strict
+# parser in `infrastructure/llm/_intent_parser.py` imports the
+# class from here (infrastructure → application is fine; the
+# reverse is forbidden by the dependency rule).
+#
+# The class uses `model_config = ConfigDict(extra="forbid")` so a
+# model that returns an unknown field (e.g. `salary_range`) raises
+# `pydantic.ValidationError`, which the parser catches and re-raises
+# as `LLMResponseParseError` (REQ-LLM-SEC-002).
+#
+# The 7 fields are: `q`, `location`, `experience_years`, `remote`,
+# `employment_type`, `confidence` (required), `notes` (optional
+# escape hatch for unstructured intent).
+# ---------------------------------------------------------------------------
+
+
+class Intent(BaseModel):
+    """The 7-field structured intent extracted from a user message.
+
+    Pydantic `extra="forbid"` rejects unknown fields (REQ-LLM-SEC-002):
+    a model that returns `salary_range` (not in the schema) raises
+    `pydantic.ValidationError`, which the parser catches and re-raises
+    as `LLMResponseParseError` so the `IntentExtractor` can decide
+    between retry-once and raise-to-use-case.
+
+    `experience_years: int | None` does NOT coerce strings — the
+    prompt tells the model to return a number or `null`, and
+    Pydantic's `int` type rejects `"2-3"` at validation time.
+
+    `confidence: float = Field(ge=0.0, le=1.0)` is bounded in both
+    directions. A model that returns `confidence: 1.5` (over-confident)
+    or `confidence: -0.1` (nonsensical) is rejected. The use case
+    reads `confidence` to decide between 2-stage and v1-fallback
+    (REQ-CHAT-INT-004) — an out-of-range value would silently
+    mis-route the request.
+
+    `notes: str | None = None` is the unstructured intent escape
+    hatch. The LLM may put information the 6 typed fields cannot
+    capture (salary range, visa sponsorship, company size) in
+    `notes`; the use case does not act on `notes` directly (stage
+    3 does not see it), but ops can log it for visibility.
+
+    The model is intentionally narrow (6 typed fields + `notes`)
+    to make the prompt and the schema both concise. Future
+    changes can add fields; the `extra="forbid"` rule protects
+    against silent schema drift.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    q: str | None = None
+    location: str | None = None
+    experience_years: int | None = None
+    remote: bool | None = None
+    employment_type: (
+        Literal["full_time", "part_time", "contract", "internship", "freelance"] | None
+    ) = None
+    confidence: float = Field(ge=0.0, le=1.0)
+    notes: str | None = None
 
 
 # ---------------------------------------------------------------------------
