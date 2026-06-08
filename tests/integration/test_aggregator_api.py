@@ -323,7 +323,13 @@ async def test_aggregator_with_non_job_search_error_returns_500() -> None:
     linkedin_port = FakeJobSearchPort(jobs=[_job(1, source_id="x")])
 
     class _ProgrammerBugPort(FakeJobSearchPort):
-        async def search(self, keywords: str, location: str, limit: int = 20) -> list[Job]:
+        async def search(
+            self,
+            keywords: str,
+            location: str,
+            limit: int = 20,
+            geo_id: int | None = None,
+        ) -> list[Job]:
             raise KeyError("missing-key")  # NOT a JobSearchError
 
     indeed_port = _ProgrammerBugPort()

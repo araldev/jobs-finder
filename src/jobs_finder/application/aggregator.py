@@ -82,10 +82,23 @@ class _AggregatorSourcePort(Protocol):
     public `JobSearchPort` Protocol (which is typed as
     `-> list[Job]`); the broader type is what the aggregator's
     "handles both raw and wrapped" promise actually requires.
+
+    The 4th `geo_id: int | None = None` kwarg (added in
+    `fix-linkedin-geoid`, REQ-LOC-GEO-001) is the
+    LinkedIn-specific numeric `geoId` the resolver returned
+    for `location`. The aggregator forwards the kwarg ONLY
+    to the LinkedIn use case (per `SearchAllSourcesUseCase.search`
+    dispatch); Indeed + InfoJobs use cases ignore it. The
+    default `None` preserves backward compat for the
+    pre-WU3 caller shape.
     """
 
     async def search(
-        self, keywords: str, location: str, limit: int = 20
+        self,
+        keywords: str,
+        location: str,
+        limit: int = 20,
+        geo_id: int | None = None,
     ) -> list[Job] | SearchResult: ...
 
 
@@ -204,6 +217,8 @@ class SearchAllSourcesUseCase:
         location: str,
         limit: int,
         sources: list[str],
+        *,
+        linkedin_geo_id: int | None = None,
     ) -> AggregatedResult:
         """Run the queried sources in parallel, dedupe, and return the aggregated result.
 
@@ -213,6 +228,18 @@ class SearchAllSourcesUseCase:
         `AggregatedResult.per_source`; any other exception (a
         programming bug, e.g. `KeyError`) re-raises so the route
         returns 500.
+
+        The keyword-only `linkedin_geo_id: int | None = None`
+        kwarg (added in `fix-linkedin-geoid`, REQ-LOC-GEO-001)
+        is the LinkedIn-specific numeric `geoId` the resolver
+        returned. The aggregator forwards the kwarg ONLY to
+        the LinkedIn use case; Indeed + InfoJobs use cases are
+        called WITHOUT the kwarg (they accept `location=`
+        strings; they don't need a `geoId=`). The default
+        `None` preserves the pre-WU3 call shape: a caller
+        that doesn't pass `linkedin_geo_id` gets the same
+        behavior as before (LinkedIn scraper falls back to
+        `?location=<str>`).
         """
         # Validate the requested sources.
         unknown = set(sources) - set(self._sources.keys())
@@ -228,10 +255,18 @@ class SearchAllSourcesUseCase:
             broad `JobSearchPort` typing is honored (and a future
             swap of the wrapper for the raw port does not break
             the aggregator).
+
+            The `geo_id` kwarg is forwarded ONLY to the LinkedIn
+            use case (the per-source kwarg is part of
+            `JobSearchCacheKey` 5th field; Indeed + InfoJobs
+            ports ignore the kwarg).
             """
             port = self._sources[source]
             try:
-                result = await port.search(keywords, location, limit)
+                if source == "linkedin":
+                    result = await port.search(keywords, location, limit, geo_id=linkedin_geo_id)
+                else:
+                    result = await port.search(keywords, location, limit)
             except JobSearchError as exc:
                 # Per-source error isolation: record the failed
                 # source in `per_source` so the route can surface

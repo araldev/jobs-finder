@@ -190,7 +190,13 @@ class LinkedInPlaywrightScraper(JobSearchPort):
             if self._playwright is not None:
                 await self._playwright.stop()
 
-    async def search(self, keywords: str, location: str, limit: int = 20) -> list[Job]:
+    async def search(
+        self,
+        keywords: str,
+        location: str,
+        limit: int = 20,
+        geo_id: int | None = None,
+    ) -> list[Job]:
         """Run a single search; paginate until `limit` is reached or `max_pages` exhausted.
 
         The pagination loop is owned by `paginated_search`

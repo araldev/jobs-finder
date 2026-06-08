@@ -34,9 +34,27 @@ class JobSearchPort(Protocol):
     The default value on `limit` is duplicated in the Pydantic schema at the
     presentation boundary; the application trusts the caller to pass an
     already-validated value.
+
+    The 4th `geo_id: int | None = None` kwarg (added in
+    `fix-linkedin-geoid` change, REQ-LOC-GEO-001) is the
+    LinkedIn-specific numeric `geoId` the resolver returned
+    for `location`. The aggregator forwards the kwarg ONLY
+    to the LinkedIn port (per `SearchAllSourcesUseCase.search`
+    dispatch); Indeed + InfoJobs port implementations ignore
+    it. The default `None` preserves backward compat for
+    callers that pre-date the change — the existing
+    `JobSearchPort` consumers (the per-source use cases, the
+    `CachedJobSearchUseCase` wrapper) keep working without
+    any signature changes at their call site.
     """
 
-    async def search(self, keywords: str, location: str, limit: int = 20) -> list[Job]:
+    async def search(
+        self,
+        keywords: str,
+        location: str,
+        limit: int = 20,
+        geo_id: int | None = None,
+    ) -> list[Job]:
         """Search the source for jobs matching the criteria."""
         ...
 

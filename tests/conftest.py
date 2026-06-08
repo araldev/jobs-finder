@@ -74,6 +74,15 @@ class FakeJobSearchPort:
     the input correctly. Can be primed (or mutated) to raise an
     exception on the next call. Cite REQ-I-005.
 
+    The `geo_id` kwarg is part of the `JobSearchPort` Protocol
+    signature since the `fix-linkedin-geoid` change (the
+    cache wrapper forwards it to the port; Indeed + InfoJobs
+    ports ignore it). The 3-tuple `calls` shape is preserved
+    for backward compat with the pre-WU3 test surface (the
+    `geo_id` is accepted but NOT recorded; the new
+    `_FakeJobSearchPortWithGeoId` in
+    `test_cached_job_search_use_case.py` records 4-tuples).
+
     NOTE: a structurally-identical `FakeJobSearchPort` is defined
     inline in `tests/integration/test_api.py` (the LinkedIn
     integration test). Keeping the duplication is intentional: the
@@ -92,7 +101,18 @@ class FakeJobSearchPort:
         self._error: Exception | None = error
         self.calls: list[tuple[str, str, int]] = []
 
-    async def search(self, keywords: str, location: str, limit: int = 20) -> list[Job]:
+    async def search(
+        self,
+        keywords: str,
+        location: str,
+        limit: int = 20,
+        geo_id: int | None = None,
+    ) -> list[Job]:
+        # The pre-WU3 fake records 3-tuples; the `geo_id` is
+        # accepted as a kwarg (so the cache wrapper's call
+        # works) but NOT recorded (so the existing 3-tuple
+        # assertions still pass).
+        del geo_id
         self.calls.append((keywords, location, limit))
         if self._error is not None:
             raise self._error

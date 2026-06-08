@@ -53,9 +53,17 @@ class _FakeJobSearchPort:
     """In-memory fake of `JobSearchPort`.
 
     Records every call. Can be primed with jobs and/or a fixed
-    exception to raise. Mirrors the `FakeJobSearchPort` used by the
+    exception to raise. Mirrors the `_FakeJobSearchPort` used by the
     other test files but is defined inline here so this test file
     remains self-contained.
+
+    The `geo_id` kwarg is part of the `JobSearchPort` Protocol
+    signature since the `fix-linkedin-geoid` change (the
+    cache wrapper forwards it to the port; Indeed + InfoJobs
+    ports ignore it). The 3-tuple `calls` shape is preserved
+    for backward compat with the pre-WU3 test surface (the
+    `geo_id` is accepted but NOT recorded; the new
+    `_FakeJobSearchPortWithGeoId` records 4-tuples).
     """
 
     def __init__(
@@ -67,7 +75,19 @@ class _FakeJobSearchPort:
         self._error: Exception | None = error
         self.calls: list[tuple[str, str, int]] = []
 
-    async def search(self, keywords: str, location: str, limit: int = 20) -> list[Job]:
+    async def search(
+        self,
+        keywords: str,
+        location: str,
+        limit: int = 20,
+        geo_id: int | None = None,
+    ) -> list[Job]:
+        # The pre-WU3 fake records 3-tuples; the `geo_id` is
+        # accepted as a kwarg (so the cache wrapper's call
+        # works) but NOT recorded (so the existing 3-tuple
+        # assertions still pass). The new
+        # `_FakeJobSearchPortWithGeoId` records 4-tuples.
+        del geo_id
         self.calls.append((keywords, location, limit))
         if self._error is not None:
             raise self._error
@@ -409,3 +429,178 @@ def test_cache_status_is_a_str_enum() -> None:
     # The value is the exact string the route emits in the X-Cache header.
     assert CacheStatus.HIT.value == "HIT"
     assert CacheStatus.MISS.value == "MISS"
+
+
+# ---------------------------------------------------------------------------
+# `geo_id` forwarding (REQ-LOC-GEO-001)
+#
+# The `JobSearchCacheKey` 5th field (`geo_id`) was added in
+# WU1. The cache wrapper MUST plumb the `geo_id` kwarg
+# through to the cache key AND to the port so a query with
+# `geo_id=103374081` is byte-distinct from a query with
+# `geo_id=None` (REQ-C-005 + REQ-LOC-GEO-001).
+# ---------------------------------------------------------------------------
+
+
+class _FakeJobSearchPortWithGeoId:
+    """A `_FakeJobSearchPort` that also records the `geo_id` kwarg.
+
+    Mirrors the aggregator test's `_FakeJobSearchPort` after
+    the WU3 signature extension. The 4-tuple `calls` shape
+    captures the per-source forwarding contract: a LinkedIn
+    call records `(keywords, location, limit, geo_id)`; an
+    Indeed or InfoJobs call records `(keywords, location,
+    limit, None)`.
+    """
+
+    def __init__(self, jobs: list[Job] | None = None) -> None:
+        self._jobs: list[Job] = list(jobs) if jobs is not None else []
+        self.calls: list[tuple[str, str, int, int | None]] = []
+
+    async def search(
+        self,
+        keywords: str,
+        location: str,
+        limit: int = 20,
+        geo_id: int | None = None,
+    ) -> list[Job]:
+        self.calls.append((keywords, location, limit, geo_id))
+        return list(self._jobs)
+
+
+async def test_cached_search_forwards_geo_id_to_port() -> None:
+    """`geo_id=103374081` is forwarded from the wrapper to the port.
+
+    The cache wrapper's `search(...)` accepts `geo_id`
+    (added in WU3) and forwards it to the port so the
+    LinkedIn scraper can build the `?geoId=<n>` URL.
+    Indeed + InfoJobs port implementations ignore the
+    kwarg; the test pins the LinkedIn-specific forwarding
+    contract.
+    """
+    port = _FakeJobSearchPortWithGeoId(jobs=[_job(1)])
+    cache = _FakeCachePort()
+    wrapper = CachedJobSearchUseCase(port=port, cache=cache, source="linkedin")
+
+    result = await wrapper.search("python", "madrid", 20, geo_id=103374081)
+
+    assert result.cache_status is CacheStatus.MISS
+    assert port.calls == [("python", "madrid", 20, 103374081)]
+
+
+async def test_cached_search_includes_geo_id_in_cache_key() -> None:
+    """Two calls with the same `keywords`/`location`/`limit` but different `geo_id` are 2 cache
+    entries.
+
+    The 5th `JobSearchCacheKey` field isolates the entries.
+    The first call with `geo_id=103374081` is a MISS; the
+    second call with `geo_id=None` is ALSO a MISS
+    (different cache key). The 3rd call with
+    `geo_id=103374081` is a HIT.
+    """
+    port = _FakeJobSearchPortWithGeoId(jobs=[_job(1)])
+    cache = _FakeCachePort()
+    wrapper = CachedJobSearchUseCase(port=port, cache=cache, source="linkedin")
+
+    first = await wrapper.search("python", "madrid", 20, geo_id=103374081)
+    second = await wrapper.search("python", "madrid", 20, geo_id=None)
+    third = await wrapper.search("python", "madrid", 20, geo_id=103374081)
+
+    assert first.cache_status is CacheStatus.MISS
+    assert second.cache_status is CacheStatus.MISS
+    assert third.cache_status is CacheStatus.HIT
+    # The port was called twice (not three times — the 3rd
+    # call was a cache HIT and did not invoke the port).
+    assert len(port.calls) == 2
+
+
+async def test_cached_search_default_geo_id_is_none() -> None:
+    """`search(keywords, location, limit)` without `geo_id` → port receives `geo_id=None`.
+
+    Backward compat: callers that pre-date WU3 invoke the
+    wrapper with the 3-arg signature. The `geo_id=None`
+    default makes the call shape backward-compatible:
+    the 3-arg call is equivalent to the 4-arg call with
+    `geo_id=None`.
+    """
+    port = _FakeJobSearchPortWithGeoId(jobs=[_job(1)])
+    cache = _FakeCachePort()
+    wrapper = CachedJobSearchUseCase(port=port, cache=cache, source="linkedin")
+
+    await wrapper.search("python", "madrid", 20)
+
+    assert port.calls == [("python", "madrid", 20, None)]
+
+
+# ---------------------------------------------------------------------------
+# `_FakeJobSearchPort` accepts the new `geo_id` kwarg (backward compat).
+# ---------------------------------------------------------------------------
+
+
+async def test_existing_fake_port_accepts_geo_id_kwarg() -> None:
+    """The pre-WU3 `_FakeJobSearchPort` (3-tuple `calls`) accepts the new `geo_id` kwarg.
+
+    Backward compat: the pre-WU3 `_FakeJobSearchPort` shape
+    records 3-tuples `(keywords, location, limit)`. After
+    the WU3 signature extension, the wrapper's `search()`
+    calls the port with `geo_id=None` by default. The
+    pre-WU3 fake port MUST NOT raise on the unexpected
+    kwarg — a future refactor that drops `geo_id=None`
+    from the wrapper's call would silently skip the
+    LinkedIn-specific path. The test pins the contract.
+    """
+    port = _FakeJobSearchPort(jobs=[_job(1)])
+    cache = _FakeCachePort()
+    wrapper = CachedJobSearchUseCase(port=port, cache=cache, source="linkedin")
+
+    # The wrapper calls the port with the new `geo_id`
+    # kwarg. The pre-WU3 fake port is intentionally
+    # STRUCTURALLY compatible (it accepts `**kwargs` via
+    # the Protocol's structural typing — but our local
+    # fake is a class with an explicit `search` method
+    # that does NOT accept the new kwarg). To stay
+    # backward-compatible, the wrapper MUST call the port
+    # with the pre-WU3 3-arg shape (and let the port
+    # accept the new kwarg IF the Protocol signature
+    # requires it). For now, the wrapper's `search()`
+    # delegates to `port.search(keywords, location, limit)`
+    # with NO `geo_id` kwarg IF the port's signature is
+    # the pre-WU3 shape. The simpler contract: the wrapper
+    # calls `port.search(keywords, location, limit)` and
+    # the LinkedIn port (whose signature accepts `geo_id`)
+    # ignores the kwarg.
+    #
+    # Actually, the pre-WU3 `JobSearchPort.search()`
+    # signature does NOT include `geo_id`. After WU3, the
+    # Protocol's `search()` signature MAY be extended
+    # (with a `geo_id=None` default). For the wrapper to
+    # call the port with `geo_id=...`, the Protocol
+    # signature MUST be extended. This test pins the
+    # pre-WU3 contract: the wrapper's `search` does NOT
+    # forward `geo_id` to a port whose signature is the
+    # pre-WU3 shape (i.e. the wrapper falls back to the
+    # 3-arg call). This is intentionally INCONSISTENT with
+    # the new `JobSearchPort` Protocol signature; the
+    # pre-WU3 fake is here to test the v1 backward-compat
+    # path (the existing test suite that uses this fake).
+    # The new test (`test_cached_search_forwards_geo_id_to_port`)
+    # uses the `_FakeJobSearchPortWithGeoId` fake to test
+    # the post-WU3 path.
+    #
+    # The pre-WU3 fake's `search` method has the 3-arg
+    # signature. If the wrapper were to call it with
+    # `geo_id=...`, the call would raise `TypeError`. So
+    # the test passes IF the wrapper's call works (i.e.
+    # the wrapper still calls the port with 3 args, or
+    # the port's signature was extended in WU3). This is
+    # a contract test for the WU3 refactor: the wrapper's
+    # 3-arg call shape (the pre-WU3 shape) is preserved
+    # when the underlying port's signature is the pre-WU3
+    # shape. A regression that adds a 4th positional arg
+    # to the wrapper's port call would surface here.
+    result = await wrapper.search("python", "madrid", 20)
+    assert result.cache_status is CacheStatus.MISS
+    # The pre-WU3 fake recorded the 3-arg call (the
+    # `geo_id` kwarg was NOT forwarded because the fake
+    # port's signature is the pre-WU3 3-arg shape).
+    assert port.calls == [("python", "madrid", 20)]

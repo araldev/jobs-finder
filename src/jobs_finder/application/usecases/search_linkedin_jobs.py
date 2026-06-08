@@ -52,10 +52,24 @@ class RawLinkedInJobsUseCase:
         Spec: REQ-012. Exceptions from the port (`JobSearchError` and
         subclasses) propagate to the caller — the use case does not swallow
         them, does not retry, and does not return an empty list on failure.
-        """
-        return await self._port.search(input.keywords, input.location, input.limit)
 
-    async def search(self, keywords: str, location: str, limit: int = 20) -> list[Job]:
+        The `input.geo_id` (added in `fix-linkedin-geoid`) is
+        the LinkedIn-specific numeric `geoId` the resolver
+        returned. The kwarg is forwarded to the port so the
+        LinkedIn scraper's URL builder emits `?geoId=<n>`
+        (REQ-LOC-GEO-001).
+        """
+        return await self._port.search(
+            input.keywords, input.location, input.limit, geo_id=input.geo_id
+        )
+
+    async def search(
+        self,
+        keywords: str,
+        location: str,
+        limit: int = 20,
+        geo_id: int | None = None,
+    ) -> list[Job]:
         """Structural `JobSearchPort` shim.
 
         `CachedJobSearchUseCase` (the cache wrapper added in the
@@ -64,9 +78,12 @@ class RawLinkedInJobsUseCase:
         use case lets the cached wrapper compose the raw use case
         as its inner port without a Protocol rewrite. Delegates to
         `execute` so the original DTO-driven path is unchanged.
+
+        The 4th `geo_id: int | None = None` kwarg (added in
+        WU3) is forwarded via the DTO's `geo_id` field.
         """
         return await self.execute(
-            SearchLinkedInInput(keywords=keywords, location=location, limit=limit)
+            SearchLinkedInInput(keywords=keywords, location=location, limit=limit, geo_id=geo_id)
         )
 
 
