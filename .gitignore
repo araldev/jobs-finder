@@ -43,5 +43,6 @@ htmlcov/
 
 # Local environment files (NEVER commit; use `.env.example` as template)
 .env
+.envrc
 .env.local
 .env.*.local

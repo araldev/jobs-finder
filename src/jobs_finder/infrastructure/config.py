@@ -713,6 +713,80 @@ class Settings(BaseSettings):
         ge=1,
     )
 
+    # ------------------------------------------------------------------
+    # Chat filter — 2-stage LLM settings (REQ-CHAT-INT-006,
+    # `chat-filter-2stage` change T-007)
+    #
+    # The 6 fields below configure the 2-stage LLM flow: stage 1
+    # extracts a structured `Intent` from the user's free-form
+    # message; stage 2 calls the aggregator with the extracted
+    # `q`/`location` (and a higher `limit`); stage 3 is the
+    # existing v1 LLM filter. Each field declares its own
+    # `validation_alias` (same pattern as every other field group
+    # above). The model-level `env_prefix="LINKEDIN_"` does not
+    # apply to these fields because each declares its own alias.
+    #
+    # - `intent_extraction_enabled: bool` (default True) — the
+    #   master switch for the 2-stage flow. Set to `false` to
+    #   revert to v1 behavior (the kill switch). REQ-CHAT-INT-005.
+    # - `intent_extraction_confidence_threshold: float` (default
+    #   0.7, `ge=0.0, le=1.0`) — below this confidence, the use
+    #   case falls back to the v1 path. REQ-CHAT-INT-004.
+    # - `intent_max_results: int` (default 100, `ge=1, le=500`) —
+    #   the per-source cap for the stage-2 aggregator scrape
+    #   (higher than the v1 `limit=20` to give the LLM more
+    #   recall). REQ-CHAT-INT-001.
+    # - `llm_stage1_max_tokens: int` (default 256, `ge=64, le=1024`)
+    #   — the stage-1 LLM response size cap. The 6-field
+    #   extraction is small; 256 tokens is generous and keeps
+    #   cost low. REQ-CHAT-INT-001.
+    # - `llm_stage1_temperature: float` (default 0.0,
+    #   `ge=0.0, le=2.0`) — the stage-1 LLM temperature. 0.0 =
+    #   deterministic. The 6-field extraction is well-defined.
+    # - `intent_extraction_retry: int` (default 1, `ge=0, le=3`) —
+    #   the number of retries on stage-1 parse failure
+    #   (retry-once with corrective system prompt, per the
+    #   design's deliberate trade). REQ-LLM-SEC-002.
+    # ------------------------------------------------------------------
+
+    intent_extraction_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("INTENT_EXTRACTION_ENABLED", "intent_extraction_enabled"),
+    )
+    intent_extraction_confidence_threshold: float = Field(
+        default=0.7,
+        validation_alias=AliasChoices(
+            "INTENT_EXTRACTION_CONFIDENCE_THRESHOLD",
+            "intent_extraction_confidence_threshold",
+        ),
+        ge=0.0,
+        le=1.0,
+    )
+    intent_max_results: int = Field(
+        default=100,
+        validation_alias=AliasChoices("INTENT_MAX_RESULTS", "intent_max_results"),
+        ge=1,
+        le=500,
+    )
+    llm_stage1_max_tokens: int = Field(
+        default=256,
+        validation_alias=AliasChoices("LLM_STAGE1_MAX_TOKENS", "llm_stage1_max_tokens"),
+        ge=64,
+        le=1024,
+    )
+    llm_stage1_temperature: float = Field(
+        default=0.0,
+        validation_alias=AliasChoices("LLM_STAGE1_TEMPERATURE", "llm_stage1_temperature"),
+        ge=0.0,
+        le=2.0,
+    )
+    intent_extraction_retry: int = Field(
+        default=1,
+        validation_alias=AliasChoices("INTENT_EXTRACTION_RETRY", "intent_extraction_retry"),
+        ge=0,
+        le=3,
+    )
+
 
 def load_settings() -> Settings:
     """Read env vars and return a fully-populated `Settings`.
