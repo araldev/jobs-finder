@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi import FastAPI
 
+from jobs_finder.application.ports import Intent
 from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase
 from jobs_finder.application.usecases.search_indeed_jobs import (
     SearchJobsUseCase as IndeedSearchJobsUseCase,
@@ -421,3 +422,83 @@ def app_with_redis_rate_limit_unreachable(
         infojobs_use_case=infojobs_use_case,
         settings=settings,
     )
+
+
+# ---------------------------------------------------------------------------
+# FakeIntentExtractor (T-006 of `chat-filter-2stage`).
+#
+# `FakeIntentExtractor` is the canonical test double for the
+# stage-1 intent extraction. PR2's T-008 wires the real
+# `IntentExtractor` into the use case; the use case accepts an
+# `IntentExtractorPort` Protocol (defined in
+# `application/ports.py` in PR2). For PR1 we ship the test
+# double only; the Protocol is added in PR2.
+#
+# The class has:
+#   - `calls: list[str]` — records every `message` passed to
+#     `extract()` (so tests can assert the use case forwarded
+#     the user message correctly).
+#   - `canned: Intent` — the Intent returned by every `extract()`
+#     call. Defaults to `Intent(confidence=0.95)` (a "happy path"
+#     high-confidence intent).
+#   - `error: Exception | None` — when set, `extract()` raises
+#     the injected exception. Used by the retry-exhaustion tests
+#     in `test_intent_extractor.py` and (in PR2) the
+#     stage-1-parse-failure scenarios.
+#
+# The method signature `async def extract(*, message: str) -> Intent`
+# matches the real `IntentExtractor` so the test double is
+# drop-in compatible (a future `IntentExtractorPort` Protocol
+# can be added in PR2 and the FakeIntentExtractor will conform
+# structurally — no test code changes).
+# ---------------------------------------------------------------------------
+
+
+class FakeIntentExtractor:
+    """In-memory fake of `IntentExtractor` for tests.
+
+    Mirrors the `FakeLLMClient` pattern in
+    `tests/integration/test_chat_endpoint.py` (the canonical
+    test double for `LLMClientPort`). The class is structurally
+    compatible with the future `IntentExtractorPort` Protocol
+    (planned for PR2 in `application/ports.py`); for PR1 the
+    real `IntentExtractor` class is in
+    `infrastructure/llm/_intent.py` and the use case is NOT
+    yet refactored to depend on the Protocol.
+
+    The class is a value-holder: it has no parsing logic, no
+    LLM dependency, no module-level state. Every `extract()` call
+    either returns `self.canned` (the default) or raises
+    `self.error` (when set). Tests construct one with a custom
+    `canned` Intent to drive the use case's stage-2 / fallback
+    decision.
+
+    Args:
+        canned: The `Intent` returned by every `extract()` call.
+            Defaults to `Intent(confidence=0.95)` — a high-
+            confidence intent that triggers the 2-stage path
+            in the use case (REQ-CHAT-INT-004).
+        error: When set, `extract()` raises this exception on
+            every call. Used to test the stage-1 parse failure
+            path (the use case catches `LLMResponseParseError`
+            and falls back to v1 — REQ-CHAT-INT-004).
+    """
+
+    def __init__(
+        self,
+        canned: Intent | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.canned: Intent = canned if canned is not None else Intent(confidence=0.95)
+        self.error: Exception | None = error
+        # Records every `message` argument. Tests assert the use
+        # case forwarded the right string (e.g. the NFC-normalized
+        # user message).
+        self.calls: list[str] = []
+
+    async def extract(self, *, message: str) -> Intent:
+        """Return `canned` (or raise `error`) and record the call."""
+        self.calls.append(message)
+        if self.error is not None:
+            raise self.error
+        return self.canned
