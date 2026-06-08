@@ -124,6 +124,90 @@ def test_system_prompt_declares_exact_json_shape() -> None:
 
 
 # ===========================================================================
+# Security boundary (T-011, REQ-LLM-SEC-001, T-004 of `chat-filter-2stage`).
+#
+# T-004 of PR1 APPENDED a security-boundary section to the v1
+# `SYSTEM_PROMPT` (the existing 5 v1 invariant tests above stay
+# green — the append is at the END, not a replacement). The
+# boundary is a contiguous block that contains 4 invariants
+# ("no inventes", "null", "JSON", "si dudas") + the 2 stage-3
+# field names ("matching_ids", "explanation"). The boundary is
+# the LAST thing the model reads — the "anchored at end"
+# pattern for prompt-injection resistance.
+#
+# The 3 tests below pin the boundary's content + position. A
+# regression that removes the boundary, replaces it, or moves
+# it would fail at least one of these tests.
+# ===========================================================================
+
+
+def test_system_prompt_security_boundary_contains_4_invariant_keywords() -> None:
+    """The security boundary mentions the 4 invariant keywords (REQ-LLM-SEC-001).
+
+    The boundary is the "last-line of defense" against
+    prompt-injection: a user message that asks the model to
+    invent values, omit fields, or return non-JSON should be
+    ignored in favor of the 4 boundary invariants. The test
+    string-greps the prompt for the 4 keywords (case-
+    insensitive — the prompt uses different casing for
+    emphasis, e.g. "NO inventes", "Si dudas").
+    """
+    lowered = SYSTEM_PROMPT.lower()
+    # 1. "no inventes" — never invent IDs / values.
+    assert "no inventes" in lowered
+    # 2. "null" — use null (NOT a default) for absent fields.
+    assert "null" in lowered
+    # 3. "json" — response must be valid JSON.
+    assert "json" in lowered
+    # 4. "si dudas" — when uncertain, lower confidence + don't invent.
+    assert "si dudas" in lowered
+
+
+def test_system_prompt_security_boundary_is_at_end_of_prompt() -> None:
+    """The security boundary is the LAST contiguous block in the prompt.
+
+    T-004 of `chat-filter-2stage` placed the boundary at the
+    END of `SYSTEM_PROMPT` (NOT in the middle, NOT at the
+    start) so the model reads the v1 rules first and the
+    boundary as the most-recent instruction. The test asserts
+    the boundary marker is in the last 50% of the prompt.
+    """
+    boundary_marker = "FRONTERA DE SEGURIDAD"
+    # The marker is present.
+    assert boundary_marker in SYSTEM_PROMPT
+    # The marker is in the LATER half of the prompt (so the
+    # v1 rules come first; the boundary is the last thing
+    # the model reads).
+    marker_index = SYSTEM_PROMPT.index(boundary_marker)
+    assert marker_index > len(SYSTEM_PROMPT) // 2, (
+        f"security boundary should be in the second half of the prompt; "
+        f"found at index {marker_index} of {len(SYSTEM_PROMPT)}"
+    )
+
+
+def test_system_prompt_security_boundary_mentions_stage3_field_names() -> None:
+    """The security boundary lists the 2 stage-3 field names: `matching_ids` and `explanation`.
+
+    REQ-LLM-SEC-001 scenario 3: the boundary must name the
+    exact response shape so a model that returns
+    `{"ids": [...], "reason": "..."}` (the wrong shape) is
+    rejected by the boundary's explicit field names. The
+    test asserts the boundary section (not just the v1
+    block) names the 2 fields. The v1 tests above already
+    assert the v1 block names them; this test is the
+    boundary-specific pin.
+    """
+    # The boundary is the last contiguous block. Find it
+    # via the marker and check the trailing section.
+    boundary_marker = "FRONTERA DE SEGURIDAD"
+    boundary_index = SYSTEM_PROMPT.index(boundary_marker)
+    boundary_block = SYSTEM_PROMPT[boundary_index:]
+    # The 2 field names appear in the boundary block.
+    assert "matching_ids" in boundary_block
+    assert "explanation" in boundary_block
+
+
+# ===========================================================================
 # build_user_message — returns JSON-serializable user message
 # ===========================================================================
 
