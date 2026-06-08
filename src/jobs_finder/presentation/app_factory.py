@@ -102,6 +102,8 @@ from jobs_finder.infrastructure.linkedin.scraper import (
 )
 from jobs_finder.infrastructure.linkedin.throttle import AsyncThrottle
 from jobs_finder.infrastructure.llm._factory import build_minimax_llm_client
+from jobs_finder.infrastructure.llm._intent import IntentExtractor
+from jobs_finder.infrastructure.llm._intent_parser import parse_intent_response
 from jobs_finder.infrastructure.rate_limit._factory import build_rate_limiter
 from jobs_finder.presentation.exception_handlers import (
     register_exception_handlers,
@@ -523,12 +525,37 @@ def build_app(  # noqa: PLR0915
     # `build_minimax_llm_client` raises `ValueError` on a
     # missing key as a defense-in-depth check; the conditional
     # registration above is the primary gate.
+    #
+    # T-009 (`chat-filter-2stage`): the chat-filter use case now
+    # accepts an `IntentExtractor` for the 2-stage LLM flow
+    # (REQ-CHAT-INT-001..005). The factory builds the
+    # `IntentExtractor` ONLY when
+    # `effective_settings.intent_extraction_enabled` is `True`;
+    # when `False`, the use case is constructed with
+    # `intent_extractor=None` (the v1 single-stage backward-compat
+    # path — REQ-CHAT-INT-005). The retry count
+    # (`effective_settings.intent_extraction_retry`) flows into
+    # the `IntentExtractor` ctor so operators can bump it
+    # without code changes (REQ-LLM-SEC-002).
     chat_use_case: FilterJobsByIntentUseCase | None = None
     if chat_enabled:
         llm_client = build_minimax_llm_client(effective_settings, http_client=llm_http_client)
+        intent_extractor: IntentExtractor | None = None
+        if effective_settings.intent_extraction_enabled:
+            intent_extractor = IntentExtractor(
+                llm=llm_client,
+                parser=parse_intent_response,
+                max_retries=effective_settings.intent_extraction_retry,
+            )
         chat_use_case = FilterJobsByIntentUseCase(
             aggregator=aggregator_use_case,
             llm=llm_client,
+            intent_extractor=intent_extractor,
+            intent_extraction_enabled=effective_settings.intent_extraction_enabled,
+            intent_extraction_confidence_threshold=(
+                effective_settings.intent_extraction_confidence_threshold
+            ),
+            intent_max_results=effective_settings.intent_max_results,
         )
     # Expose the use case on `app.state` regardless of the
     # flag (a future caller that constructs the use case

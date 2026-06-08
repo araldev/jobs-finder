@@ -218,3 +218,103 @@ def test_app_factory_does_not_register_chat_route_when_api_key_missing() -> None
         "the factory's ValueError would 502 every call"
     )
     assert not _chat_middleware_mounted(app), "ChatRateLimitMiddleware mounted without a chat route"
+
+
+# ---------------------------------------------------------------------------
+# 2-stage wire-up (T-009 of `chat-filter-2stage`).
+#
+# `app_factory.build_app()` now wires an `IntentExtractor` into
+# the `FilterJobsByIntentUseCase` when `intent_extraction_enabled=True`
+# (the new 6-`Settings`-field master switch from T-007). When
+# `intent_extraction_enabled=False`, the use case is built with
+# `intent_extractor=None` (the v1 backward-compat path —
+# REQ-CHAT-INT-005).
+# ---------------------------------------------------------------------------
+
+
+def test_app_factory_wires_intent_extractor_when_2stage_enabled() -> None:
+    """`Settings(intent_extraction_enabled=True)` builds a 2-stage use case.
+
+    The 2-stage wire-up is the new PR2 path. The factory
+    builds an `IntentExtractor` (with the `MiniMaxLLMClient`
+    + `parse_intent_response` parser + the
+    `effective_settings.intent_extraction_retry` count) and
+    passes it to `FilterJobsByIntentUseCase`. The test
+    inspects the use case to confirm the `IntentExtractor`
+    was injected (NOT `None`).
+    """
+    settings = _settings_with_chat(enabled=True, api_key=SecretStr("test-key"))
+    # Default `intent_extraction_enabled=True`.
+    assert settings.intent_extraction_enabled is True
+    app = build_app(
+        use_case=_build_fake_cached_use_case("linkedin"),
+        indeed_use_case=_build_fake_cached_use_case("indeed"),
+        infojobs_use_case=_build_fake_cached_use_case("infojobs"),
+        settings=settings,
+    )
+    use_case = app.state.filter_use_case
+    assert use_case is not None
+    # The 2-stage wire-up injects an `IntentExtractor`. The
+    # `app_factory` exposes it via the use case's private
+    # attribute (`_intent_extractor`).
+    assert use_case._intent_extractor is not None  # noqa: SLF001
+    # The dispatcher flag is on by default.
+    assert use_case._intent_extraction_enabled is True  # noqa: SLF001
+    # The default threshold / max_results match the spec.
+    assert use_case._intent_extraction_confidence_threshold == 0.7  # noqa: SLF001
+    assert use_case._intent_max_results == 100  # noqa: SLF001
+
+
+def test_app_factory_does_not_wire_intent_extractor_when_2stage_disabled() -> None:
+    """`Settings(intent_extraction_enabled=False)` → v1 use case with `intent_extractor=None`.
+
+    Backward compat (REQ-CHAT-INT-005): setting the
+    2-stage master switch to `False` reverts to the v1
+    single-stage behavior. The factory MUST NOT build the
+    `IntentExtractor` (it costs a real LLM call on every
+    request) and MUST pass `intent_extractor=None` to the
+    use case.
+    """
+    settings = _settings_with_chat(enabled=True, api_key=SecretStr("test-key"))
+    settings_dict = settings.model_dump()
+    settings_dict["intent_extraction_enabled"] = False
+    settings = Settings(**settings_dict)
+    assert settings.intent_extraction_enabled is False
+    app = build_app(
+        use_case=_build_fake_cached_use_case("linkedin"),
+        indeed_use_case=_build_fake_cached_use_case("indeed"),
+        infojobs_use_case=_build_fake_cached_use_case("infojobs"),
+        settings=settings,
+    )
+    use_case = app.state.filter_use_case
+    assert use_case is not None
+    # The dispatcher flag is OFF; the use case will route to
+    # `_execute_v1(...)` even though `intent_extractor` is
+    # also None.
+    assert use_case._intent_extraction_enabled is False  # noqa: SLF001
+    assert use_case._intent_extractor is None  # noqa: SLF001
+
+
+def test_app_factory_forwards_intent_extraction_retry_to_intent_extractor() -> None:
+    """`Settings(intent_extraction_retry=2)` → `IntentExtractor(max_retries=2)`.
+
+    The retry count flows from `Settings` to the
+    `IntentExtractor` ctor so operators can bump the retry
+    count without code changes.
+    """
+    settings = _settings_with_chat(enabled=True, api_key=SecretStr("test-key"))
+    settings_dict = settings.model_dump()
+    settings_dict["intent_extraction_retry"] = 2
+    settings = Settings(**settings_dict)
+    assert settings.intent_extraction_retry == 2
+    app = build_app(
+        use_case=_build_fake_cached_use_case("linkedin"),
+        indeed_use_case=_build_fake_cached_use_case("indeed"),
+        infojobs_use_case=_build_fake_cached_use_case("infojobs"),
+        settings=settings,
+    )
+    use_case = app.state.filter_use_case
+    assert use_case is not None
+    extractor = use_case._intent_extractor  # noqa: SLF001
+    assert extractor is not None
+    assert extractor._max_retries == 2  # noqa: SLF001
