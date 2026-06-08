@@ -652,6 +652,33 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("LLM_API_KEY", "llm_api_key"),
     )
+
+    # T-001 of `chat-filter-2stage` — REQ-SET-LLM-001 baseline fix.
+    # Pydantic-settings wraps an empty env-var value (e.g. `LLM_API_KEY=`
+    # in `.env`) as `SecretStr('')`, which breaks the kill-switch
+    # contract (`app_factory` treats `llm_api_key is None` as "route
+    # NOT registered"). The validator normalizes the 3 empty inputs
+    # to `None` so the kill switch triggers correctly:
+    #   `None`          → `None`
+    #   `""`            → `None`
+    #   `SecretStr("")` → `None`
+    # Non-empty `str` is wrapped in `SecretStr` (Pydantic's native
+    # behavior — the validator runs BEFORE the field's `SecretStr`
+    # coercion, so wrapping here keeps the contract uniform).
+    # Non-empty `SecretStr` is returned as-is (idempotent passthrough).
+    # The validator is INDEPENDENT of the chat-filter-2stage feature
+    # and is kept even if `chat-filter-2stage` is rolled back.
+    @field_validator("llm_api_key", mode="before")
+    @classmethod
+    def _normalize_empty_secret(cls, v: SecretStr | str | None) -> SecretStr | None:
+        if v is None:
+            return None
+        if isinstance(v, SecretStr):
+            return v if v.get_secret_value() else None
+        if isinstance(v, str):
+            return SecretStr(v) if v else None
+        return v
+
     llm_base_url: str = Field(
         default="https://api.minimax.io",
         validation_alias=AliasChoices("LLM_BASE_URL", "llm_base_url"),
