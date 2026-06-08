@@ -234,7 +234,10 @@ class LinkedInPlaywrightScraper(JobSearchPort):
             await ctx.close()
 
     def _make_fetch_one_page(
-        self, keywords: str, location: str
+        self,
+        keywords: str,
+        location: str,
+        geo_id: int | None = None,
     ) -> Callable[[Any, int, int], Awaitable[list[Job]]]:
         """Build a per-page closure that captures LinkedIn-specific concerns.
 
@@ -250,7 +253,9 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         All LinkedIn-specific behavior that the canonical loop
         helper must NOT know about lives here:
             - URL formula: `start=page_index * 25` (LinkedIn serves
-              ~25 jobs per page; page 0 starts at offset 0).
+              ~25 jobs per page; page 0 starts at offset 0). When
+              `geo_id is not None`, the URL uses `geoId=<n>` (NOT
+              `location=`) — the `REQ-LOC-GEO-001` correction.
             - `is_block_page(soup)` check after `wait_for_selector`
               (LinkedIn auth-wall / verification page).
             - `_parse_cards(soup, remaining)` 2-arg shape (no
@@ -262,7 +267,7 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         """
 
         async def fetch_one_page(page: Any, page_index: int, remaining: int) -> list[Job]:
-            url = self._build_url(keywords, location, page_index * 25)
+            url = self._build_url(keywords, location, page_index * 25, geo_id=geo_id)
             await self._navigate_and_wait(page, url)
             content = await page.content()
             soup = BeautifulSoup(content, "html.parser")
@@ -273,7 +278,42 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         return fetch_one_page
 
     @staticmethod
-    def _build_url(keywords: str, location: str, start: int) -> str:
+    def _build_url(keywords: str, location: str, start: int, geo_id: int | None = None) -> str:
+        """Build the LinkedIn search URL with the corrected `geoId=` formula.
+
+        The LinkedIn-correct path (`REQ-LOC-GEO-001`):
+        when `geo_id is not None`, the URL is
+        `?keywords=...&geoId=<n>&start=...` (the resolver
+        consumed the `location` string and the captured
+        `geoId` replaced it). The fallback (`geo_id is None`)
+        emits `?keywords=...&location=<str>&start=...` — the
+        pre-`fix-linkedin-geoid` broken path (LinkedIn
+        silently ignores the `location=` string param, but
+        does not 500). The fallback is a strict improvement
+        over today's 100%-broken behavior: identical
+        behavior for unknown locations, correct behavior
+        for known cities.
+
+        Args:
+            keywords: The user's `keywords` (URL-quoted via
+                `urllib.parse.quote`).
+            location: The user's free-form `location` string.
+                Used only when `geo_id is None` (the fallback
+                path).
+            start: The per-page `start=page_index * 25` offset.
+            geo_id: The captured LinkedIn `geoId` (e.g.
+                `103374081` for Madrid). When `not None`,
+                the URL uses `geoId=` (NOT `location=`). When
+                `None`, the URL falls back to `location=`.
+
+        Returns:
+            The full LinkedIn search URL.
+        """
+        if geo_id is not None:
+            return (
+                "https://www.linkedin.com/jobs/search/"
+                f"?keywords={quote(keywords)}&geoId={geo_id}&start={start}"
+            )
         return (
             "https://www.linkedin.com/jobs/search/"
             f"?keywords={quote(keywords)}&location={quote(location)}&start={start}"
