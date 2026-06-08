@@ -774,17 +774,78 @@ curl -i "http://localhost:8000/jobs?q=python&location=madrid&sources=glassdoor"
 `POST /jobs/chat` is an additive, **Spanish-natural-language** intent
 filter on top of the 3-source aggregator. The user types a free-form
 request (e.g. "solo remoto, junior Python, Madrid"); the server runs
-the existing aggregator, sends the aggregated jobs to
-[MiniMax's](https://api.minimax.io) OpenAI-compatible chat-completions
-endpoint as a Spanish system-prompted filter call, and returns only
-the jobs the LLM selected. Strict ID-subset validation drops any
-hallucinated IDs before they reach the response.
+a **2-stage LLM flow** that drives a directed aggregator scrape with
+the extracted `q` / `location`, then filters the result with the v1
+LLM filter. Strict ID-subset validation drops any hallucinated IDs
+before they reach the response.
 
 The chat endpoint is **read-only and additive** — it does not modify
 `/jobs`, `/jobs/linkedin`, `/jobs/indeed`, or `/jobs/infojobs`, and it
 does NOT introduce an LLM result cache (the 60s per-source aggregator
 cache is the only cache layer; two identical chat payloads within
-60s trigger ONE full re-aggregation and TWO LLM calls).
+60s trigger ONE full re-aggregation and TWO LLM calls when the
+2-stage path is active, or ONE aggregator + ONE LLM call when the
+v1 fallback path runs).
+
+### 2-stage flow
+
+The 2-stage flow replaces the v1 "blind scrape + LLM filter" with a
+**structured intent extraction** call that drives a **directed
+aggregator scrape**:
+
+```
+  ┌──────────────────────────────────────────────────────────────┐
+  │  POST /jobs/chat  { message: "ingeniero python, Madrid, 3y" }│
+  └──────────────────────────────────────────────────────────────┘
+                              ↓
+  ┌─ STAGE 1 (NEW): IntentExtractor.extract(message) ──────────┐
+  │  LLM call #1 (INTENT_EXTRACTION_SYSTEM_PROMPT)              │
+  │  - Security boundary: no inventes, null for absent,         │
+  │    no malformed JSON, si dudas baja confidence              │
+  │  - Strict Pydantic `extra="forbid"` on Intent schema        │
+  │  - RETRY ONCE with corrective prompt on parse failure       │
+  │  Returns: Intent(q="ingeniero python", location="Madrid",   │
+  │            experience_years=3, remote=None,                  │
+  │            employment_type=None, confidence=0.95,           │
+  │            notes=None)                                      │
+  └──────────────────────────────────────────────────────────────┘
+                              ↓
+              ┌─ Confidence gate ─┐
+              │ confidence < 0.7? │ ← INTENT_EXTRACTION_CONFIDENCE_THRESHOLD
+              └──────┬────────────┘
+                YES   │   NO
+       ┌──────────┘         └──────────┐
+       ↓                              ↓
+  v1 fallback path              2-stage path
+  (used_fallback=True)          (used_fallback=False)
+       │                              │
+       ↓                              ↓
+  Aggregator.search(          Aggregator.search(
+    q="", location="",          q="ingeniero python",
+    limit=20)                   location="Madrid",
+       │                        limit=100)        ← INTENT_MAX_RESULTS
+       │                              │
+       └──────────────┬───────────────┘
+                      ↓
+  ┌─ STAGE 3 (v1 LLM filter) ──────────────────────────────────┐
+  │  LLM call #2 (SYSTEM_PROMPT + security boundary at END)     │
+  │  - Same v1 prompt as before; security boundary APPENDED     │
+  │    at the end (REQ-LLM-SEC-001 — no renames, backward compat)│
+  │  - Returns: LLMSelection(matching_ids=[...], explanation)   │
+  │  - Strict-subset validation: hallucinated ids dropped + WARN │
+  └──────────────────────────────────────────────────────────────┘
+                      ↓
+  ChatResponse { jobs, explanation, total_considered,
+                 total_matched, used_fallback }
+```
+
+The v1 fallback runs when:
+- `INTENT_EXTRACTION_ENABLED=false` (the master switch / kill switch)
+- `intent.confidence < INTENT_EXTRACTION_CONFIDENCE_THRESHOLD` (default 0.7)
+- Stage-1 `LLMResponseParseError` after retry exhaustion
+
+The `used_fallback: bool` field in the `ChatResponse` tells the
+client which path served the request (`True` = v1, `False` = 2-stage).
 
 ### Curl smoke test
 
@@ -798,10 +859,15 @@ curl -X POST http://localhost:8000/jobs/chat \
   -H 'Content-Type: application/json' \
   -d '{"message":"ingeniero < 2 anos en Malaga"}'
 # HTTP/1.1 200
-# {"jobs": [...3 of 5...], "explanation": "...", "total_considered": 5, "total_matched": 3}
+# {"jobs": [...3 of 5...], "explanation": "...",
+#  "total_considered": 5, "total_matched": 3,
+#  "used_fallback": false}
 ```
 
 ### Chat env vars
+
+The 2-stage flow adds 6 NEW env vars on top of the v1 9 env vars.
+All 15 are documented here; the v1 vars are unchanged.
 
 | Env var | Default | Purpose |
 | --- | --- | --- |
@@ -809,24 +875,104 @@ curl -X POST http://localhost:8000/jobs/chat \
 | `LLM_BASE_URL` | `https://api.minimax.io` | OpenAI-compatible base URL. |
 | `LLM_MODEL` | `MiniMax-M3` | Pinned to M3 + `thinking: {type: disabled}` (the only model that honors the disabled flag). |
 | `LLM_TEMPERATURE` | `0.0` | Deterministic filter. |
-| `LLM_MAX_TOKENS` | `1024` | Upper bound on the response size. |
+| `LLM_MAX_TOKENS` | `1024` | Upper bound on the stage-3 response size. |
 | `LLM_REQUEST_TIMEOUT_SECONDS` | `15.0` | Per-request timeout for the `httpx.AsyncClient`. |
 | `LLM_MAX_MESSAGE_CHARS` | `1000` | Hard cap on the user `message` length. Exceeding it returns `400 {"detail": "message exceeds 1000 chars (got N)"}`. |
 | `LLM_FILTER_ENABLED` | `false` | Feature flag. `true` + key set → route is registered; otherwise the route returns 404. |
 | `LLM_FILTER_RATE_LIMIT_RPM` | `20` | Per-user chat bucket (default 20 req/min, matches the main `RATE_LIMIT_REQUESTS`). |
+| **`INTENT_EXTRACTION_ENABLED`** | `true` | **Master switch for the 2-stage flow.** `false` reverts to v1 behavior (no stage-1 call, no extra cost). The kill switch. REQ-CHAT-INT-005. |
+| **`INTENT_EXTRACTION_CONFIDENCE_THRESHOLD`** | `0.7` | **Confidence gate.** Below this, the use case falls back to v1 (`used_fallback=True`). Tune with production data; calibration is model + prompt specific. REQ-CHAT-INT-004. |
+| **`INTENT_MAX_RESULTS`** | `100` | **Per-source cap for the stage-2 aggregator scrape.** Higher than the v1 `limit=20` to give the LLM more recall. 100 jobs × 200 tokens = 20K, well under the 128K window. REQ-CHAT-INT-001. |
+| **`LLM_STAGE1_MAX_TOKENS`** | `256` | **Stage-1 response size cap.** The Intent schema is small (7 fields); 256 is enough headroom. REQ-CHAT-INT-001. |
+| **`LLM_STAGE1_TEMPERATURE`** | `0.0` | **Stage-1 sampling temperature.** 0.0 = deterministic intent extraction. |
+| **`INTENT_EXTRACTION_RETRY`** | `1` | **Number of stage-1 retries on parse failure.** Default 1 = retry once with the corrective system prompt. Set to 0 to disable retry; max 3. REQ-LLM-SEC-002. |
 
 ### Cost
 
-~$0.0025/req with MiniMax-M3 + `thinking: {type: disabled}` (D3 target).
-At 1000 queries/day, ~$2.50/day. The per-user
-`LLM_FILTER_RATE_LIMIT_RPM` cap (default 20) bounds the worst case
-to 20 calls/user/min regardless of overall traffic. The shared
-`httpx.AsyncClient` is built in the app's lifespan and reuses the
-connection pool across requests.
+**2-stage cost is 2× v1**: ~$0.005/req (one stage-1 intent call + one
+stage-3 filter call). At 1000 queries/day, ~$5/day.
+
+**v1 fallback cost is unchanged**: ~$0.0025/req (one stage-3 filter
+call only). The fallback is automatic when confidence is low or the
+2-stage flow is disabled.
+
+**Worst case** is bounded by `LLM_FILTER_RATE_LIMIT_RPM` (default 20)
+per IP per minute. The shared `httpx.AsyncClient` is built in the
+app's lifespan and reuses the connection pool across requests.
+
+**Latency**: the 2-stage flow takes ~5-8s end-to-end (stage 1 LLM
+call + directed aggregator scrape + stage 3 LLM call), vs ~3-4s for
+v1. The aggregator's 60s per-source cache reuses results within the
+window so the "directed" scrape is typically a cache hit.
+
+### Security boundaries
+
+Both stage-1 and stage-3 LLM calls receive a system prompt with an
+**explicit security boundary** (REQ-LLM-SEC-001):
+
+- **Stage 1** (`INTENT_EXTRACTION_SYSTEM_PROMPT`): the prompt lists
+  the 6 `Intent` field names (`q`, `location`, `experience_years`,
+  `remote`, `employment_type`, `confidence`) plus 4 invariants:
+  1. **No inventes** — never invent fields the user did not mention
+  2. **Null for absent** — return `null` for fields the user did not
+     mention, never default
+  3. **No malformed JSON** — output must be valid JSON, no markdown
+     fences, no surrounding prose
+  4. **Si dudas, baja confidence** — if uncertain, lower `confidence`
+     and let the dispatcher fall back to v1
+
+- **Stage 3** (the v1 `SYSTEM_PROMPT`, with the security boundary
+  APPENDED at the END per REQ-LLM-SEC-001 scenario 1): the boundary
+  lists the 2 stage-3 field names (`matching_ids`, `explanation`) plus
+  the same 4 invariants (no inventes IDs, no inventes ubicaciones,
+  null for absent, no malformed JSON, si dudas no inventes). The v1
+  prompt NAME is preserved (no rename); the boundary is a STRING
+  APPEND, not a replacement.
+
+- **Pydantic `extra="forbid"`** (REQ-LLM-SEC-002) is enforced on
+  every LLM response. The stage-1 parser rejects unknown fields,
+  type mismatches, and out-of-range `confidence` (`Field(ge=0.0,
+  le=1.0)`). The stage-3 parser is the v1 defensive 3-tier parser
+  (pinned unchanged by 14 unit tests in `test_llm_parser.py`).
+
+- **Retry once with corrective prompt** (REQ-LLM-SEC-002): on stage-1
+  parse failure, the `IntentExtractor` retries ONCE with the
+  corrective system prompt (schema-explicit + one-line example). On
+  retry failure, the use case falls back to v1 — a misbehaving model
+  that fails twice will not succeed on a third try, and a runaway
+  retry loop would multiply the cost.
+
+### Running the live tests
+
+The 2 live tests in `tests/integration/test_chat_live.py` are gated
+by `LLM_LIVE_TESTS=1` and NEVER run in CI (AGENTS.md rule #1). To
+run them locally, use the `direnv` pattern so the API key auto-loads
+on `cd`:
+
+```bash
+# 1. Install direnv: https://direnv.net/
+
+# 2. Create .envrc in the project root (gitignored):
+export LLM_API_KEY=<your-minimax-key>
+
+# 3. Allow the file:
+direnv allow
+
+# 4. `cd` into the project dir auto-loads LLM_API_KEY. Now run:
+LLM_LIVE_TESTS=1 uv run pytest tests/integration/test_chat_live.py -v
+```
+
+The 2 live tests cover:
+- `test_live_chat_2stage_high_confidence`: canned
+  "ingeniero Python en Madrid, 3+ años, remoto" → 2-stage path,
+  asserts `used_fallback=False` + non-empty explanation.
+- `test_live_chat_2stage_low_confidence_fallback`: canned "asdf"
+  (gibberish) → v1 fallback, asserts `used_fallback=True`.
 
 ### Rollout
 
-The chat filter follows a **2-stage rollout**:
+The chat filter follows a **2-stage rollout** (the rollout, distinct
+from the LLM 2-stage flow):
 
 1. **Stage 1 (default)**: code merged with `LLM_FILTER_ENABLED=false`
    (the default). The chat route is **NOT** registered; the chat
@@ -838,6 +984,13 @@ The chat filter follows a **2-stage rollout**:
    The chat route is registered; the LLM client is constructed; the
    chat middleware is mounted. No redeploy is required to disable —
    flip `LLM_FILTER_ENABLED=false` and the route returns 404 again.
+
+**The `INTENT_EXTRACTION_ENABLED` kill switch** is a separate,
+**runtime** toggle. When the chat filter is ON but
+`INTENT_EXTRACTION_ENABLED=false`, the route is still registered
+but the use case reverts to the v1 single-stage flow (no stage-1
+LLM call, no extra cost). This is the per-deployment lever for
+operators who want the chat filter but not the 2-stage LLM cost.
 
 ### LinkedIn description: empirical finding (Branch B)
 
