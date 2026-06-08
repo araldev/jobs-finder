@@ -35,7 +35,7 @@ from __future__ import annotations
 import ipaddress
 import json
 from ipaddress import IPv4Network, IPv6Network
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -97,6 +97,42 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
     )
+
+    @classmethod
+    def _settings_build_values(
+        cls, sources: tuple[Any, ...], init_kwargs: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Override `BaseSettings._settings_build_values` to work around a
+        pydantic-settings 2.14.1 `deep_update` quirk for `dict`-typed
+        fields.
+
+        Without this override, programmatic
+        `Settings(aggregator_priority_map={"x": 99})` is silently merged
+        with the `.env` value (which is itself a `dict`) into
+        `{"linkedin": 0, "indeed": 1, "infojobs": 2, "x": 99}` — the
+        user's dict is *added* to the `.env` default instead of
+        *replacing* it. `deep_update` is the function that pydantic-
+        settings uses to combine each `BaseSettingsSource`'s state
+        (`init_settings`, `env_settings`, `dotenv_settings`, etc.); it
+        deep-merges two `dict` values rather than replacing. This breaks
+        `test_programmatic_construction_still_works` for ANY
+        `dict[str, int]`-typed field that ALSO has a `.env` entry.
+
+        The fix is a 3-line override: when the user explicitly passed
+        `aggregator_priority_map` programmatically, force the merged
+        `state` to use the user's dict verbatim. Non-dict fields are
+        unaffected (`deep_update` already replaces scalars, lists, and
+        frozensets correctly).
+
+        Tracked as a follow-up from the `chat-filter-2stage` cycle
+        (obs #285). The v1 test
+        `test_aggregator_settings::test_programmatic_construction_still_works`
+        was deselected at the v1 baseline and is now GREEN again.
+        """
+        state = super()._settings_build_values(sources, init_kwargs)
+        if "aggregator_priority_map" in init_kwargs:
+            state["aggregator_priority_map"] = init_kwargs["aggregator_priority_map"]
+        return state
 
     throttle_seconds: float = 3.0
     user_agent: str = _DEFAULT_USER_AGENT
