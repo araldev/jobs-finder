@@ -18,7 +18,11 @@ from fastapi import FastAPI
 
 from jobs_finder.infrastructure.config import Settings, load_settings
 from jobs_finder.infrastructure.linkedin.scraper import LinkedInPlaywrightScraper
+from jobs_finder.infrastructure.location.hardcoded_resolver import (
+    HardcodedLocationResolver,
+)
 from jobs_finder.main import app
+from jobs_finder.presentation.app_factory import build_app
 from jobs_finder.presentation.middleware import RequestIdMiddleware
 
 # ---------------------------------------------------------------------------
@@ -133,3 +137,60 @@ def test_importing_main_does_not_launch_a_browser() -> None:
     assert isinstance(port, LinkedInPlaywrightScraper)
     # The scraper has not been entered: no browser reference.
     assert port._browser is None  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# `HardcodedLocationResolver` injection (REQ-LOC-002, T-007)
+#
+# The composition root (`app_factory.build_app()`) MUST
+# instantiate a `HardcodedLocationResolver` and inject it
+# into the `LinkedInScraperSettings` (which the
+# `LinkedInPlaywrightScraper` reads in its constructor). The
+# resolver is built ALWAYS — not gated by `chat_enabled` —
+# so the `GET /jobs` route can resolve `location` to
+# `geoId` for the LinkedIn scraper regardless of the chat
+# feature's on/off state.
+# ---------------------------------------------------------------------------
+
+
+def test_linkedin_scraper_has_resolver() -> None:
+    """`build_app()` constructs a `LinkedInPlaywrightScraper` with a `location_resolver`.
+
+    The `HardcodedLocationResolver` is built at composition-
+    root time and passed to `LinkedInScraperSettings` via
+    the `location_resolver` kwarg. The scraper's
+    `_settings.location_resolver` MUST be a non-`None`
+    `HardcodedLocationResolver` instance.
+    """
+    built_app = build_app()
+    port = getattr(built_app.state, "job_search_port", None)
+    assert port is not None
+    assert isinstance(port, LinkedInPlaywrightScraper)
+    # The `LinkedInScraperSettings` carries the resolver.
+    assert port._settings.location_resolver is not None  # noqa: SLF001
+    assert isinstance(
+        port._settings.location_resolver,  # noqa: SLF001
+        HardcodedLocationResolver,
+    )
+
+
+def test_resolver_built_when_chat_disabled() -> None:
+    """The resolver is built even when `chat_enabled=False`.
+
+    The resolver is built in the `build_app()` default
+    branch BEFORE the chat-specific code path; it is NOT
+    gated by `chat_enabled`. This pins the spec invariant
+    "`HardcodedLocationResolver` se construye SIEMPRE" (REQ-
+    LOC-002 scenario 3).
+    """
+    # No `LLM_API_KEY` in the env → `chat_enabled=False`.
+    built_app = build_app()
+    port = getattr(built_app.state, "job_search_port", None)
+    assert port is not None
+    assert isinstance(port, LinkedInPlaywrightScraper)
+    # The resolver is present regardless of the chat state.
+    assert port._settings.location_resolver is not None  # noqa: SLF001
+    assert isinstance(
+        port._settings.location_resolver,  # noqa: SLF001
+        HardcodedLocationResolver,
+    )

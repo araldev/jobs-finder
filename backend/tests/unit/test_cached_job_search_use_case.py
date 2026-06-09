@@ -32,6 +32,7 @@ from jobs_finder.application.usecases._cached_search import (
 )
 from jobs_finder.domain.exceptions import JobSearchError
 from jobs_finder.domain.job import Job
+from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCache
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -604,3 +605,109 @@ async def test_existing_fake_port_accepts_geo_id_kwarg() -> None:
     # `geo_id` kwarg was NOT forwarded because the fake
     # port's signature is the pre-WU3 3-arg shape).
     assert port.calls == [("python", "madrid", 20)]
+
+
+# ---------------------------------------------------------------------------
+# `query_tokens` cache key (REQ-CACHE-001, T-006)
+#
+# The 6th field of `JobSearchCacheKey` is `query_tokens:
+# tuple[str, ...] = ()`. A query with `query_tokens=("react",)`
+# is byte-distinct from the same query with
+# `query_tokens=()` — the cache entries are isolated. The
+# default `()` preserves backward compat for callers that
+# pre-date the change.
+# ---------------------------------------------------------------------------
+
+
+async def test_cache_key_default_query_tokens_is_empty() -> None:
+    """`JobSearchCacheKey(source, keywords, location, limit)` 5-arg → `query_tokens == ()`.
+
+    Backward compat: callers that pre-date T-006 construct
+    the key with 5 positional args; the new `query_tokens`
+    field defaults to `()` (the empty tuple). The test
+    pins the default.
+    """
+    key = JobSearchCacheKey(source="linkedin", keywords="react", location="malaga", limit=20)
+    assert key.query_tokens == ()
+
+
+async def test_cache_key_includes_normalized_tokens() -> None:
+    """Two calls with same `query_tokens` (different ordering) produce the same cache key.
+
+    `query_tokens` is normalized via `tuple(sorted(...))`
+    before the key is built, so the iteration order of the
+    caller's `set` does not affect the cache key. The 2
+    calls produce the same `JobSearchCacheKey`.
+    """
+    port = _FakeJobSearchPortWithGeoId(jobs=[_job(1)])
+    cache = _FakeCachePort()
+    wrapper = CachedJobSearchUseCase(port=port, cache=cache, source="linkedin")
+
+    first = await wrapper.search("react", "malaga", 20, query_tokens=("react", "málaga"))
+    second = await wrapper.search(
+        "react",
+        "malaga",
+        20,
+        query_tokens=("málaga", "react"),  # different order
+    )
+
+    # Both calls hit the same cache entry (the second is a
+    # HIT — the cache key is byte-distinct but the
+    # `query_tokens` is normalized to a sorted tuple).
+    assert first.cache_status is CacheStatus.MISS
+    assert second.cache_status is CacheStatus.HIT
+    # The port was called once (the second call was a cache
+    # HIT and did not invoke the port).
+    assert len(port.calls) == 1
+
+
+async def test_cache_key_distinguishes_queries() -> None:
+    """`query_tokens=("react",)` vs `query_tokens=("python",)` → 2 distinct cache entries.
+
+    Different `query_tokens` produce different cache keys
+    (the 6th field). A query for "react" with one set of
+    tokens is NOT a cache hit for a query with different
+    tokens.
+    """
+    port = _FakeJobSearchPortWithGeoId(jobs=[_job(1)])
+    cache = _FakeCachePort()
+    wrapper = CachedJobSearchUseCase(port=port, cache=cache, source="linkedin")
+
+    first = await wrapper.search("react", "malaga", 20, query_tokens=("react",))
+    second = await wrapper.search("python", "malaga", 20, query_tokens=("python",))
+
+    assert first.cache_status is CacheStatus.MISS
+    assert second.cache_status is CacheStatus.MISS
+    # The port was called twice (no cache hits).
+    assert len(port.calls) == 2
+
+
+async def test_cache_separates_entries_by_query_tokens() -> None:
+    """The `InMemoryTTLCache` keeps distinct entries for distinct `query_tokens`.
+
+    The 6th `query_tokens` field of `JobSearchCacheKey`
+    contributes to the cache key's hash. A `get()` with a
+    different `query_tokens` returns `None` (MISS), even
+    when the other 5 fields are identical.
+    """
+    cache: InMemoryTTLCache[JobSearchCacheKey, list[Job]] = InMemoryTTLCache(ttl_seconds=60.0)
+    key_react = JobSearchCacheKey(
+        source="linkedin",
+        keywords="react",
+        location="malaga",
+        limit=20,
+        query_tokens=("react",),
+    )
+    key_python = JobSearchCacheKey(
+        source="linkedin",
+        keywords="react",
+        location="malaga",
+        limit=20,
+        query_tokens=("python",),
+    )
+    await cache.set(key_react, [_job(1)])
+
+    # Same `query_tokens` → HIT.
+    assert await cache.get(key_react) == [_job(1)]
+    # Different `query_tokens` → MISS (different cache key).
+    assert await cache.get(key_python) is None

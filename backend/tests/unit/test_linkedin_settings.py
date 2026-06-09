@@ -177,3 +177,59 @@ def test_linkedin_env_vars_dont_cross_bleed_with_indeed_or_infojobs(
     assert settings.linkedin_inter_page_delay_seconds == 0.7
     assert settings.indeed_max_pages == 4
     assert settings.infojobs_max_pages == 5
+
+
+# ---------------------------------------------------------------------------
+# `LinkedInScraperSettings.location_resolver` field (REQ-LOC-002, T-001)
+#
+# The `location_resolver: LocationResolverPort | None = None` field
+# is added to the settings dataclass in the
+# `backend-scraper-query-tuning` change. It MUST be optional with
+# a `None` default (preserves backward compat with pre-change
+# constructors), and `__eq__` / `__hash__` MUST include the new
+# field so two settings with different resolvers are NOT
+# `==`-equal (a hash collision in `app.state` would silently
+# misroute the resolver).
+# ---------------------------------------------------------------------------
+
+
+def test_settings_optional_resolver_defaults_to_none() -> None:
+    """`LinkedInScraperSettings(user_agent, timeout_ms)` → `location_resolver is None`.
+
+    The new `location_resolver` field defaults to `None` so a
+    pre-change caller that constructs the settings with the 4
+    documented keyword args continues to work. The default
+    preserves the v1 contract: a scraper built without a
+    resolver falls back to `?location=<str>` (the broken path).
+    """
+    settings = LinkedInScraperSettings(user_agent="ua", timeout_ms=10_000)
+    assert settings.location_resolver is None
+
+
+def test_settings_equality_includes_resolver() -> None:
+    """Two `LinkedInScraperSettings` differing ONLY in `location_resolver` are NOT `==`.
+
+    The `__eq__` and `__hash__` methods on `LinkedInScraperSettings`
+    MUST include the new `location_resolver` field. A regression
+    that omits the field from `__eq__` would cause two scrapers
+    with different resolvers to be `==`-equal; the first-registered
+    resolver would shadow the second in any dict-keyed state.
+    The test pins the contract: two settings with identical
+    scalars but different resolvers are NOT equal.
+    """
+
+    class _StubResolver:
+        def resolve(self, location: str) -> int | None:  # pragma: no cover
+            return None
+
+    a = LinkedInScraperSettings(user_agent="ua", timeout_ms=10_000)
+    b = LinkedInScraperSettings(
+        user_agent="ua",
+        timeout_ms=10_000,
+        location_resolver=_StubResolver(),
+    )
+    assert a != b
+    # `__hash__` is also updated: the two settings have
+    # different hashes (not a strict requirement, but pins
+    # the contract that `__eq__` and `__hash__` agree).
+    assert hash(a) != hash(b)

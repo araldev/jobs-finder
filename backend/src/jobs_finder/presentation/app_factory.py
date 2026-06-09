@@ -169,6 +169,21 @@ def build_app(  # noqa: PLR0915
     """
     effective_settings = settings if settings is not None else Settings()
 
+    # T-007 (`backend-scraper-query-tuning`): construct the
+    # `HardcodedLocationResolver` ALWAYS (NOT gated by
+    # `chat_enabled`). The resolver is a read-only in-process
+    # dict lookup; the cost is one import + one dict
+    # construction per app build. The scraper reads
+    # `_settings.location_resolver` in its `search()` method
+    # (REQ-LOC-001) — without this injection, the scraper
+    # falls back to the broken `?location=<str>` URL formula
+    # (the pre-`fix-linkedin-geoid` path). The resolver is
+    # also reused by the chat filter (`location_resolver`
+    # arg of `FilterJobsByIntentUseCase`) and by the
+    # `GET /jobs` route (`app.state.location_resolver`,
+    # T-009).
+    location_resolver = HardcodedLocationResolver()
+
     # Logging MUST be configured before any middleware or route runs
     # so that log records emitted during request processing are
     # formatted as JSON (or plain) with the request_id bound.
@@ -226,11 +241,18 @@ def build_app(  # noqa: PLR0915
             # in-module `ScraperSettings`; the two new env-driven
             # fields (`linkedin_max_pages`, `linkedin_inter_page_delay_seconds`)
             # are the pagination knobs (REQ-L-007, REQ-L-009).
+            # T-007: the `location_resolver` kwarg wires the
+            # resolver into the settings so the scraper's
+            # `search()` can call `resolve(location)` once per
+            # call (the pre-`backend-scraper-query-tuning`
+            # build had no resolver; the URL builder always
+            # fell back to `?location=<str>`).
             settings=LinkedInScraperSettings(
                 user_agent=effective_settings.user_agent,
                 timeout_ms=effective_settings.request_timeout_ms,
                 max_pages=effective_settings.linkedin_max_pages,
                 inter_page_delay_seconds=effective_settings.linkedin_inter_page_delay_seconds,
+                location_resolver=location_resolver,
             ),
         )
         raw_use_case = RawLinkedInJobsUseCase(port=scraper)
@@ -488,6 +510,16 @@ def build_app(  # noqa: PLR0915
     app.state.infojobs_job_search_port = (
         _unwrap_to_port(infojobs_use_case) if infojobs_use_case is not None else None
     )
+    # T-009 (`backend-scraper-query-tuning`): expose the
+    # `Settings` instance and the `HardcodedLocationResolver`
+    # on `app.state` so the `GET /jobs` route can read them
+    # without re-importing the modules. The settings is the
+    # SAME instance used for the scraper + cache wiring (no
+    # re-read of env vars per request). The resolver is the
+    # SAME instance injected into the LinkedIn scraper (no
+    # re-build per request).
+    app.state.settings = effective_settings
+    app.state.location_resolver = location_resolver
 
     # T-002 (jobs-aggregator-endpoint): the aggregator wraps the 3
     # per-source use cases and runs them in parallel via
@@ -519,6 +551,14 @@ def build_app(  # noqa: PLR0915
             infojobs_use_case=infojobs_use_case,
             ranking_strategy=effective_settings.aggregator_ranking_strategy,
             priority_map=effective_settings.aggregator_priority_map,
+            # T-008 (`backend-scraper-query-tuning`): forward
+            # the opt-in `enable_keyword_scoring` setting. The
+            # constructor default is `False` (the v1 sort
+            # behavior). The setting flows through to the
+            # `SearchAllSourcesUseCase.search()` method as a
+            # keyword-only arg; tests can also pass it
+            # programmatically.
+            enable_keyword_scoring=effective_settings.enable_keyword_scoring,
         )
     app.state.aggregator_use_case = aggregator_use_case
 

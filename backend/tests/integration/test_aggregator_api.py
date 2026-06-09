@@ -30,7 +30,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from jobs_finder.application.aggregator import SearchAllSourcesUseCase
+from jobs_finder.application.aggregator import AggregatedResult, SearchAllSourcesUseCase
 from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase
 from jobs_finder.application.usecases.search_indeed_jobs import (
     SearchJobsUseCase as IndeedSearchJobsUseCase,
@@ -291,13 +291,18 @@ async def test_aggregator_dedupes_same_job_across_2_sources() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_aggregator_with_all_sources_failing_returns_200_and_empty_jobs() -> None:
-    """All 3 sources raise `JobSearchError`; the route returns 200 with empty jobs.
+async def test_aggregator_with_all_sources_failing_returns_502() -> None:
+    """All 3 sources raise `JobSearchError`; the route returns 502.
 
-    The aggregator is designed to NOT propagate per-source 502s —
-    partial failure is normal. The body's `jobs` list is empty;
-    the `X-Aggregator-Errors` header is verified in T-003's
-    `test_aggregator_headers.py`.
+    REQ-DEFENSIVE-001 scenario 2: when ALL 3 sources fail, the
+    aggregator raises `AllSourcesFailedError` (a
+    `JobSearchError` subclass) and the registered
+    `JobSearchError` handler maps to HTTP 502. The body is
+    the masked `{"detail": "upstream source unavailable",
+    "request_id": "..."}` shape (the same as any per-source
+    failure). The pre-`backend-scraper-query-tuning` v1
+    contract returned 200 + empty jobs (a silent
+    failure-mode that misled clients).
     """
     linkedin_port = FakeJobSearchPort(error=LinkedInBlockedError("auth wall"))
     indeed_port = FakeJobSearchPort(error=IndeedBlockedError("cloudflare"))
@@ -308,9 +313,10 @@ async def test_aggregator_with_all_sources_failing_returns_200_and_empty_jobs() 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/jobs?q=python&location=madrid")
 
-    assert response.status_code == 200
+    assert response.status_code == 502
     body = response.json()
-    assert body == {"jobs": []}
+    assert body["detail"] == "upstream source unavailable"
+    assert "request_id" in body
 
 
 # ---------------------------------------------------------------------------
@@ -365,3 +371,150 @@ def test_app_factory_exposes_aggregator_use_case_on_app_state(
     app = _build_app(FakeJobSearchPort(), fake_indeed_port, fake_infojobs_port)
     assert hasattr(app.state, "aggregator_use_case")
     assert isinstance(app.state.aggregator_use_case, SearchAllSourcesUseCase)
+
+
+# ---------------------------------------------------------------------------
+# `query_tokens` + `enable_keyword_scoring` + `linkedin_geo_id` forwarding
+# (REQ-LOC-001 + REQ-FILTER-001 + REQ-CACHE-001 + REQ-SCORE-001, T-009)
+#
+# The aggregator route forwards 3 new kwargs to the use case
+# (and to the per-source use cases where applicable):
+# - `query_tokens`: from `tokenize(query.q)`.
+# - `enable_keyword_scoring`: from `Settings.enable_keyword_scoring`.
+# - `linkedin_geo_id`: from `app.state.location_resolver.resolve(query.location)`.
+#
+# The 3 tests below inject a spy `SearchAllSourcesUseCase`
+# that records every `search()` call's kwargs. The tests
+# then assert the kwargs are forwarded correctly. (Using
+# the real `build_app()` flow would verify the route +
+# wiring + use case end-to-end, but the kwargs are
+# forwarded to the per-source use cases — the
+# `SearchAllSourcesUseCase` is the only place that sees
+# `query_tokens` and `enable_keyword_scoring` as top-level
+# kwargs, so spying on it is the cleanest assertion target.)
+# ---------------------------------------------------------------------------
+
+
+class _SpySearchAllSourcesUseCase:
+    """Spy that records every `search()` call's kwargs.
+
+    Mirrors the `SearchAllSourcesUseCase.search()` signature
+    (the 5 required positional args + the 4 keyword-only
+    args added in `backend-scraper-query-tuning`). The spy
+    returns a minimal `AggregatedResult` (empty jobs + per-
+    source MISS for every requested source) so the route
+    serves a 200 response and the `X-Cache` header is
+    valid.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def search(
+        self,
+        keywords: str,
+        location: str,
+        limit: int,
+        sources: list[str],
+        *,
+        linkedin_geo_id: int | None = None,
+        query_tokens: frozenset[str] = frozenset(),
+        enable_keyword_scoring: bool | None = None,
+    ) -> AggregatedResult:
+        from jobs_finder.application.aggregator import (  # noqa: PLC0415
+            AggregatedResult,
+            SourceResult,
+        )
+
+        self.calls.append(
+            {
+                "keywords": keywords,
+                "location": location,
+                "limit": limit,
+                "sources": sources,
+                "linkedin_geo_id": linkedin_geo_id,
+                "query_tokens": query_tokens,
+                "enable_keyword_scoring": enable_keyword_scoring,
+            }
+        )
+        return AggregatedResult(
+            jobs=[],
+            per_source={s: SourceResult(source=s) for s in sources},
+            cache_statuses={s: "MISS" for s in sources},
+        )
+
+
+def _build_app_with_spy(spy: _SpySearchAllSourcesUseCase) -> FastAPI:
+    """Build a `FastAPI` whose `app.state.aggregator_use_case` is the spy."""
+    return build_app(aggregator_use_case=spy)  # type: ignore[arg-type]
+
+
+async def test_aggregator_api_passes_query_tokens_to_use_case(
+    fake_indeed_port: FakeJobSearchPort,
+    fake_infojobs_port: FakeJobSearchPort,
+) -> None:
+    """`GET /jobs?q=react` → spy receives `query_tokens=frozenset({"react"})`.
+
+    The route tokenizes `q="react"` via
+    `infrastructure.aggregator_filters.tokenize` and forwards
+    the resulting `frozenset[str]` to the use case's
+    `query_tokens` kwarg. The spy records the kwarg; the
+    test asserts the value is `frozenset({"react"})`.
+    """
+    spy = _SpySearchAllSourcesUseCase()
+    app = _build_app_with_spy(spy)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.get(
+            "/jobs?q=react&location=malaga&limit=20&sources=linkedin,indeed,infojobs"
+        )
+    assert response.status_code == 200
+    # The spy recorded exactly 1 call with the expected kwargs.
+    assert len(spy.calls) == 1
+    assert spy.calls[0]["query_tokens"] == frozenset({"react"})
+
+
+async def test_aggregator_api_passes_enable_keyword_scoring_from_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`ENABLE_KEYWORD_SCORING=true` env var → spy receives `enable_keyword_scoring=True`.
+
+    The route reads the `Settings.enable_keyword_scoring`
+    setting and forwards it to `use_case.search()`. The test
+    sets the env var, builds the app, and asserts the spy
+    saw the resolved value.
+    """
+    monkeypatch.setenv("ENABLE_KEYWORD_SCORING", "true")
+    spy = _SpySearchAllSourcesUseCase()
+    app = _build_app_with_spy(spy)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.get(
+            "/jobs?q=react&location=malaga&limit=20&sources=linkedin,indeed,infojobs"
+        )
+    assert response.status_code == 200
+    assert len(spy.calls) == 1
+    assert spy.calls[0]["enable_keyword_scoring"] is True
+
+
+async def test_aggregator_api_resolves_linkedin_geo_id_from_resolver() -> None:
+    """`GET /jobs?location=malaga` → spy receives `linkedin_geo_id=104401670`.
+
+    The route reads `app.state.location_resolver` (the
+    `HardcodedLocationResolver` is built at composition
+    time in T-007) and calls `resolve(query.location)`. The
+    `malaga` input maps to `104401670`. The resolved int is
+    forwarded to the spy as `linkedin_geo_id`.
+    """
+    spy = _SpySearchAllSourcesUseCase()
+    app = _build_app_with_spy(spy)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.get(
+            "/jobs?q=react&location=malaga&limit=20&sources=linkedin,indeed,infojobs"
+        )
+    assert response.status_code == 200
+    assert len(spy.calls) == 1
+    # `104401670` is Málaga's captured geoId (per
+    # `infrastructure/location/_mapping.py`).
+    assert spy.calls[0]["linkedin_geo_id"] == 104401670

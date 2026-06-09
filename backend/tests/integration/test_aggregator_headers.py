@@ -203,8 +203,17 @@ async def test_aggregator_headers_single_source_no_commas_in_x_cache() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_aggregator_headers_all_sources_fail_lists_all_three_in_errors() -> None:
-    """All 3 sources raise; the errors header lists all 3 in priority order."""
+async def test_aggregator_headers_all_sources_fail_returns_502() -> None:
+    """All 3 sources raise; the route returns 502 (REQ-DEFENSIVE-001 scenario 2).
+
+    Pre-`backend-scraper-query-tuning` v1 contract returned
+    200 with empty jobs; the new spec maps all-fail to 502
+    so clients get an unambiguous "all sources failed"
+    signal (the same status as any individual source
+    failure). The response body is the masked
+    `{"detail": "upstream source unavailable", ...}` shape;
+    the original exception types are NEVER included.
+    """
     linkedin_port = FakeJobSearchPort(error=LinkedInBlockedError("auth wall"))
     indeed_port = FakeJobSearchPort(error=IndeedBlockedError("cloudflare"))
     infojobs_port = FakeJobSearchPort(error=InfoJobsBlockedError("distil"))
@@ -214,11 +223,16 @@ async def test_aggregator_headers_all_sources_fail_lists_all_three_in_errors() -
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         response = await ac.get("/jobs?q=python&location=madrid&sources=linkedin,indeed,infojobs")
 
-    assert response.status_code == 200
-    assert response.headers["x-cache"] == "MISS,MISS,MISS"
-    assert response.headers["x-aggregator-errors"] == "linkedin,indeed,infojobs"
-    # Body is empty (no successful source).
-    assert response.json() == {"jobs": []}
+    assert response.status_code == 502
+    # The body is the masked `JobSearchError` shape; the
+    # body is NOT the `{"jobs": []}` shape the v1 contract
+    # returned.
+    body = response.json()
+    assert body["detail"] == "upstream source unavailable"
+    assert "request_id" in body
+    # The `X-Cache: MISS` header is on the 502 response
+    # (a 502 in this design always implies a fresh MISS).
+    assert response.headers.get("x-cache") == "MISS"
 
 
 # ---------------------------------------------------------------------------
