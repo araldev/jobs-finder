@@ -82,6 +82,9 @@ from jobs_finder.application.usecases.search_linkedin_jobs import (
 from jobs_finder.domain.job import Job
 from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCache
 from jobs_finder.infrastructure.llm.exceptions import LLMUnavailableError
+from jobs_finder.infrastructure.location.hardcoded_resolver import (
+    HardcodedLocationResolver,
+)
 from jobs_finder.infrastructure.rate_limit.in_memory_token_bucket import (
     InMemoryTokenBucket,
 )
@@ -641,3 +644,164 @@ async def test_2stage_returns_404_when_chat_disabled() -> None:
 
     # FastAPI's default 404 body shape.
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# `LocationResolverPort` integration (REQ-LOC-GEO-001, WU5 of
+# `fix-linkedin-geoid`).
+#
+# End-to-end assertion: a high-confidence chat with
+# `intent.location="Madrid"` flows through the resolver
+# (`HardcodedLocationResolver().resolve("Madrid") == 103374081`)
+# and the LinkedIn port receives `geo_id=103374081` in its
+# `search(...)` call. This is the original gap test (intentionally
+# a regression test for the 953 baseline): the prior `chat-filter-
+# 2stage` cycle used `FakeJobSearchPort` that short-circuited the
+# URL builder and missed the `geoId=` vs `location=` mismatch.
+# The new test pins the full chain end-to-end.
+# ---------------------------------------------------------------------------
+
+
+class RecordingLinkedInJobSearchPort:
+    """A `JobSearchPort` that records `(keywords, location, limit, geo_id)`.
+
+    The 4-tuple `calls` shape captures the per-source forwarding
+    contract after the WU3 signature extension. The test asserts
+    the LinkedIn port received `geo_id=103374081` (the value the
+    `HardcodedLocationResolver` returned for `"Madrid"`).
+    """
+
+    def __init__(self, jobs: list[Job] | None = None) -> None:
+        self._jobs: list[Job] = list(jobs) if jobs is not None else []
+        self.calls: list[tuple[str, str, int, int | None]] = []
+
+    async def search(
+        self,
+        keywords: str,
+        location: str,
+        limit: int = 20,
+        geo_id: int | None = None,
+    ) -> list[Job]:
+        self.calls.append((keywords, location, limit, geo_id))
+        return list(self._jobs)
+
+
+def _build_chat_2stage_test_app_with_resolver(
+    *,
+    jobs: list[Job],
+    intent_extractor: IntentExtractorPort,
+    llm: LLMClientPort,
+    linkedin_port: RecordingLinkedInJobSearchPort,
+) -> FastAPI:
+    """Build a chat app with a real `HardcodedLocationResolver` + a recording LinkedIn port.
+
+    The 3 source use cases are wired to a SHARED
+    `RecordingLinkedInJobSearchPort` for LinkedIn (records
+    the `geo_id` kwarg) and a fresh empty `FakeJobSearchPort`
+    for Indeed + InfoJobs (so the aggregator only records
+    the LinkedIn call with the `geo_id`). The chat use
+    case is built with the real `HardcodedLocationResolver`
+    so the `intent.location` → `geoId` translation runs
+    end-to-end.
+    """
+    indeed_port = FakeJobSearchPort(jobs=[])
+    infojobs_port = FakeJobSearchPort(jobs=[])
+    cache: InMemoryTTLCache[JobSearchCacheKey, list[Job]] = InMemoryTTLCache(ttl_seconds=60.0)
+    linkedin_uc = SearchLinkedInJobsUseCase(
+        port=linkedin_port,
+        cache=cache,
+        source="linkedin",
+    )
+    indeed_uc = IndeedSearchJobsUseCase(
+        port=indeed_port,
+        cache=InMemoryTTLCache(ttl_seconds=60.0),
+        source="indeed",
+    )
+    infojobs_uc = InfoJobsSearchJobsUseCase(
+        port=infojobs_port,
+        cache=InMemoryTTLCache(ttl_seconds=60.0),
+        source="infojobs",
+    )
+    aggregator = SearchAllSourcesUseCase(
+        linkedin_use_case=linkedin_uc,
+        indeed_use_case=indeed_uc,
+        infojobs_use_case=infojobs_uc,
+    )
+    chat_use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator,
+        llm=llm,
+        intent_extractor=intent_extractor,
+        location_resolver=HardcodedLocationResolver(),
+    )
+    app = FastAPI()
+    app.add_middleware(RequestIdMiddleware)
+    app.include_router(
+        chat_routes.build_chat_router(
+            use_case=chat_use_case,
+            max_message_chars=1000,
+        )
+    )
+    app.state.filter_use_case = chat_use_case
+    return app
+
+
+async def test_2stage_geo_id_end_to_end_with_real_resolver(
+    jobs: list[Job],
+) -> None:
+    """End-to-end: resolver translates Madrid → 103374081 → LinkedIn port.
+
+    REQ-LOC-GEO-001 + REQ-CHAT-INT-001: the 2-stage path
+    translates the extracted `intent.location` into a
+    LinkedIn `geoId` via the real `HardcodedLocationResolver`
+    (not a fake). The resolved `geo_id` is forwarded to
+    the aggregator → LinkedIn use case → LinkedIn port
+    → URL builder. The test asserts the full chain
+    end-to-end with the real resolver implementation.
+
+    The `RecordingLinkedInJobSearchPort` captures the
+    `geo_id` kwarg the LinkedIn use case passed through
+    (which is the contract that the prior `chat-filter-2stage`
+    cycle missed — `FakeJobSearchPort` short-circuited
+    this layer).
+
+    The test uses the `FakeLLMClient` (1 LLM call: stage 3
+    only; the `FakeIntentExtractor` does NOT invoke the
+    LLM for stage 1). The test pins:
+      1. The chat response is 200 with the expected jobs.
+      2. The LinkedIn port received `geo_id=103374081`
+         (the value the resolver returned for "Madrid").
+      3. The Indeed + InfoJobs ports received `geo_id=None`
+         (they ignore the kwarg).
+    """
+    intent_extractor = _high_confidence_extractor(q="python", location="Madrid", remote=True)
+    llm = FakeLLMClient(matching_ids=["a", "c"], explanation="2 of 5 match")
+    linkedin_port = RecordingLinkedInJobSearchPort(jobs=jobs)
+    app = _build_chat_2stage_test_app_with_resolver(
+        jobs=jobs,
+        intent_extractor=intent_extractor,
+        llm=llm,
+        linkedin_port=linkedin_port,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post("/jobs/chat", json={"message": "python remoto en Madrid"})
+
+    # The chat response is 200.
+    assert response.status_code == 200
+    body = response.json()
+    # The LLM picked 2 jobs in aggregator order.
+    assert [job["id"] for job in body["jobs"]] == ["a", "c"]
+    # `used_fallback=False` (2-stage path).
+    assert body["used_fallback"] is False
+    # The LinkedIn port received `geo_id=103374081` (the
+    # value the `HardcodedLocationResolver` returned for
+    # "Madrid"). This is the original gap test.
+    assert len(linkedin_port.calls) == 1
+    keywords, location, limit, geo_id = linkedin_port.calls[0]
+    assert keywords == "python"
+    assert location == "Madrid"
+    assert limit == 100  # `intent_max_results`
+    assert geo_id == 103374081
+    # The LLM was called ONCE (stage 3 only; the
+    # `FakeIntentExtractor` does NOT invoke the LLM).
+    assert len(llm.calls) == 1

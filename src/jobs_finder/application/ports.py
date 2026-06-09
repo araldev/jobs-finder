@@ -34,9 +34,27 @@ class JobSearchPort(Protocol):
     The default value on `limit` is duplicated in the Pydantic schema at the
     presentation boundary; the application trusts the caller to pass an
     already-validated value.
+
+    The 4th `geo_id: int | None = None` kwarg (added in
+    `fix-linkedin-geoid` change, REQ-LOC-GEO-001) is the
+    LinkedIn-specific numeric `geoId` the resolver returned
+    for `location`. The aggregator forwards the kwarg ONLY
+    to the LinkedIn port (per `SearchAllSourcesUseCase.search`
+    dispatch); Indeed + InfoJobs port implementations ignore
+    it. The default `None` preserves backward compat for
+    callers that pre-date the change — the existing
+    `JobSearchPort` consumers (the per-source use cases, the
+    `CachedJobSearchUseCase` wrapper) keep working without
+    any signature changes at their call site.
     """
 
-    async def search(self, keywords: str, location: str, limit: int = 20) -> list[Job]:
+    async def search(
+        self,
+        keywords: str,
+        location: str,
+        limit: int = 20,
+        geo_id: int | None = None,
+    ) -> list[Job]:
         """Search the source for jobs matching the criteria."""
         ...
 
@@ -78,6 +96,16 @@ class JobSearchCacheKey(NamedTuple):
     share a cache entry with the same query on `/jobs/indeed`
     (REQ-C-005 — per-source isolation).
 
+    The 5th `geo_id: int | None = None` field (added in
+    `fix-linkedin-geoid`) is the LinkedIn-specific `geoId=`
+    value (a `int`) the resolver returned for `location`. A
+    query with `location="Madrid", geo_id=103374081` (resolved)
+    is byte-distinct from `location="Madrid", geo_id=None` (not
+    resolved) — they return different jobs, so a cache HIT on
+    one would silently corrupt the other. The field is `None`
+    for the other 2 sources (Indeed + InfoJobs accept
+    `location=` strings; they don't need a `geoId=`).
+
     Tuple equality and hashing are exact for `NamedTuple`, so
     there is no key collision risk.
     """
@@ -86,6 +114,81 @@ class JobSearchCacheKey(NamedTuple):
     keywords: str
     location: str
     limit: int
+    geo_id: int | None = None
+
+
+# ---------------------------------------------------------------------------
+# Location resolver (REQ-LOC-GEO-001, `fix-linkedin-geoid` change)
+#
+# `LocationResolverPort` is the application layer's seam for "any
+# location-to-geoId translator". The concrete implementation
+# `HardcodedLocationResolver` lives in
+# `infrastructure/location/hardcoded_resolver.py` (a 34-entry
+# hardcoded dict sourced from `tests/fixtures/linkedin_geo_ids.csv`).
+# The use case (`FilterJobsByIntentUseCase._execute_2stage`) depends
+# on the Protocol only, never on the concrete class.
+#
+# The Protocol is NOT `@runtime_checkable` (mirrors the
+# `JobSearchPort`, `LLMClientPort`, and `IntentExtractorPort`
+# patterns in this file). Structural conformance is enforced at
+# mypy --strict time. A `FakeLocationResolver` (test double) with
+# the right `def resolve(self, location: str) -> int | None` method
+# satisfies the Protocol structurally.
+#
+# The single method `resolve(location)` is intentionally NOT
+# `async` — the resolver is a pure in-process dict lookup with
+# no I/O. The use case calls it directly without `await`; the
+# 2-stage path's "stage 2" still makes ONE real network call
+# (the aggregator scrape), but the resolver adds zero latency.
+#
+# The return type is `int | None`:
+#   - `int`: a captured LinkedIn `geoId` (e.g. `103374081`).
+#   - `None`: the input could not be resolved (unknown / country-
+#     level / País Vasco / Canarias / empty). The use case logs
+#     a WARNING and proceeds with `geo_id=None`; the LinkedIn
+#     scraper falls back to the (broken) `?location=<str>` path
+#     — a strict improvement over today's 100%-broken behavior.
+# ---------------------------------------------------------------------------
+
+
+class LocationResolverPort(Protocol):
+    """A location-to-geoId translator. Implementations live in `infrastructure/location/`.
+
+    Spec: REQ-LOC-GEO-001 — the use case
+    (`FilterJobsByIntentUseCase._execute_2stage`) depends on
+    this Protocol; the concrete `HardcodedLocationResolver`
+    is injected at composition-root time (`app_factory.build_app`).
+    A `FakeLocationResolver` with the right method signature
+    satisfies the Protocol structurally (mypy --strict
+    enforces this at type-check time).
+
+    The v1 implementation is a pure in-process dict lookup; a
+    future `HybridLocationResolver` (a follow-up change) will
+    add a geocoding API fallback for inputs the hardcoded dict
+    cannot resolve. The Protocol is the seam; the future change
+    is local to `infrastructure/location/`.
+    """
+
+    def resolve(self, location: str) -> int | None:
+        """Translate a free-form `location` string into a LinkedIn `geoId`.
+
+        Args:
+            location: The free-form location string (e.g.
+                `"Madrid"`, `"Cataluña"`, `"cdmx"`). May be
+                empty (the v1 chat-filter path passes
+                `location=""`); an empty string short-circuits
+                to `None` without a WARNING log (the canonical
+                "no location specified" sentinel).
+
+        Returns:
+            The LinkedIn `geoId` (a `int`) on a successful
+            match, OR `None` on a miss (unknown / country-
+            level / País Vasco / Canarias / empty). A WARNING
+            is logged on every miss except the empty-string
+            path (the WARNING is observable for ops to spot
+            stale geographic intent and re-run the capture
+            script).
+        """
 
 
 # ---------------------------------------------------------------------------

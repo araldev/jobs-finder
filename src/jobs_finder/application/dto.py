@@ -16,11 +16,16 @@ class SearchLinkedInInput:
 
     Spec: REQ-009. `limit` defaults to 20 here AND on the Pydantic schema
     at the presentation boundary; the use case does not re-validate.
+
+    The 4th `geo_id: int | None = None` field (added in
+    `fix-linkedin-geoid`, REQ-LOC-GEO-001) is the LinkedIn-specific
+    numeric `geoId` the resolver returned for `location`.
     """
 
     keywords: str
     location: str
     limit: int = 20
+    geo_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,11 +37,18 @@ class SearchIndeedInput:
     re-validate. The shape mirrors `SearchLinkedInInput` 1:1 so the
     presentation layer can use the same generic binding for both
     sources.
+
+    The `geo_id` field is part of the source-agnostic input
+    shape (the `_SearchInput` Protocol in the use case modules
+    declares it). The Indeed use case ignores the value
+    (Indeed accepts `location=` strings; it doesn't need a
+    `geoId=`).
     """
 
     keywords: str
     location: str
     limit: int = 20
+    geo_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,8 +65,15 @@ class SearchInfoJobsInput:
     source-neutral; see `application/usecases/search_infojobs_jobs.py`
     for the rationale). The route handler converts a Pydantic
     schema into this DTO before invoking the use case.
+
+    The `geo_id` field is part of the source-agnostic input
+    shape (the `_SearchInput` Protocol in the use case modules
+    declares it). The InfoJobs use case ignores the value
+    (InfoJobs accepts `location=` strings; it doesn't need a
+    `geoId=`).
     """
 
     keywords: str
     location: str
     limit: int = 20
+    geo_id: int | None = None

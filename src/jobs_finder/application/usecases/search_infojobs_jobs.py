@@ -42,6 +42,12 @@ class _SearchInput(Protocol):
     protocol. Plain instance attributes on a Protocol imply
     settable variables, which a frozen dataclass does NOT
     provide — mypy flags the mismatch.
+
+    The optional `geo_id: int | None` (added in
+    `fix-linkedin-geoid`) is the LinkedIn-specific numeric
+    `geoId`; the other per-source ports ignore it. The attribute
+    is optional so pre-WU3 DTOs (which don't have the field)
+    still satisfy the protocol.
     """
 
     @property
@@ -52,6 +58,9 @@ class _SearchInput(Protocol):
 
     @property
     def limit(self) -> int: ...
+
+    @property
+    def geo_id(self) -> int | None: ...
 
 
 class RawSearchJobsUseCase:
@@ -74,10 +83,22 @@ class RawSearchJobsUseCase:
         and subclasses) propagate to the caller — the use case does
         not swallow them, does not retry, and does not return an
         empty list on failure.
-        """
-        return await self._port.search(input.keywords, input.location, input.limit)
 
-    async def search(self, keywords: str, location: str, limit: int = 20) -> list[Job]:
+        The `input.geo_id` (optional, defaults to `None`) is
+        forwarded to the port. The other per-source ports ignore
+        the kwarg; the LinkedIn port uses it in the URL formula.
+        """
+        return await self._port.search(
+            input.keywords, input.location, input.limit, geo_id=input.geo_id
+        )
+
+    async def search(
+        self,
+        keywords: str,
+        location: str,
+        limit: int = 20,
+        geo_id: int | None = None,
+    ) -> list[Job]:
         """Structural `JobSearchPort` shim.
 
         `CachedJobSearchUseCase` is typed against `JobSearchPort`,
@@ -86,24 +107,30 @@ class RawSearchJobsUseCase:
         use case as its inner port. The body forwards to
         `execute` via a duck-typed input object so the existing
         DTO path is unchanged.
+
+        The 4th `geo_id: int | None = None` kwarg (added in
+        WU3) is forwarded via the `_InlineInput` shim's
+        `geo_id` field. The other per-source ports ignore it.
         """
-        return await self.execute(_InlineInput(keywords, location, limit))
+        return await self.execute(_InlineInput(keywords, location, limit, geo_id))
 
 
 class _InlineInput:
     """Duck-typed `_SearchInput` for the `search` shim.
 
-    Implements the `keywords` / `location` / `limit` read-only
-    attributes the use case's `execute` consumes. Used only by
-    the `search` shim — production callers go through the DTO.
+    Implements the `keywords` / `location` / `limit` /
+    `geo_id` read-only attributes the use case's `execute`
+    consumes. Used only by the `search` shim — production
+    callers go through the DTO.
     """
 
-    __slots__ = ("keywords", "location", "limit")
+    __slots__ = ("geo_id", "keywords", "limit", "location")
 
-    def __init__(self, keywords: str, location: str, limit: int) -> None:
+    def __init__(self, keywords: str, location: str, limit: int, geo_id: int | None = None) -> None:
         self.keywords = keywords
         self.location = location
         self.limit = limit
+        self.geo_id = geo_id
 
 
 # Public re-export. `SearchJobsUseCase` is the cached wrapper

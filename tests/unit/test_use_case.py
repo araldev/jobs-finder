@@ -47,7 +47,13 @@ class FakeJobSearchPort:
         self._error: Exception | None = error
         self.calls: list[tuple[str, str, int]] = []
 
-    async def search(self, keywords: str, location: str, limit: int = 20) -> list[Job]:
+    async def search(
+        self,
+        keywords: str,
+        location: str,
+        limit: int = 20,
+        geo_id: int | None = None,
+    ) -> list[Job]:
         self.calls.append((keywords, location, limit))
         if self._error is not None:
             raise self._error

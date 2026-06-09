@@ -91,7 +91,13 @@ class CachedJobSearchUseCase:
         self._cache = cache
         self._source = source
 
-    async def search(self, keywords: str, location: str, limit: int = 20) -> SearchResult:
+    async def search(
+        self,
+        keywords: str,
+        location: str,
+        limit: int = 20,
+        geo_id: int | None = None,
+    ) -> SearchResult:
         """Run the search, served from the cache when possible.
 
         On a cache hit, the underlying port is NOT invoked and the
@@ -100,17 +106,26 @@ class CachedJobSearchUseCase:
         being returned. Port exceptions propagate to the caller
         without being stored (REQ-C-006 — no stale-error
         poisoning).
+
+        The 4th `geo_id: int | None = None` kwarg (added in
+        `fix-linkedin-geoid`) is the LinkedIn-specific numeric
+        `geoId` the resolver returned. The kwarg is part of
+        the `JobSearchCacheKey` (REQ-LOC-GEO-001) so a query
+        with `geo_id=103374081` is byte-distinct from
+        `geo_id=None`. Indeed + InfoJobs ports ignore the
+        kwarg; the LinkedIn port uses it in the URL formula.
         """
         key = JobSearchCacheKey(
             source=self._source,
             keywords=keywords,
             location=location,
             limit=limit,
+            geo_id=geo_id,
         )
         cached = await self._cache.get(key)
         if cached is not None:
             return SearchResult(jobs=cached, cache_status=CacheStatus.HIT)
-        result = await self._port.search(keywords, location, limit)
+        result = await self._port.search(keywords, location, limit, geo_id=geo_id)
         # Only cache successful results. Errors (502) propagate
         # to the caller without poisoning the cache.
         await self._cache.set(key, result)

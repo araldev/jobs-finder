@@ -71,6 +71,7 @@ from jobs_finder.application.ports import (
     Intent,
     IntentExtractorPort,
     LLMClientPort,
+    LocationResolverPort,
 )
 from jobs_finder.domain.job import Job
 from jobs_finder.infrastructure.llm._parser import LLMSelection, parse_llm_response
@@ -187,7 +188,9 @@ class FilterJobsByIntentUseCase:
         intent_extraction_enabled: bool = True,
         intent_extraction_confidence_threshold: float = 0.7,
         intent_max_results: int = 100,
+        location_resolver: LocationResolverPort | None = None,
     ) -> None:
+        """..."""
         self._aggregator = aggregator
         self._llm = llm
         self._parser = parser
@@ -195,6 +198,7 @@ class FilterJobsByIntentUseCase:
         self._intent_extraction_enabled = intent_extraction_enabled
         self._intent_extraction_confidence_threshold = intent_extraction_confidence_threshold
         self._intent_max_results = intent_max_results
+        self._location_resolver = location_resolver
 
     async def execute(
         self,
@@ -381,11 +385,66 @@ class FilterJobsByIntentUseCase:
         """
         stage2_q = intent.q if intent.q is not None else ""
         stage2_location = intent.location if intent.location is not None else ""
+        # Resolve the `intent.location` to a LinkedIn `geoId` so the
+        # LinkedIn scraper can build `?geoId=<n>` (REQ-LOC-GEO-001).
+        # The resolver is called ONLY in the 2-stage path AND ONLY
+        # when `intent.location is not None` (the v1 path passes
+        # `location=""` and there's nothing to resolve). The
+        # resolver is a Protocol-conforming in-process dict lookup;
+        # a future `HybridLocationResolver` (geocoding API
+        # fallback) is a drop-in replacement.
+        #
+        # Resilience: a resolver exception is caught (a WARNING
+        # is logged) and the path proceeds with
+        # `linkedin_geo_id=None` (the LinkedIn scraper falls
+        # back to the broken `?location=` path — a strict
+        # improvement over today's 100%-broken behavior). The
+        # exception is NOT propagated to the route; the chat
+        # filter is still functional; only the LinkedIn
+        # location filter is degraded.
+        linkedin_geo_id: int | None = None
+        if intent.location is not None and self._location_resolver is not None:
+            try:
+                linkedin_geo_id = self._location_resolver.resolve(intent.location)
+            except Exception as exc:  # noqa: BLE001
+                # Resolver exception: log a WARNING and proceed with
+                # `linkedin_geo_id=None`. The use case does NOT
+                # propagate the exception (the chat filter is still
+                # functional; only the LinkedIn location filter is
+                # degraded). The LinkedIn scraper falls back to the
+                # broken `?location=` path.
+                _logger.warning(
+                    "Location resolver raised for %r; "
+                    "falling back to linkedin_geo_id=None (LinkedIn scraper will use "
+                    "broken ?location= path). Cause: %s",
+                    intent.location,
+                    exc,
+                )
+                linkedin_geo_id = None
+            else:
+                if linkedin_geo_id is None:
+                    # Resolver miss: log a WARNING so ops can spot
+                    # stale geographic intent and re-run the capture
+                    # script. The `HardcodedLocationResolver` itself
+                    # also logs a WARNING on a miss; the use case
+                    # logs a second one with the use-case context
+                    # (the `intent.location` string + the path
+                    # forward). This double-log is intentional — the
+                    # resolver's log is the "miss" signal; the
+                    # use-case's log is the "fallback to broken
+                    # `?location=`" signal.
+                    _logger.warning(
+                        "Location resolver returned None for %r; "
+                        "falling back to linkedin_geo_id=None (LinkedIn scraper will "
+                        "use broken ?location= path).",
+                        intent.location,
+                    )
         aggregated = await self._aggregator.search(
             keywords=stage2_q,
             location=stage2_location,
             limit=self._intent_max_results,
             sources=resolved_sources,
+            linkedin_geo_id=linkedin_geo_id,
         )
         flat_jobs: list[Job] = [agg.job for agg in aggregated.jobs]
         return await self._run_stage3(
