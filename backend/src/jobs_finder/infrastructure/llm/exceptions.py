@@ -98,3 +98,78 @@ class LLMResponseParseError(JobSearchError):
         if self._cause is None:
             return self._message
         return f"{self._message} (cause: {self._cause!r})"
+
+
+class LLMStreamError(LLMUnavailableError):
+    """The LLM streaming response could not be parsed (non-200, malformed SSE, etc.).
+
+    Spec: `chat-streaming` change T-001 + design §1 (Stream layer
+    mapping). Subclasses `LLMUnavailableError` so the route's
+    `isinstance` chain catches the parent first (the 502 fallback)
+    and then discriminates the specific subclass to map to the
+    `llm_stream` machine code (REQ-ERROR-MAPPING-001).
+
+    Raised by `MiniMaxLLMClient.stream_complete` when:
+      - The HTTP status is non-200 (5xx, 429, 401/403, ...).
+      - A `data: <json>` line is not valid JSON (malformed SSE).
+      - A line lacks the `data: ` prefix when expected (protocol drift).
+
+    The 2 design-level reasons for the SUBCLASS (not a new top-level
+    class parallel to `LLMUnavailableError`):
+      1. The route's `isinstance` chain must reach the parent
+         FIRST so the 502 fallback works as a safety net if the
+         specific-subclass branch is ever bypassed.
+      2. Both subclasses share the same `cause` kwarg semantics
+         (the underlying httpx layer error / JSON error) so a
+         single constructor signature keeps the call sites uniform.
+
+    Args:
+        message: Human-readable error description (e.g.
+            "stream status 500: <body>"). Surfaced in the SSE
+            `event: error` `data.message` field and the access log.
+        cause: Optional underlying exception. Its `repr()` is
+            appended to `str(err)` for log diagnostics (mirrors
+            `LLMUnavailableError`).
+    """
+
+    __slots__ = ("_cause", "_message")
+
+    def __init__(self, message: str, *, cause: Exception | None = None) -> None:
+        # NOTE: we do NOT call `super().__init__(message)` on
+        # `LLMUnavailableError` because the parent class's
+        # `__init__` sets the `_cause` and `_message` slots; the
+        # most reliable way to share the parent ctor is to
+        # delegate directly. We DO call the grand-parent's
+        # `__init__(message)` so `args[0]` is the message (the
+        # contract the global `JobSearchError` handler reads).
+        LLMUnavailableError.__init__(self, message, cause=cause)
+
+
+class LLMRequestTimeoutError(LLMUnavailableError):
+    """The LLM streaming request exceeded the configured timeout.
+
+    Spec: `chat-streaming` change T-001 + design §1 (Stream layer
+    mapping). Subclasses `LLMUnavailableError` for the same
+    reason as `LLMStreamError` — the route's `isinstance` chain
+    discriminates the subclass to map to the `llm_timeout`
+    machine code (REQ-ERROR-MAPPING-001).
+
+    Raised by `MiniMaxLLMClient.stream_complete` when the
+    underlying `httpx` call raises `httpx.TimeoutException` (or
+    `asyncio.TimeoutError`). NO retry mid-stream — the upstream
+    request is allowed to complete in the background (the
+    proposal's user decision; cost is negligible). The
+    `event: error` is emitted and the connection closes.
+
+    Args:
+        message: Human-readable error description (e.g.
+            "timeout after 15.0s"). Surfaced in the SSE
+            `event: error` `data.message` field.
+        cause: Optional underlying exception. Its `repr()` is
+            appended to `str(err)` for log diagnostics.
+    """
+
+    __slots__ = ("_cause", "_message")
+
+    def __init__(self, message: str, *, cause: Exception | None = None) -> None:
+        LLMUnavailableError.__init__(self, message, cause=cause)
