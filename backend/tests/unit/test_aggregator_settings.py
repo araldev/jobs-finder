@@ -154,6 +154,50 @@ def test_programmatic_construction_still_works() -> None:
     assert settings.aggregator_priority_map == custom_map
 
 
+# ---------------------------------------------------------------------------
+# `ENABLE_KEYWORD_SCORING` env var (REQ-SCORE-001 scenarios 5-6, T-008)
+#
+# The opt-in toggle for the `keyword_score` relevance
+# ranking. Default `False` preserves the v1 `posted_at` sort
+# behavior (REQ-SCORE-001 scenario 5). The env var override
+# `ENABLE_KEYWORD_SCORING=true` enables the new
+# `keyword_score desc, posted_at desc` sort (REQ-SCORE-001
+# scenario 6).
+# ---------------------------------------------------------------------------
+
+
+def test_keyword_scoring_disabled_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`Settings().enable_keyword_scoring` defaults to `False`.
+
+    The opt-in default is `False` so a deployment without
+    the env var keeps the v1 `posted_at` sort contract
+    (REQ-SCORE-001 scenario 5). The aggregator reads the
+    setting via `app_factory.build_app` and forwards it
+    to the `SearchAllSourcesUseCase` constructor.
+    """
+    monkeypatch.delenv("ENABLE_KEYWORD_SCORING", raising=False)
+    settings = Settings()
+    assert settings.enable_keyword_scoring is False
+
+
+def test_keyword_scoring_enabled_via_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`ENABLE_KEYWORD_SCORING=true` enables the opt-in `keyword_score` ranking.
+
+    The `validation_alias=AliasChoices("ENABLE_KEYWORD_SCORING", ...)`
+    on the new field reads the env var (Pydantic's standard
+    `BaseSettings` env-var lookup). The bool type accepts
+    the canonical truthy strings: `"true"`, `"1"`, `"yes"`,
+    `"on"` (case-insensitive).
+    """
+    monkeypatch.setenv("ENABLE_KEYWORD_SCORING", "true")
+    settings = Settings()
+    assert settings.enable_keyword_scoring is True
+
+
 # Silence the unused-Literal-import linter when tests are selectively
 # disabled — the import documents the type at module top for
 # readability.
