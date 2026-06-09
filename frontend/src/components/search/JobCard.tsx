@@ -38,9 +38,14 @@ export function JobCard({ job }: JobCardProps): React.ReactElement {
       <Card className="h-full border-border/60 transition-shadow group-hover:shadow-lg group-hover:shadow-accent/10">
         <CardContent className="flex h-full flex-col gap-3">
           <div className="flex flex-wrap items-center gap-1.5">
-            {job.sources.map((source) => (
+            {/* De-dupe defensively: a backend regression or a race in
+                the aggregator can return the same source twice in
+                job.sources, which would produce a React duplicate-key
+                warning when this list is rendered. Set semantics
+                collapse the duplicates while preserving order. */}
+            {[...new Set(job.sources)].map((source) => (
               <Badge
-                key={source}
+                key={`${job.id}:${source}`}
                 className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase", SOURCE_BADGE_COLORS[source])}
               >
                 {SOURCE_LABELS[source]}
