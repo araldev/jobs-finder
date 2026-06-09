@@ -21,7 +21,9 @@ import pytest
 
 from jobs_finder.domain.exceptions import JobSearchError
 from jobs_finder.infrastructure.llm.exceptions import (
+    LLMRequestTimeoutError,
     LLMResponseParseError,
+    LLMStreamError,
     LLMUnavailableError,
 )
 
@@ -165,5 +167,134 @@ def test_both_classes_are_catchable_as_job_search_error() -> None:
     silently leak LLM failures as uncaught 500s.
     """
     for exc_cls in (LLMUnavailableError, LLMResponseParseError):
+        with pytest.raises(JobSearchError):
+            raise exc_cls("test")
+
+
+# ---------------------------------------------------------------------------
+# `chat-streaming` T-001 — LLMStreamError + LLMRequestTimeoutError
+#
+# Spec: REQ-ERROR-MAPPING-001 + design §1 (Stream layer mapping).
+# The 2 new exception classes are discriminated from
+# `LLMUnavailableError` ONLY by their concrete type — the route's
+# `isinstance` chain catches the parent first, then discriminates
+# the subclass to map to the right machine code. Both subclasses
+# MUST keep the parent-class link so the existing 502 mapping
+# (via the global `JobSearchError` handler) still works as a
+# safety net if the route-local catch is ever bypassed.
+# ---------------------------------------------------------------------------
+
+
+def test_llm_stream_error_inherits_from_llm_unavailable_error() -> None:
+    """`LLMStreamError` subclasses `LLMUnavailableError`.
+
+    The route catches `LLMUnavailableError` first (the parent),
+    then discriminates `LLMStreamError` to map to the
+    `llm_stream` machine code (REQ-ERROR-MAPPING-001). A
+    regression that subclasses `JobSearchError` directly would
+    break the `isinstance` chain.
+    """
+    err = LLMStreamError("stream status 500")
+    # Discriminator invariant: the parent class MUST be reachable.
+    assert isinstance(err, LLMUnavailableError)
+    # And the root hierarchy MUST be intact (the global handler relies on it).
+    assert isinstance(err, JobSearchError)
+
+
+def test_llm_stream_error_is_a_distinct_subclass() -> None:
+    """`LLMStreamError` and `LLMRequestTimeoutError` are DISTINCT classes.
+
+    The route maps each to a different machine code
+    (`llm_stream` vs `llm_timeout`). Collapsing them to one
+    class would break the error mapping.
+    """
+    stream_err = LLMStreamError("non-200 status")
+    timeout_err = LLMRequestTimeoutError("request exceeded 15s")
+    assert type(stream_err) is LLMStreamError
+    assert type(timeout_err) is LLMRequestTimeoutError
+    # Cross-check: a `LLMStreamError` is NOT a `LLMRequestTimeoutError`
+    # and vice versa.
+    assert not isinstance(stream_err, LLMRequestTimeoutError)
+    assert not isinstance(timeout_err, LLMStreamError)
+
+
+def test_llm_stream_error_str_includes_message() -> None:
+    """`str(LLMStreamError)` includes the human-readable message.
+
+    The route's error event payload includes the message in
+    `data.message`; the access log includes the same string
+    for ops correlation.
+    """
+    err = LLMStreamError("stream status 500: internal error")
+    assert "stream status 500" in str(err)
+    assert "internal error" in str(err)
+
+
+def test_llm_stream_error_accepts_cause_keyword_only() -> None:
+    """`LLMStreamError.__init__` accepts `cause: Exception | None = None`.
+
+    Mirrors `LLMUnavailableError`'s signature. `cause` is
+    keyword-only so callers cannot accidentally pass a
+    positional cause that the constructor would misinterpret.
+    """
+    cause = ValueError("malformed chunk")
+    err = LLMStreamError("malformed SSE", cause=cause)
+    # The cause's repr appears in `str(err)` so operators can
+    # trace the failure chain in a single log line.
+    assert "malformed SSE" in str(err)
+    assert "malformed chunk" in str(err)
+
+
+def test_llm_request_timeout_error_inherits_from_llm_unavailable_error() -> None:
+    """`LLMRequestTimeoutError` subclasses `LLMUnavailableError`.
+
+    Same discriminator invariant as `LLMStreamError`: the
+    route's `isinstance` chain catches the parent first, then
+    discriminates the subclass to map to the `llm_timeout`
+    machine code.
+    """
+    err = LLMRequestTimeoutError("timeout after 15s")
+    assert isinstance(err, LLMUnavailableError)
+    assert isinstance(err, JobSearchError)
+
+
+def test_llm_request_timeout_error_is_a_distinct_subclass() -> None:
+    """`LLMRequestTimeoutError` is NOT a `LLMStreamError`.
+
+    A regression that collapsed the 2 classes (e.g. reusing
+    `LLMStreamError` for timeouts) would surface as a wrong
+    machine code (`llm_stream` for what should be
+    `llm_timeout`).
+    """
+    err = LLMRequestTimeoutError("request timeout")
+    assert type(err) is LLMRequestTimeoutError
+    assert not isinstance(err, LLMStreamError)
+
+
+def test_llm_request_timeout_error_str_includes_message() -> None:
+    """`str(LLMRequestTimeoutError)` includes the message verbatim.
+
+    The error event `data.message` carries the message; ops
+    correlates it to access logs.
+    """
+    err = LLMRequestTimeoutError("timeout after 15.0s")
+    assert "timeout after 15.0s" in str(err)
+
+
+def test_all_four_classes_are_catchable_as_job_search_error() -> None:
+    """A single `except JobSearchError` catches ALL FOUR subclasses.
+
+    The 4 classes are: `LLMUnavailableError`, `LLMResponseParseError`,
+    `LLMStreamError`, `LLMRequestTimeoutError`. The global
+    presentation-layer handler depends on this — a regression
+    that subclassed `Exception` directly (breaking the chain)
+    would silently leak LLM failures as uncaught 500s.
+    """
+    for exc_cls in (
+        LLMUnavailableError,
+        LLMResponseParseError,
+        LLMStreamError,
+        LLMRequestTimeoutError,
+    ):
         with pytest.raises(JobSearchError):
             raise exc_cls("test")

@@ -1,7 +1,8 @@
 """Pydantic schemas at the API edge.
 
 Spec: REQ-009, REQ-017, REQ-I-012, REQ-I-013, REQ-J-001..REQ-J-006,
-REQ-A-001..REQ-A-006.
+REQ-A-001..REQ-A-006, REQ-SSE-001/002/003 + REQ-META-001
+(`chat-streaming` change T-007).
 Pydantic lives ONLY at this boundary; the application layer uses plain
 dataclasses (`SearchLinkedInInput`, `SearchIndeedInput`,
 `SearchInfoJobsInput`). The route handler is the only place where
@@ -16,6 +17,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, HttpUrl
 
+from jobs_finder.application.ports import Intent
 from jobs_finder.domain.job import Job
 
 
@@ -326,3 +328,80 @@ class ChatResponse(BaseModel):
     total_considered: int
     total_matched: int
     used_fallback: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Chat streaming — SSE event schemas (REQ-SSE-001/002/003,
+# REQ-META-001; `chat-streaming` change T-007)
+#
+# The 3 schemas below are the wire-format Pydantic models for
+# the SSE `data:` payloads emitted by `POST /jobs/chat/stream`.
+# The route's `_serialize_event(event, request_id)` helper
+# builds the SSE wire format via `model.model_dump_json()` so
+# the JSON shape is Pydantic's responsibility (not the route's).
+#
+# - `ChatStreamTextEvent`: the per-token `event: text` payload.
+#   `delta` is a non-empty `str` (the use case's parser never
+#   yields empty deltas).
+# - `ChatStreamMetaEvent`: the 2-stage `event: meta` payload
+#   (REQ-META-001). The `intent` is the EXACT `Intent` the
+#   extractor returned — no fabrication, no defaults.
+# - `ChatStreamDoneEvent`: the terminal `event: done` payload.
+#   The shape mirrors v1 `ChatResponse` + a `request_id`
+#   field. The `request_id` is OPTIONAL (default `""`) so a
+#   unit test that constructs the event WITHOUT the
+#   request_id does not have to set it; the route injects
+#   the real `request_id` from the request state.
+# ---------------------------------------------------------------------------
+
+
+class ChatStreamTextEvent(BaseModel):
+    """`event: text` payload: `{"delta": "<chunk>"}`.
+
+    The `delta` is a non-empty string (the
+    `StreamEventParser`'s policy is to skip empty deltas;
+    no `event: text\\ndata: {"delta": ""}\\n\\n` ever
+    reaches the wire). The route serializes the
+    payload via `model_dump_json()` and prefixes
+    `event: text\\ndata: ` + `\\n\\n`.
+    """
+
+    delta: str = Field(..., min_length=1)
+
+
+class ChatStreamMetaEvent(BaseModel):
+    """`event: meta` payload (2-stage path only): `{"intent": <Intent JSON>}`.
+
+    The embedded `Intent` is the Pydantic schema from
+    `application/ports.py` (the 7 typed fields + `notes`).
+    A round-trip MUST preserve every field — the
+    `IntentExtractor`'s exact output is surfaced
+    verbatim (REQ-META-001).
+    """
+
+    intent: Intent
+
+
+class ChatStreamDoneEvent(BaseModel):
+    """`event: done` payload (terminal): the v1 `ChatResponse` shape + `request_id`.
+
+    Spec: REQ-SSE-001 3rd scenario. The 6 documented
+    fields (jobs, explanation, total_considered,
+    total_matched, used_fallback, request_id) are all
+    required. The `jobs` list is the same `JobResponse`
+    shape used by `/jobs` and the per-source routes so
+    the UI can reuse its per-job renderers.
+
+    The `request_id` field is OPTIONAL (default `""`)
+    so a unit test that constructs the event WITHOUT
+    the request_id (testing the schema in isolation)
+    does not have to set it; the route injects the
+    real `request_id` from `request.state.request_id`.
+    """
+
+    jobs: list[JobResponse]
+    explanation: str
+    total_considered: int
+    total_matched: int
+    used_fallback: bool
+    request_id: str = ""

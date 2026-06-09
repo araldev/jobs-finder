@@ -39,6 +39,7 @@ so the aggregator returns canned jobs.
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import pytest
@@ -119,6 +120,17 @@ class FakeLLMClient:
                 "explanation": self._explanation,
             }
         )
+
+    async def stream_complete(self, *, system: str, user: str) -> AsyncIterator[str]:
+        """No-op `stream_complete` for `LLMClientPort` Protocol conformance (T-003).
+
+        The v1 chat tests do not exercise the streaming
+        endpoint; this default yields nothing so a v1 caller
+        that iterates the stream gets an empty generator.
+        """
+        del system, user
+        if False:  # pragma: no cover — yields nothing
+            yield ""
 
 
 def _build_chat_test_app(

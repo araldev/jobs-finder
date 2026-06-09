@@ -17,6 +17,7 @@ a real LLM.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Literal, NamedTuple, Protocol, TypeVar
 
@@ -390,6 +391,49 @@ class LLMClientPort(Protocol):
                 extracted as a JSON object.
         """
         ...
+
+    async def stream_complete(self, *, system: str, user: str) -> AsyncIterator[str]:
+        """Stream-complete a chat-completion request, yielding one string per token.
+
+        Spec: `chat-streaming` REQ-LLM-001 (streaming). The
+        streaming counterpart of `complete(...)`: the caller
+        iterates the returned async iterator and receives one
+        `str` per LLM token (verbatim `choices[0].delta.content`
+        from the OpenAI-compatible stream).
+
+        The v1 chat endpoint (POST /jobs/chat) continues to
+        use `complete(...)` — `stream_complete` is the seam
+        for the new POST /jobs/chat/stream endpoint. The two
+        methods are NOT mutually exclusive: the concrete
+        `MiniMaxLLMClient` implements BOTH, and the use
+        case's `stream_execute` (added in T-006) is the
+        only application-layer caller of `stream_complete`.
+
+        Args:
+            system: The system prompt (same as `complete`).
+            user: The user message (same as `complete`).
+
+        Yields:
+            One `str` per LLM token. Empty `delta.content`
+            values are SKIPPED (the implementation MUST NOT
+            yield empty strings — the consumer would push a
+            useless `event: text\\ndata: {"delta": ""}\\n\\n`
+            to the SSE stream).
+
+        Raises:
+            LLMStreamError: on non-200 status, malformed SSE,
+                or protocol drift. Raised from the client
+                implementation (e.g. `MiniMaxLLMClient.
+                stream_complete`).
+            LLMRequestTimeoutError: on `httpx.TimeoutException`
+                mid-stream. NO retry — the upstream request
+                is allowed to complete in the background.
+            LLMUnavailableError: NOT raised here directly
+                (the parent class is a fallback for code
+                paths that haven't migrated to the
+                streaming-specific subclasses).
+        """
+        yield ""  # pragma: no cover — Protocol stub
 
 
 # ---------------------------------------------------------------------------

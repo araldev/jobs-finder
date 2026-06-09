@@ -45,6 +45,7 @@ or LLM.
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import pytest
@@ -161,9 +162,16 @@ class FakeLLMClient:
         self,
         selection: LLMSelection | None = None,
         error: Exception | None = None,
+        stream_chunks: list[str] | None = None,
     ) -> None:
         self._selection = selection or LLMSelection(matching_ids=[], explanation="")
         self._error = error
+        # `stream_chunks` is the canned tokens the streaming
+        # `stream_complete` method yields. When `None` (the
+        # default), the v1 tests are unaffected (the no-op
+        # default yields nothing). T-006 tests pass a list
+        # of strings to drive the `stream_execute` path.
+        self._stream_chunks: list[str] = list(stream_chunks) if stream_chunks else []
         self.calls: list[tuple[str, str]] = []
 
     async def complete(self, *, system: str, user: str) -> str:
@@ -176,6 +184,24 @@ class FakeLLMClient:
                 "explanation": self._selection.explanation,
             }
         )
+
+    async def stream_complete(self, *, system: str, user: str) -> AsyncIterator[str]:
+        """Yield the canned chunks passed via `stream_chunks=...`.
+
+        T-006 of `chat-streaming` (the `stream_execute` method)
+        calls `stream_complete` to drive the streaming path. The
+        v1 tests do not exercise this method (they call
+        `execute`); the v1 no-op default (yields nothing) is
+        preserved when `stream_chunks` is `None`/empty.
+
+        The yielded chunks are concatenated by the
+        `StreamEventParser`; the test asserts the chunk
+        ORDER (not just the final selection) to verify the
+        use case preserves the LLM's emission order.
+        """
+        del system, user
+        for chunk in self._stream_chunks:
+            yield chunk
 
 
 # ---------------------------------------------------------------------------
@@ -1261,3 +1287,206 @@ async def test_2stage_resolver_call_is_resilient_to_exceptions(
         if "resolver" in record.getMessage().lower() and "madrid" in record.getMessage().lower()
     ]
     assert len(resolver_warnings) == 1
+
+
+# ===========================================================================
+
+# `stream_execute` (T-006 of `chat-streaming`)
+# Spec: REQ-SSE-001 + REQ-META-001 + REQ-PARSE-001.
+# The streaming sibling of `execute` yields StreamEvent* dataclasses
+# (meta + text × N + done) instead of returning a single FilteredJobsResult.
+# The v1 execute() and _run_stage3() are UNCHANGED per REQ-BACKWARDS-COMPAT-001.
+
+
+from jobs_finder.application.usecases.filter_jobs_by_intent import (  # noqa: E402
+    StreamEventDone,
+    StreamEventMeta,
+    StreamEventText,
+)
+
+
+async def _drain(events: object) -> list[object]:
+    """Drain an async iterator into a list."""
+    out: list[object] = []
+    async for event in events:  # type: ignore[attr-defined]
+        out.append(event)
+    return out
+
+
+def _build_stream_use_case(
+    *,
+    aggregator: object,
+    llm: object,
+    intent_extractor: object | None = None,
+    intent_extraction_enabled: bool = False,
+) -> FilterJobsByIntentUseCase:
+    """Build a FilterJobsByIntentUseCase for stream tests; suppresses mypy.
+
+    The use case's ctor expects `SearchAllSourcesUseCase` and
+    `LLMClientPort` (strict types), but the tests inject fakes
+    with the right methods. The `# type: ignore[arg-type]`
+    lives HERE so the call sites stay readable.
+    """
+    kwargs: dict[str, object] = {"aggregator": aggregator, "llm": llm}
+    if intent_extractor is not None:
+        kwargs["intent_extractor"] = intent_extractor
+    kwargs["intent_extraction_enabled"] = intent_extraction_enabled
+    return FilterJobsByIntentUseCase(**kwargs)  # type: ignore[arg-type]
+
+
+async def test_stream_execute_2stage_emits_meta_then_text_then_done() -> None:
+    """2-stage path: meta → text × N → done."""
+    from jobs_finder.application.ports import Intent  # noqa: PLC0415
+
+    jobs = [_make_job("a"), _make_job("b"), _make_job("c")]
+    intent = Intent(q="python", location="Madrid", confidence=0.95)
+    aggregator = FakeAggregator(jobs=jobs)
+    intent_extractor = FakeIntentExtractor(canned=intent)
+    llm = FakeLLMClient(
+        selection=LLMSelection(matching_ids=["a", "b"], explanation="match"),
+        stream_chunks=['{"matching_ids":["a","b"],', '"explanation":"match"}'],
+    )
+    use_case = _build_stream_use_case(
+        aggregator=aggregator,
+        llm=llm,
+        intent_extractor=intent_extractor,
+        intent_extraction_enabled=True,
+    )
+
+    events = await _drain(
+        use_case.stream_execute(message="busco python en Madrid", q="", location="", limit=20)
+    )
+    assert len(events) == 4
+    assert isinstance(events[0], StreamEventMeta)
+    assert events[0].intent == intent
+    assert isinstance(events[1], StreamEventText)
+    assert events[1].delta == '{"matching_ids":["a","b"],'
+    assert isinstance(events[2], StreamEventText)
+    assert events[2].delta == '"explanation":"match"}'
+    assert isinstance(events[3], StreamEventDone)
+    assert [j.id for j in events[3].jobs] == ["a", "b"]
+
+
+async def test_stream_execute_v1_emits_no_meta() -> None:
+    """v1 path: no meta, only text × N + done."""
+    jobs = [_make_job("a")]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(
+        selection=LLMSelection(matching_ids=["a"], explanation="ok"),
+        stream_chunks=['{"matching_ids":["a"],', '"explanation":"ok"}'],
+    )
+    use_case = _build_stream_use_case(
+        aggregator=aggregator,
+        llm=llm,
+        intent_extraction_enabled=False,
+    )
+
+    events = await _drain(use_case.stream_execute(message="python", q="", location="", limit=20))
+    event_types = [type(e).__name__ for e in events]
+    assert "StreamEventMeta" not in event_types
+    assert event_types == ["StreamEventText", "StreamEventText", "StreamEventDone"]
+    assert isinstance(events[-1], StreamEventDone)
+
+
+async def test_stream_execute_text_chunks_in_feed_order() -> None:
+    """Text chunks emitted in LLM's feed order."""
+    jobs = [_make_job("a")]
+    aggregator = FakeAggregator(jobs=jobs)
+    # The chunks are the verbatim LLM tokens; the parser
+    # concatenates them to form a valid JSON selection.
+    # The TEST asserts the chunks come out in the same
+    # order the LLM emitted them (NOT the final selection's
+    # matching_ids order).
+    llm = FakeLLMClient(
+        selection=LLMSelection(matching_ids=["a"], explanation="ok"),
+        stream_chunks=['{"matching_ids":["a"],', '"explanation":"', "ok", '"}'],
+    )
+    use_case = _build_stream_use_case(
+        aggregator=aggregator,
+        llm=llm,
+        intent_extraction_enabled=False,
+    )
+
+    events = await _drain(use_case.stream_execute(message="python", q="", location="", limit=20))
+    text_events = [e for e in events if isinstance(e, StreamEventText)]
+    # Chunks come out in feed order.
+    assert [e.delta for e in text_events] == [
+        '{"matching_ids":["a"],',
+        '"explanation":"',
+        "ok",
+        '"}',
+    ]
+
+
+async def test_stream_execute_empty_aggregator_short_circuits_to_done() -> None:
+    """Empty aggregator → short-circuit to done (no LLM call)."""
+    aggregator = FakeAggregator(jobs=[])
+    llm = FakeLLMClient(
+        selection=LLMSelection(matching_ids=[], explanation="ok"),
+        stream_chunks=["never-called"],
+    )
+    use_case = _build_stream_use_case(
+        aggregator=aggregator,
+        llm=llm,
+        intent_extraction_enabled=False,
+    )
+
+    events = await _drain(use_case.stream_execute(message="python", q="", location="", limit=20))
+    assert len(events) == 1
+    assert isinstance(events[0], StreamEventDone)
+    assert events[0].jobs == []
+    assert "no se encontraron ofertas" in events[0].explanation.lower()
+    assert len(aggregator.calls) == 1
+    # The LLM stream was never iterated (the short-circuit
+    # path does not call `stream_complete` at all).
+    assert llm.calls == []
+
+
+async def test_stream_execute_done_jobs_in_aggregator_order_not_llm_order() -> None:
+    """done.jobs is in the AGGREGATOR's order, not the LLM's."""
+    jobs = [
+        _make_job("a"),
+        _make_job("b"),
+        _make_job("c"),
+        _make_job("d"),
+    ]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(
+        selection=LLMSelection(matching_ids=["d", "c", "b"], explanation="match"),
+        stream_chunks=[
+            '{"matching_ids":["d","c","b"],',
+            '"explanation":"match"}',
+        ],
+    )
+    use_case = _build_stream_use_case(
+        aggregator=aggregator,
+        llm=llm,
+        intent_extraction_enabled=False,
+    )
+
+    events = await _drain(use_case.stream_execute(message="python", q="", location="", limit=20))
+    done = [e for e in events if isinstance(e, StreamEventDone)][0]
+    assert [j.id for j in done.jobs] == ["b", "c", "d"]
+
+
+async def test_stream_execute_drops_hallucinated_ids() -> None:
+    """Hallucinated ids from the LLM are dropped."""
+    jobs = [_make_job("a"), _make_job("b"), _make_job("c")]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(
+        selection=LLMSelection(matching_ids=["a", "z99"], explanation="match"),
+        stream_chunks=[
+            '{"matching_ids":["a","z99"],',
+            '"explanation":"match"}',
+        ],
+    )
+    use_case = _build_stream_use_case(
+        aggregator=aggregator,
+        llm=llm,
+        intent_extraction_enabled=False,
+    )
+
+    events = await _drain(use_case.stream_execute(message="python", q="", location="", limit=20))
+    done = [e for e in events if isinstance(e, StreamEventDone)][0]
+    assert [j.id for j in done.jobs] == ["a"]
+    assert done.explanation == "match"

@@ -41,10 +41,11 @@ Starlette; see `test_app_lifespan.py` for the precedent).
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 from fastapi import APIRouter, FastAPI
 
 from jobs_finder.application.aggregator import (
@@ -58,7 +59,9 @@ from jobs_finder.application.usecases.filter_jobs_by_intent import (
 from jobs_finder.domain.job import Job
 from jobs_finder.infrastructure.llm._parser import LLMSelection
 from jobs_finder.infrastructure.llm.exceptions import (
+    LLMRequestTimeoutError,
     LLMResponseParseError,
+    LLMStreamError,
     LLMUnavailableError,
 )
 from jobs_finder.presentation.middleware import RequestIdMiddleware
@@ -109,6 +112,12 @@ class FakeLLMClient:
                 "explanation": self._selection.explanation,
             }
         )
+
+    async def stream_complete(self, *, system: str, user: str) -> AsyncIterator[str]:
+        """No-op `stream_complete` for `LLMClientPort` Protocol conformance (T-003)."""
+        del system, user
+        if False:  # pragma: no cover — yields nothing
+            yield ""
 
 
 class FakeAggregator:
@@ -336,3 +345,174 @@ async def test_chat_router_factory_returns_an_apirouter_with_chat_route() -> Non
     assert isinstance(router, APIRouter)
     paths = [r.path for r in router.routes if hasattr(r, "path")]
     assert "/jobs/chat" in paths
+
+
+# ===========================================================================
+# `build_chat_stream_router` (T-008 of `chat-streaming`)
+#
+# Spec: REQ-SSE-001/002/003, REQ-META-001, REQ-CACHE-001,
+# REQ-ERROR-MAPPING-001.
+#
+# The new route factory is a SIBLING of `build_chat_router`
+# (T-014 of `ai-chat-filter`); the v1 chat router is
+# UNCHANGED per REQ-BACKWARDS-COMPAT-001. The streaming
+# router wires:
+#
+#   - `POST /jobs/chat/stream` accepting `ChatRequest{message}`
+#   - Pre-stream 400 when `message` > `max_message_chars`
+#   - NFC + casefold + strip normalization (same as v1)
+#   - Producer task that drains the use case's `stream_execute`
+#   - Consumer with `asyncio.wait_for(queue.get(), sse_keepalive_seconds)`
+#   - `StreamingResponse(media_type="text/event-stream")` with
+#     Cache-Control / Connection / X-Accel-Buffering headers
+#   - Error mapping: 6 exception types → 6 machine codes
+#     (`llm_unavailable`, `llm_stream`, `llm_parse`, `llm_timeout`,
+#     `internal`, `stage1_parse`)
+#
+# The 3 unit tests below exercise the factory contract:
+#   1. `build_chat_stream_router(...)` returns an `APIRouter`
+#      with `POST /jobs/chat/stream` registered.
+#   2. Pre-stream 400 fires when `message` > `max_message_chars`.
+#   3. Error mapping table: 6 exception types → 6 machine codes.
+# ===========================================================================
+
+
+def _build_stream_test_app(
+    *,
+    use_case: FilterJobsByIntentUseCase,
+    max_message_chars: int = 1000,
+    sse_keepalive_seconds: float = 0.0,
+) -> FastAPI:
+    """Build a minimal `FastAPI` app that mounts the stream router.
+
+    The app installs `RequestIdMiddleware` so the SSE event
+    payloads can read `request.state.request_id` when the
+    route injects it. The `ChatRateLimitMiddleware` is NOT
+    installed (this is a route-level unit test).
+    """
+    from jobs_finder.presentation.routes.chat import (  # noqa: PLC0415
+        build_chat_stream_router,
+    )
+
+    app = FastAPI()
+    app.add_middleware(RequestIdMiddleware)
+    router = build_chat_stream_router(
+        use_case=use_case,
+        max_message_chars=max_message_chars,
+        sse_keepalive_seconds=sse_keepalive_seconds,
+    )
+    app.include_router(router)
+    return app
+
+
+def test_chat_stream_router_factory_returns_apirouter_with_route() -> None:
+    """`build_chat_stream_router()` returns an `APIRouter` with `/jobs/chat/stream`.
+
+    The factory function is the public seam; tests use it
+    to build a minimal app for unit-testing the route in
+    isolation. Pinning the return type + the route path
+    pins the API contract.
+    """
+    from jobs_finder.presentation.routes.chat import (  # noqa: PLC0415
+        build_chat_stream_router,
+    )
+
+    aggregator = FakeAggregator(jobs=[])
+    llm = FakeLLMClient()
+    use_case = FilterJobsByIntentUseCase(aggregator=aggregator, llm=llm)  # type: ignore[arg-type]
+
+    router = build_chat_stream_router(
+        use_case=use_case, max_message_chars=1000, sse_keepalive_seconds=0.0
+    )
+    assert isinstance(router, APIRouter)
+    paths = [r.path for r in router.routes if hasattr(r, "path")]
+    assert "/jobs/chat/stream" in paths
+
+
+async def test_chat_stream_route_returns_400_when_message_exceeds_cap() -> None:
+    """Pre-stream 400 fires when `message` > `max_message_chars` (NOT SSE).
+
+    REQ-SSE-001 pre-stream validation: an over-cap
+    message is a regular HTTP 400 (NOT an SSE stream).
+    The aggregator + LLM are NEVER invoked (the cap
+    check runs FIRST, mirroring the v1 chat route).
+    """
+
+    aggregator = FakeAggregator(jobs=[])
+    llm = FakeLLMClient()
+    use_case = FilterJobsByIntentUseCase(aggregator=aggregator, llm=llm)  # type: ignore[arg-type]
+
+    app = _build_stream_test_app(
+        use_case=use_case, max_message_chars=1000, sse_keepalive_seconds=0.0
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post("/jobs/chat/stream", json={"message": "x" * 1234})
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["detail"] == "message exceeds 1000 chars (got 1234)"
+    # The aggregator + LLM were NEVER called.
+    assert aggregator.calls == []
+    assert llm.calls == []
+
+
+@pytest.mark.parametrize(
+    ("exc_cls", "expected_code"),
+    [
+        (LLMUnavailableError, "llm_unavailable"),
+        (LLMStreamError, "llm_stream"),
+        (LLMResponseParseError, "llm_parse"),
+        (LLMRequestTimeoutError, "llm_timeout"),
+    ],
+)
+async def test_chat_stream_route_error_mapping(
+    exc_cls: type[Exception], expected_code: str
+) -> None:
+    """The 4 LLM error classes are mapped to stable machine codes.
+
+    REQ-ERROR-MAPPING-001: the SSE error event's
+    `data.code` is one of the 4 stable machine codes
+    (`llm_unavailable`, `llm_stream`, `llm_parse`,
+    `llm_timeout`). The mapping is enforced by
+    `isinstance` discrimination in the route's
+    `_serialize_error` helper.
+    """
+
+    # The aggregator MUST return at least 1 job so the
+    # use case actually reaches the LLM (the empty-
+    # aggregator path short-circuits to Done and never
+    # invokes the LLM).
+    jobs = [_make_job("a")]
+
+    class _RaisingLLM(FakeLLMClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self._error: BaseException = exc_cls("test")  # type: ignore[assignment]
+
+        async def stream_complete(self, *, system: str, user: str) -> AsyncIterator[str]:
+            raise self._error
+            yield ""  # pragma: no cover — async generator marker
+
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = _RaisingLLM()
+    use_case = FilterJobsByIntentUseCase(aggregator=aggregator, llm=llm)  # type: ignore[arg-type]
+
+    app = _build_stream_test_app(
+        use_case=use_case, max_message_chars=1000, sse_keepalive_seconds=0.0
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post("/jobs/chat/stream", json={"message": "python"})
+
+    # The response is HTTP 200 (SSE always returns 200 once
+    # the stream starts; the error is in the event payload).
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers.get("content-type", "")
+    # The body contains the `event: error` line with the
+    # expected machine code.
+    body = response.text
+    assert "event: error" in body
+    assert expected_code in body

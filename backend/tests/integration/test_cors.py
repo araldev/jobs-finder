@@ -18,11 +18,13 @@ from collections.abc import AsyncGenerator
 import httpx
 import pytest
 from fastapi import FastAPI
+from pydantic import SecretStr
 
 from jobs_finder.application.usecases.search_linkedin_jobs import (
     SearchLinkedInJobsUseCase,
 )
 from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCache
+from jobs_finder.infrastructure.config import Settings
 from jobs_finder.presentation.app_factory import build_app
 
 from .test_api import FakeJobSearchPort
@@ -83,6 +85,11 @@ async def test_options_preflight_advertises_get_method(
 
     A browser will only fire the preflight if the advertised methods
     include the method of the actual request.
+
+    T-009 (chat-streaming) — REQ-CORS-001: the preflight
+    also advertises `POST` (the new `POST /jobs/chat/stream`
+    endpoint shares the CORS middleware). The widening is
+    strictly additive; the GET outcome is unchanged.
     """
     response = await client.options(
         "/jobs/linkedin?keywords=python&location=madrid",
@@ -92,9 +99,90 @@ async def test_options_preflight_advertises_get_method(
         },
     )
 
-    # `allow_methods=["GET"]` in CORSMiddleware → header lists GET.
+    # `allow_methods=["GET", "POST"]` in CORSMiddleware → header lists both.
     allow_methods = response.headers.get("access-control-allow-methods", "")
     assert "GET" in allow_methods.upper()
+    # T-009 — POST is now advertised (the v1 assertion widened).
+    assert "POST" in allow_methods.upper()
+
+
+async def test_options_preflight_for_post_jobs_chat_stream_succeeds(
+    client: httpx.AsyncClient,
+) -> None:
+    """A preflight `OPTIONS /jobs/chat/stream` with POST method succeeds.
+
+    REQ-CORS-001 1st scenario: the new SSE endpoint's
+    preflight returns 200 (or 204) with the CORS headers
+    so a browser at a different origin can call it.
+
+    Note: when chat is DISABLED (the default `Settings`
+    with no `LLM_API_KEY`), `POST /jobs/chat/stream`
+    returns 404 because the route is NOT registered.
+    The preflight itself is handled by the CORS
+    middleware BEFORE the route is matched, so it
+    still returns 200 with the CORS headers (the
+    preflight is "yes, you can send a POST here"
+    regardless of whether the underlying route exists).
+    """
+    response = await client.options(
+        "/jobs/chat/stream",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    # The preflight returns 200 with the CORS headers.
+    assert response.status_code == 200
+    # The CORS Allow-Origin is set (the dev default is `*`).
+    assert response.headers.get("access-control-allow-origin") == "*"
+    # Allow-Methods includes POST (and GET, for the per-source routes).
+    allow_methods = response.headers.get("access-control-allow-methods", "")
+    assert "POST" in allow_methods.upper()
+    # Allow-Headers echoes the requested Content-Type.
+    allow_headers = response.headers.get("access-control-allow-headers", "")
+    assert "content-type" in allow_headers.lower()
+
+
+async def test_actual_post_to_chat_endpoint_cross_origin_succeeds(
+    client: httpx.AsyncClient,
+) -> None:
+    """An actual `POST /jobs/chat` from a different origin returns 200 + CORS header.
+
+    REQ-CORS-001 2nd scenario: when chat is ENABLED
+    (the test below uses a `Settings(llm_filter_enabled=True,
+    llm_api_key=...)` injection), the actual POST
+    succeeds and the response carries the CORS header.
+    A test that does NOT enable chat is below — this
+    one DOES enable chat via a `Settings` injection
+    so the chat route is registered.
+    """
+    settings = Settings(
+        llm_filter_enabled=True,
+        llm_api_key=SecretStr("test-key"),
+        llm_base_url="https://api.example.invalid",  # not actually called
+    )
+    fake_port = FakeJobSearchPort(jobs=[])
+    app = build_app(
+        use_case=SearchLinkedInJobsUseCase(
+            port=fake_port,
+            cache=InMemoryTTLCache(ttl_seconds=60.0),
+            source="linkedin",
+        ),
+        settings=settings,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.post(
+            "/jobs/chat/stream",
+            json={"message": "python"},
+            headers={"Origin": "http://localhost:3000"},
+        )
+
+    # The POST itself returns 200 (SSE) or 4xx (validation). The
+    # important assertion is the CORS header.
+    assert response.headers.get("access-control-allow-origin") == "*"
 
 
 async def test_get_request_carries_cors_allow_origin_header(

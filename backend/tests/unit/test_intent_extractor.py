@@ -33,6 +33,7 @@ they fail (RED), then the class is added, then tests pass (GREEN).
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -97,6 +98,12 @@ class FakeLLMClient:
         if self._canned is None:
             raise IndexError("FakeLLMClient: no canned response set")
         return self._canned
+
+    async def stream_complete(self, *, system: str, user: str) -> AsyncIterator[str]:
+        """No-op `stream_complete` for `LLMClientPort` Protocol conformance (T-003)."""
+        del system, user
+        if False:  # pragma: no cover — yields nothing
+            yield ""
 
 
 # ===========================================================================

@@ -1125,6 +1125,124 @@ yield descriptions for all 3 sources at 5-10× the request cost.
 Tracked as a separate potential change (`linkedin-job-detail`,
 not yet scheduled).
 
+### CORS — POST is now advertised
+
+The CORS middleware was widened (in the `chat-streaming`
+change) to advertise **both `GET` and `POST`** in
+`Access-Control-Allow-Methods`. The widening is strictly
+additive — the v1 GET routes (`/jobs`, `/jobs/linkedin`,
+`/jobs/indeed`, `/jobs/infojobs`) are unchanged. A
+browser-based client at any origin can now `fetch` POST
+to `/jobs/chat` and `/jobs/chat/stream` without a CORS
+preflight failure.
+
+## AI Chat Filter — streaming endpoint
+
+`POST /jobs/chat/stream` is a **streaming sibling** of the
+JSON `/jobs/chat` endpoint. The client (a browser
+`EventSource` or a `fetch` with `ReadableStream`) opens
+an SSE connection; the server emits a sequence of events
+in real time, then closes. The endpoint is the
+recommended choice for any UI that wants a "typewriter"
+rendering of the LLM's explanation (the JSON endpoint
+returns the full response in 5-8s; the streaming
+endpoint pushes the first `text` event in ~1s).
+
+### Event types
+
+The SSE stream emits 4 event types in this order:
+
+| Event     | When                              | Payload                                                  |
+| --------- | --------------------------------- | -------------------------------------------------------- |
+| `meta`    | 2-stage path only (first event)   | `{"intent": <Intent JSON>}`                              |
+| `text`    | One per LLM token                 | `{"delta": "<chunk>"}`                                   |
+| `done`    | Terminal (always exactly one)     | `{"jobs":[...], "explanation":"...", "total_considered":N, "total_matched":M, "used_fallback":bool, "request_id":"..."}` |
+| `error`   | Mid-stream failure (terminal)     | `{"code": "<machine>", "message": "<reason>"}`           |
+
+The 4 stable `code` values for `error` events are:
+`llm_unavailable`, `llm_stream`, `llm_parse`, `llm_timeout`.
+
+The `done.jobs` list is in the **aggregator's** order (NOT
+the LLM's emission order — the LLM's order is meaningful
+for `text` events only).
+
+### curl example
+
+```bash
+curl -N -X POST http://localhost:8000/jobs/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message": "ingeniero python, Madrid, 3 años"}'
+
+# Output (one event per line; the `:` prefix on a line is an SSE comment):
+#
+# event: text
+# data: {"delta": "He "}
+#
+# event: text
+# data: {"delta": "encontrado "}
+#
+# event: text
+# data: {"delta": "3 ofertas."}
+#
+# event: done
+# data: {"jobs":[...], "explanation": "3 ofertas en Madrid", "total_considered":42, "total_matched":3, "used_fallback":false, "request_id":"abc-123"}
+#
+```
+
+The response headers include `Content-Type:
+text/event-stream`, `Cache-Control: no-cache`,
+`Connection: keep-alive`, and `X-Accel-Buffering: no` (the
+last disables nginx buffering — see the section below).
+
+### Keepalive
+
+During the stage-2 aggregator wait (typically 2-5s), the
+server emits a `: keepalive\n\n` SSE comment every
+`SSE_KEEPALIVE_SECONDS` seconds (default 15.0, max 60.0).
+Set `SSE_KEEPALIVE_SECONDS=0` to disable keepalives
+entirely. Keepalives are NOT emitted between consecutive
+`text` events at the LLM's normal emission rate (the
+events themselves keep the connection alive).
+
+### v1 path
+
+When `INTENT_EXTRACTION_ENABLED=false` (or no
+`IntentExtractor` is injected), the `meta` event is
+omitted. The stream is just `text × N → done` — the v1
+single-stage behavior, streamed.
+
+## Streaming behind nginx
+
+The streaming endpoint REQUIRES `proxy_buffering off;`
+on the nginx location. Without it, nginx buffers the
+SSE response and the client sees nothing until the
+buffer fills (kilobytes of text), then sees a burst of
+`text` events. The `X-Accel-Buffering: no` response
+header the server sets is the upstream-side signal
+that nginx should respect, but the `proxy_buffering
+off;` directive is the canonical configuration.
+
+```nginx
+location /jobs/chat/stream {
+    proxy_pass http://backend_upstream;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;                # <-- REQUIRED for SSE
+    proxy_cache off;
+    proxy_read_timeout 600s;            # long LLM calls
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+`proxy_buffering off;` is the critical line. The other
+directives are the standard nginx reverse-proxy
+configuration. See the [nginx `proxy_buffering`
+docs](http://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_buffering)
+for the full semantics.
+
 ## Manual verification
 
 > **Re-read the Legal Notice above before proceeding.** Scraping LinkedIn
