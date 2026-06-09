@@ -104,6 +104,9 @@ from jobs_finder.infrastructure.linkedin.throttle import AsyncThrottle
 from jobs_finder.infrastructure.llm._factory import build_minimax_llm_client
 from jobs_finder.infrastructure.llm._intent import IntentExtractor
 from jobs_finder.infrastructure.llm._intent_parser import parse_intent_response
+from jobs_finder.infrastructure.location.hardcoded_resolver import (
+    HardcodedLocationResolver,
+)
 from jobs_finder.infrastructure.rate_limit._factory import build_rate_limiter
 from jobs_finder.presentation.exception_handlers import (
     register_exception_handlers,
@@ -547,6 +550,21 @@ def build_app(  # noqa: PLR0915
                 parser=parse_intent_response,
                 max_retries=effective_settings.intent_extraction_retry,
             )
+        # T-004 (`fix-linkedin-geoid`): construct a
+        # `HardcodedLocationResolver` and inject it into the
+        # chat-filter use case. The use case calls the
+        # resolver in the 2-stage path to translate
+        # `intent.location` (a free-form string) into a
+        # LinkedIn `geoId` (a `int`). The resolver is a
+        # in-process dict lookup (no I/O); the
+        # `LOCATION_RESOLVER_ENABLED=false` kill switch is
+        # OUT of scope for this change (a follow-up
+        # environment variable can disable the resolver
+        # without code changes; the v1 default is always-on).
+        # The resolver is constructed once at composition-
+        # root time and shared across all chat requests (the
+        # dict is read-only after construction).
+        location_resolver = HardcodedLocationResolver()
         chat_use_case = FilterJobsByIntentUseCase(
             aggregator=aggregator_use_case,
             llm=llm_client,
@@ -556,6 +574,7 @@ def build_app(  # noqa: PLR0915
                 effective_settings.intent_extraction_confidence_threshold
             ),
             intent_max_results=effective_settings.intent_max_results,
+            location_resolver=location_resolver,
         )
     # Expose the use case on `app.state` regardless of the
     # flag (a future caller that constructs the use case

@@ -844,34 +844,15 @@ The v1 fallback runs when:
 - `intent.confidence < INTENT_EXTRACTION_CONFIDENCE_THRESHOLD` (default 0.7)
 - Stage-1 `LLMResponseParseError` after retry exhaustion
 
-**Note on the `fix-linkedin-geoid` gap**: when a query is routed to
-the LinkedIn source with a specific `intent.location`, the 2-stage
-path runs as designed but the LinkedIn scraper **silently ignores**
-the `location=` string (LinkedIn's public search uses `geoId=`,
-numeric, not `location=`). The 2-stage path is NOT short-circuited
-to v1 — the stage-1 LLM call still happens, but the stage-2 scrape
-returns LinkedIn's default landing page (the same result as v1).
-See the DISCLAIMER callout below and the "Known limitations"
-section at the bottom of this chapter for the full gap, the
-detection failure, and the workaround.
-
 The `used_fallback: bool` field in the `ChatResponse` tells the
 client which path served the request (`True` = v1, `False` = 2-stage).
 
-> **⚠️ KNOWN LIMITATION — LinkedIn location filtering (resolved in `fix-linkedin-geoid`, next release)**
->
-> The 2-stage chat filter passes `intent.location` (e.g. "Madrid") to
-> the LinkedIn scraper, but LinkedIn's public search uses `geoId=`
-> (numeric) rather than `location=` (string). As a result, **the
-> LinkedIn source's location filter is silently ignored for queries
-> with a specific location**, and the 2-stage path is functionally
-> equivalent to v1 for LinkedIn queries.
->
-> The next change (`fix-linkedin-geoid`) will translate
-> `intent.location` to a `geoId` via a hardcoded mapping (no API call,
-> no runtime dependency). Until that change ships, LinkedIn queries
-> will return the source's default landing page. Indeed and InfoJobs
-> are NOT affected (they accept `location=` as a string).
+LinkedIn queries with a specific `intent.location` (e.g. "Madrid")
+are translated to a LinkedIn `geoId` (e.g. `103374081`) via the
+**location resolver** (`HardcodedLocationResolver`) so the
+scraper builds the correct `?geoId=<n>` URL. See the "Location
+resolver" section below for the full contract, coverage, and
+partial-coverage behavior.
 
 ### Curl smoke test
 
@@ -919,19 +900,17 @@ All 15 are documented here; the v1 vars are unchanged.
 stage-1 intent call + one stage-3 filter call). At 1000 queries/day,
 ~$5/day.
 
-**2-stage cost is **≈ v1** for LinkedIn** (see "Known limitations"
-below): the LinkedIn source ignores the `intent.location` string, so
-the 2-stage flow's directed scrape degrades to v1's default-landing-
-page scrape. The stage-1 LLM call still happens, so the **net cost is
-~1.5× v1** (one stage-1 + one stage-3 = $0.005 + $0.0025 = ~$0.0075
-for LinkedIn queries with a specific location), and the benefit (the
-directed `q`) is preserved but the benefit (the directed
-`location`) is NOT.
+**2-stage cost is 2× v1 for LinkedIn** (since `fix-linkedin-geoid`):
+the LinkedIn source now correctly honors `intent.location` via
+the `HardcodedLocationResolver` (translates to `geoId=`). The
+stage-1 LLM call + stage-3 filter call + directed LinkedIn scrape
+(typically a cache hit within 60s) → ~$0.005/req. The benefit is
+the same as Indeed + InfoJobs: a directed scrape with the
+extracted `q` AND `location`.
 
 **v1 fallback cost is unchanged**: ~$0.0025/req (one stage-3 filter
-call only). The fallback is automatic when confidence is low, the
-2-stage flow is disabled, or the request is a LinkedIn query with a
-specific location.
+call only). The fallback is automatic when confidence is low or
+the 2-stage flow is disabled.
 
 **Worst case** is bounded by `LLM_FILTER_RATE_LIMIT_RPM` (default 20)
 per IP per minute. The shared `httpx.AsyncClient` is built in the
@@ -940,10 +919,10 @@ app's lifespan and reuses the connection pool across requests.
 **Latency**: the 2-stage flow takes ~5-8s end-to-end (stage 1 LLM
 call + directed aggregator scrape + stage 3 LLM call), vs ~3-4s for
 v1. The aggregator's 60s per-source cache reuses results within the
-window so the "directed" scrape is typically a cache hit. For
-LinkedIn queries with a specific location (see "Known limitations"),
-the 2-stage flow takes the same wall-clock time but the value of
-stage 1 is reduced (only `q` is honored, not `location`).
+window so the "directed" scrape is typically a cache hit. LinkedIn
+queries with a specific location now hit the correct geoId
+cache entry (the `JobSearchCacheKey` 5th field `geo_id` is part
+of the key).
 
 ### Security boundaries
 
@@ -1034,54 +1013,70 @@ operators who want the chat filter but not the 2-stage LLM cost.
 
 ### Known limitations
 
-- **LinkedIn location filtering is broken** (resolved in
-  `fix-linkedin-geoid`, next release). The 2-stage chat filter
-  extracts `intent.location` as a string ("Madrid", "Barcelona, ES",
-  etc.) and passes it to the LinkedIn scraper, but LinkedIn's
-  public search uses `geoId=` (numeric) rather than `location=`
-  (string). The scraper URL-encodes the string as
-  `?keywords={...}&location={...}&start={...}`, and LinkedIn's site
-  silently ignores the `location=` param (or returns inconsistent
-  results). The net effect: **the 2-stage path is functionally
-  equivalent to v1 for LinkedIn queries with a specific location**
-  (the stage-1 `q` is honored; the stage-1 `location` is NOT). See
-  the DISCLAIMER callout after the 2-stage flow ASCII diagram above
-  for the same point in condensed form.
-  - **Detection gap**: this was missed by the entire SDD cycle
-    (`chat-filter-2stage` AND the prior `ai-chat-filter` cycle). The
-    integration tests in `test_chat_endpoint_2stage.py` use
-    `FakeAggregator` which short-circuits the real aggregator→scraper
-    path, and the 2 LIVE tests assert the LLM call count +
-    `used_fallback` but NOT the URL the LinkedIn scraper receives.
-    The `sdd-verify` phase reported 0 CRITICAL findings because the
-    tests were structurally green even though the production behavior
-    was broken. A live query like "ingeniero Python en Madrid" with
-    `chat_enabled` would return whatever LinkedIn's default landing
-    page has, NOT Madrid-specific results.
-  - **Workaround** (until the fix lands): for LinkedIn queries with a
-    specific location, **the `used_fallback=True` path is semantically
-    equivalent** to the broken 2-stage path (both return LinkedIn's
-    default landing page), but v1 saves the cost of the stage-1 LLM
-    call (~$0.0025/req). To force ALL LinkedIn queries onto the v1
-    fallback path, set `INTENT_EXTRACTION_CONFIDENCE_THRESHOLD=1.01`
-    (a hacky but effective workaround; the proper fix is the geoId
-    translation). **Caveat**: the threshold is a GLOBAL setting —
-    forcing it to 1.01 also forces Indeed and InfoJobs queries onto
-    the v1 fallback path, which loses the 2-stage benefit for those
-    sources. The proper per-source workaround would be added as part
-    of the `fix-linkedin-geoid` change.
-  - **Follow-up change**: `fix-linkedin-geoid` (NOT yet scheduled;
-    see obs #292). The fix is a hardcoded mapping of ~20-30 common
-    cities/countries to their LinkedIn `geoId` values (e.g. Madrid =
-    `100292246`). The translation is a LinkedIn-specific concern;
-    Indeed and InfoJobs accept `location=` strings and are NOT
-    affected.
 - **`test_aggregator_settings::test_programmatic_construction_still_works`**
   was a v1 pre-existing bug (the .env + pydantic-settings `deep_update`
   merged the user's programmatic dict with the .env value). It was
   deselected at the v1 baseline of `chat-filter-2stage` and is now
   GREEN again (commit `77b610f` on `main`, fix is a 3-line override
   of `BaseSettings._settings_build_values`).
+
+### Location resolver
+
+LinkedIn's public search uses `geoId=` (numeric) rather than
+`location=` (string). The 2-stage chat filter extracts
+`intent.location` as a free-form string ("Madrid", "Barcelona",
+"cdmx") and the **location resolver** (`HardcodedLocationResolver`)
+translates it to a LinkedIn `geoId` (e.g. `103374081` for Madrid)
+so the LinkedIn scraper builds the correct URL.
+
+- **Implementation**: `HardcodedLocationResolver` (in
+  `src/jobs_finder/infrastructure/location/hardcoded_resolver.py`).
+  A pure in-process dict lookup — no I/O, no network call, no
+  runtime dependency. Alias normalization chain:
+  `unicodedata.normalize("NFC", s).casefold().strip()` + remove
+  combining accent marks + alias-to-canonical recurse (e.g.
+  `cdmx` → `ciudad de mexico`).
+- **Coverage**: 34 canonical entries (8 Spanish cities + 16
+  Spanish autonomous communities + 9 LATAM cities + 1 remote).
+  Sources from `tests/fixtures/linkedin_geo_ids.csv` (43 captured
+  geoIds; 9 country-level + País Vasco + Canarias excluded).
+- **Hierarchical fallback**: city > region > country. Country-level
+  ("España", "México") and unknown cities return `None` with a
+  WARNING log. The use case forwards `geo_id=None` to the
+  aggregator; the LinkedIn scraper falls back to broken
+  `?location=<str>` (a strict improvement over today's
+  100%-broken behavior).
+- **Partial coverage**: País Vasco + Canarias + country-level +
+  any city NOT in the dict returns `None` → scraper falls back to
+  `?location=<str>`. The WARNING log on unresolvable inputs is
+  observable for ops; the `scripts/capture_linkedin_geo_ids.py`
+  capture script can be re-run to refresh the mapping.
+- **Runtime kill switch**: out of scope for this change. The
+  resolver is always on; a future env var can disable it without
+  code changes. The `LOCATION_RESOLVER_ENABLED=false` is the
+  proposed follow-up.
+- **Wired in the 2-stage chat filter only**: the v1 path
+  (`_execute_v1` with `INTENT_EXTRACTION_ENABLED=false` or
+  `confidence < threshold`) does NOT call the resolver. The
+  per-source `GET /jobs/linkedin?location=Madrid` route also does
+  NOT call the resolver (the scraper is responsible for its own
+  `geo_id` resolution per the design).
+- **Test coverage**: 51 scenarios in
+  `tests/unit/test_hardcoded_location_resolver.py` (alias
+  normalization + every entry + None semantic) + 9 scenarios
+  in `tests/unit/test_linkedin_scraper.py` (URL formula) + 7
+  scenarios in `tests/unit/test_filter_use_case.py` (resolver
+  injection + v1 path isolation) + 1 end-to-end integration
+  test (`test_2stage_geo_id_end_to_end_with_real_resolver`)
+  that pins the full chain from `intent.location` →
+  `HardcodedLocationResolver` → LinkedIn port `geo_id=103374081`.
+- **Cache key impact**: the `JobSearchCacheKey` 5th field
+  (`geo_id`) isolates resolved queries (`geo_id=103374081`) from
+  unresolved ones (`geo_id=None`). A query with a resolved
+  `geoId` is byte-distinct from the same query with an
+  unresolved `geoId` — they return different results, so a
+  cache HIT on one would silently corrupt the other. The 60s
+  cache flush is invisible to users (60s is short).
 
 ### LinkedIn description: empirical finding (Branch B)
 

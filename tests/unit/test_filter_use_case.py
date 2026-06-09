@@ -98,6 +98,11 @@ class FakeAggregator:
     `location` / `limit` / `sources`. Returns a fixed
     `AggregatedResult` (or raises a fixed exception) for
     testability.
+
+    The 4th `linkedin_geo_id: int | None = None` kwarg (added
+    in WU3) is part of the aggregator's signature. The
+    `calls` list now records 5-tuples
+    `(keywords, location, limit, sources, linkedin_geo_id)`.
     """
 
     def __init__(
@@ -107,7 +112,7 @@ class FakeAggregator:
     ) -> None:
         self._jobs = jobs if jobs is not None else []
         self._error = error
-        self.calls: list[tuple[str, str, int, list[str] | None]] = []
+        self.calls: list[tuple[str, str, int, list[str] | None, int | None]] = []
 
     async def search(
         self,
@@ -115,8 +120,10 @@ class FakeAggregator:
         location: str,
         limit: int,
         sources: list[str] | None = None,
+        *,
+        linkedin_geo_id: int | None = None,
     ) -> AggregatedResult:
-        self.calls.append((keywords, location, limit, sources))
+        self.calls.append((keywords, location, limit, sources, linkedin_geo_id))
         if self._error is not None:
             raise self._error
         # Wrap each Job in an AggregatedJob with a single source
@@ -452,7 +459,7 @@ async def test_execute_forwards_q_location_limit_to_aggregator() -> None:
     )
 
     # The aggregator received the call with the forwarded args.
-    assert aggregator.calls == [("python", "Madrid", 10, ["linkedin", "infojobs"])]
+    assert aggregator.calls == [("python", "Madrid", 10, ["linkedin", "infojobs"], None)]
 
 
 # ---------------------------------------------------------------------------
@@ -554,7 +561,9 @@ async def test_2stage_high_confidence_runs_2_stage_with_extracted_params() -> No
     # The aggregator was called with the EXTRACTED params
     # (NOT the caller's empty `q=""` / `location=""` /
     # `limit=20`).
-    assert aggregator.calls == [("ingeniero", "Madrid", 100, ["linkedin", "indeed", "infojobs"])]
+    assert aggregator.calls == [
+        ("ingeniero", "Madrid", 100, ["linkedin", "indeed", "infojobs"], None)
+    ]
     # The result has `used_fallback=False` (2-stage path).
     assert result.used_fallback is False
     # The result has the matched jobs in aggregator order.
@@ -594,7 +603,7 @@ async def test_2stage_intent_q_none_propagates_to_empty_q() -> None:
         limit=20,
     )
     # `q=""` (None → ""), `location="Madrid"` (extracted).
-    assert aggregator.calls == [("", "Madrid", 100, ["linkedin", "indeed", "infojobs"])]
+    assert aggregator.calls == [("", "Madrid", 100, ["linkedin", "indeed", "infojobs"], None)]
 
 
 async def test_2stage_intent_max_results_env_override_changes_aggregator_limit() -> None:
@@ -633,7 +642,7 @@ async def test_2stage_intent_max_results_env_override_changes_aggregator_limit()
     )
     # The aggregator was called with `limit=50` (the
     # configured `intent_max_results`).
-    assert aggregator.calls == [("python", "Madrid", 50, ["linkedin", "indeed", "infojobs"])]
+    assert aggregator.calls == [("python", "Madrid", 50, ["linkedin", "indeed", "infojobs"], None)]
 
 
 async def test_v1_scenarios_also_pass_with_intent_extraction_enabled_high_confidence() -> None:
@@ -748,7 +757,7 @@ async def test_fallback_low_confidence_dispatches_to_v1_with_used_fallback_true(
     )
     # The aggregator received the v1 defaults (caller's
     # `q=""` / `location=""` / `limit=20`).
-    assert aggregator.calls == [("", "", 20, ["linkedin", "indeed", "infojobs"])]
+    assert aggregator.calls == [("", "", 20, ["linkedin", "indeed", "infojobs"], None)]
     # `used_fallback=True` (v1 path).
     assert result.used_fallback is True
 
@@ -782,7 +791,7 @@ async def test_fallback_high_confidence_dispatches_to_2stage_with_used_fallback_
     )
     # The aggregator received the extracted `q` /
     # `location` and the configured `intent_max_results=100`.
-    assert aggregator.calls == [("python", "Madrid", 100, ["linkedin", "indeed", "infojobs"])]
+    assert aggregator.calls == [("python", "Madrid", 100, ["linkedin", "indeed", "infojobs"], None)]
     # `used_fallback=False` (2-stage path).
     assert result.used_fallback is False
 
@@ -820,7 +829,7 @@ async def test_fallback_intent_extraction_disabled_dispatches_to_v1() -> None:
     # The extractor was NOT called.
     assert intent_extractor.calls == []
     # The aggregator received the v1 defaults.
-    assert aggregator.calls == [("", "", 20, ["linkedin", "indeed", "infojobs"])]
+    assert aggregator.calls == [("", "", 20, ["linkedin", "indeed", "infojobs"], None)]
     # `used_fallback=True` (v1 path).
     assert result.used_fallback is True
 
@@ -863,7 +872,7 @@ async def test_fallback_threshold_env_override_dispatches_to_2stage_at_lower_con
     )
     # 2-stage path: aggregator received the extracted
     # params + `intent_max_results=100`.
-    assert aggregator.calls == [("python", "Madrid", 100, ["linkedin", "indeed", "infojobs"])]
+    assert aggregator.calls == [("python", "Madrid", 100, ["linkedin", "indeed", "infojobs"], None)]
     assert result.used_fallback is False
 
 
@@ -894,6 +903,361 @@ async def test_fallback_intent_extractor_parse_error_dispatches_to_v1() -> None:
         limit=20,
     )
     # v1 path: aggregator received the v1 defaults.
-    assert aggregator.calls == [("", "", 20, ["linkedin", "indeed", "infojobs"])]
+    assert aggregator.calls == [("", "", 20, ["linkedin", "indeed", "infojobs"], None)]
     # `used_fallback=True` (v1 fallback).
     assert result.used_fallback is True
+
+
+# ---------------------------------------------------------------------------
+# `LocationResolverPort` injection (REQ-LOC-GEO-001, WU4 of `fix-linkedin-geoid`).
+#
+# The 2-stage chat filter wires a `LocationResolverPort` into the
+# use case. After stage 1, the use case calls the resolver to
+# translate `intent.location` (a free-form string) to a LinkedIn
+# `geoId` (a `int`). The resolved `geo_id` is forwarded to the
+# aggregator as `linkedin_geo_id=...` (the WU3 dispatch seam).
+#
+# The v1 path (`_execute_v1` with `intent_extraction_enabled=False`
+# or `confidence < threshold`) MUST NOT call the resolver — the
+# v1 path passes `q=""`, `location=""` to the aggregator; there's
+# nothing to resolve. A regression that calls the resolver in the
+# v1 path would be a regression (extra WARNING logs + a resolver
+# call that returns `None` and clutters observability).
+# ---------------------------------------------------------------------------
+
+
+class FakeLocationResolver:
+    """In-memory fake of `LocationResolverPort` for tests.
+
+    Records every call so tests can assert the use case
+    forwarded the right `location` string. Returns a canned
+    `int | None` value (or raises a canned exception) for
+    testability.
+
+    The Protocol is `LocationResolverPort.resolve(self, location:
+    str) -> int | None` (the single method, intentionally NOT
+    `async` — the resolver is a pure in-process dict lookup).
+    """
+
+    def __init__(
+        self,
+        canned: int | None = 103374081,
+        error: Exception | None = None,
+    ) -> None:
+        self._canned: int | None = canned
+        self._error: Exception | None = error
+        self.calls: list[str] = []
+
+    def resolve(self, location: str) -> int | None:
+        """Record the call, return the canned value (or raise)."""
+        self.calls.append(location)
+        if self._error is not None:
+            raise self._error
+        return self._canned
+
+
+async def test_2stage_calls_resolver_and_forwards_geo_id_to_aggregator() -> None:
+    """`intent.location="Madrid"` → resolver called once with `"Madrid"`.
+    Then `linkedin_geo_id=103374081` is forwarded to the aggregator.
+
+    REQ-LOC-GEO-001 + REQ-CHAT-INT-001: the 2-stage path
+    calls the resolver to translate the free-form
+    `intent.location` into a LinkedIn `geoId`, then
+    forwards the resolved `geo_id` to the aggregator. The
+    test asserts the full seam: the resolver is called
+    once with the right input; the aggregator receives
+    the resolved value as the `linkedin_geo_id` kwarg.
+    """
+    jobs = [_make_job("a")]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(selection=LLMSelection(matching_ids=["a"], explanation="match"))
+    intent_extractor = FakeIntentExtractor(
+        canned=Intent(
+            q="ingeniero",
+            location="Madrid",
+            experience_years=3,
+            remote=False,
+            employment_type="full_time",
+            confidence=0.95,
+        )
+    )
+    resolver = FakeLocationResolver(canned=103374081)
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator,  # type: ignore[arg-type]
+        llm=llm,
+        intent_extractor=intent_extractor,
+        location_resolver=resolver,
+    )
+    result = await use_case.execute(
+        message="ingeniero en Madrid",
+        q="",
+        location="",
+        limit=20,
+    )
+
+    # The resolver was called ONCE with the extracted `intent.location`.
+    assert resolver.calls == ["Madrid"]
+    # The aggregator received the resolved `geo_id=103374081` as
+    # the `linkedin_geo_id` kwarg.
+    assert aggregator.calls == [
+        ("ingeniero", "Madrid", 100, ["linkedin", "indeed", "infojobs"], 103374081)
+    ]
+    # 2-stage path: `used_fallback=False`.
+    assert result.used_fallback is False
+
+
+async def test_2stage_resolver_returns_none_logs_warning_and_forwards_none(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """`intent.location="Atlantis"` → resolver returns `None` → WARNING logged.
+    Then `linkedin_geo_id=None` is forwarded to the aggregator.
+
+    The unknown / country-level / País Vasco / Canarias /
+    empty inputs all return `None` from the resolver. The
+    use case logs a WARNING (per REQ-LOC-GEO-001) and
+    forwards `linkedin_geo_id=None` to the aggregator; the
+    LinkedIn scraper falls back to the broken `?location=`
+    path (a strict improvement over today's 100%-broken
+    behavior).
+    """
+    jobs = [_make_job("a")]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(selection=LLMSelection(matching_ids=["a"], explanation="match"))
+    intent_extractor = FakeIntentExtractor(
+        canned=Intent(
+            q="python",
+            location="Atlantis",
+            experience_years=None,
+            remote=None,
+            employment_type=None,
+            confidence=0.95,
+        )
+    )
+    resolver = FakeLocationResolver(canned=None)
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator,  # type: ignore[arg-type]
+        llm=llm,
+        intent_extractor=intent_extractor,
+        location_resolver=resolver,
+    )
+
+    with caplog.at_level("WARNING"):
+        result = await use_case.execute(
+            message="python in Atlantis",
+            q="",
+            location="",
+            limit=20,
+        )
+
+    # The resolver was called with the intent's location.
+    assert resolver.calls == ["Atlantis"]
+    # The aggregator received `linkedin_geo_id=None` (the
+    # resolver returned `None`).
+    assert aggregator.calls == [
+        ("python", "Atlantis", 100, ["linkedin", "indeed", "infojobs"], None)
+    ]
+    # A WARNING was logged for the unresolvable location.
+    resolver_warnings = [
+        record
+        for record in caplog.records
+        if "atlantis" in record.getMessage().lower()
+        and "linkedin_geo_id" in record.getMessage().lower()
+    ]
+    assert len(resolver_warnings) == 1
+    assert "Atlantis" in resolver_warnings[0].getMessage()
+    # 2-stage path: `used_fallback=False` (the resolver miss
+    # is NOT a v1 fallback).
+    assert result.used_fallback is False
+
+
+async def test_v1_path_does_not_call_resolver() -> None:
+    """`_execute_v1` does NOT call the resolver (Q2 explore resolution).
+
+    The v1 path (`_execute_v1` with
+    `intent_extraction_enabled=False` OR `confidence <
+    threshold`) MUST NOT call the resolver. The v1 path
+    passes `q=""` / `location=""` to the aggregator; there's
+    nothing to resolve (the v1 path scrapes the default
+    landing page with no location filter). A regression
+    that calls the resolver in the v1 path would be a
+    regression: extra WARNING logs + a resolver call that
+    returns `None` (the empty string short-circuit) and
+    clutters observability.
+    """
+    jobs = [_make_job("a")]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(selection=LLMSelection(matching_ids=["a"], explanation="match"))
+    intent_extractor = FakeIntentExtractor(
+        canned=Intent(
+            q="python",
+            location="Madrid",
+            experience_years=None,
+            remote=None,
+            employment_type=None,
+            confidence=0.5,  # below the 0.7 threshold → v1 path
+        )
+    )
+    resolver = FakeLocationResolver(canned=103374081)
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator,  # type: ignore[arg-type]
+        llm=llm,
+        intent_extractor=intent_extractor,
+        location_resolver=resolver,
+    )
+    result = await use_case.execute(
+        message="python in Madrid",
+        q="",
+        location="",
+        limit=20,
+    )
+    # The resolver was NEVER called.
+    assert resolver.calls == []
+    # The aggregator received the v1 defaults.
+    assert aggregator.calls == [("", "", 20, ["linkedin", "indeed", "infojobs"], None)]
+    # `used_fallback=True` (v1 path).
+    assert result.used_fallback is True
+
+
+async def test_2stage_resolver_not_called_when_intent_location_is_none() -> None:
+    """`intent.location=None` → resolver NOT called; `linkedin_geo_id=None` forwarded.
+
+    The `Intent.location` field is optional (a user message
+    that doesn't specify a location → `location=None`). The
+    use case MUST NOT call the resolver with `None` (an
+    `None` is the "no location" sentinel; the resolver would
+    short-circuit to `None` anyway, but the call would
+    clutter observability). The aggregator receives
+    `linkedin_geo_id=None`.
+    """
+    jobs = [_make_job("a")]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(selection=LLMSelection(matching_ids=["a"], explanation="match"))
+    intent_extractor = FakeIntentExtractor(
+        canned=Intent(
+            q="python",
+            location=None,
+            experience_years=None,
+            remote=None,
+            employment_type=None,
+            confidence=0.95,
+        )
+    )
+    resolver = FakeLocationResolver(canned=103374081)
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator,  # type: ignore[arg-type]
+        llm=llm,
+        intent_extractor=intent_extractor,
+        location_resolver=resolver,
+    )
+    await use_case.execute(
+        message="python",
+        q="",
+        location="",
+        limit=20,
+    )
+    # The resolver was NEVER called.
+    assert resolver.calls == []
+    # The aggregator received `linkedin_geo_id=None`.
+    assert aggregator.calls == [("python", "", 100, ["linkedin", "indeed", "infojobs"], None)]
+
+
+async def test_use_case_works_without_location_resolver() -> None:
+    """`location_resolver=None` (default) → resolver NOT called; `linkedin_geo_id=None`.
+
+    Backward compat: callers that pre-date WU4 (and
+    composition roots that don't inject a resolver) MUST
+    be able to construct the use case WITHOUT a resolver.
+    The `location_resolver` parameter is optional with a
+    `None` default; when `None`, the use case skips the
+    resolver call entirely and forwards
+    `linkedin_geo_id=None` to the aggregator.
+    """
+    jobs = [_make_job("a")]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(selection=LLMSelection(matching_ids=["a"], explanation="match"))
+    intent_extractor = FakeIntentExtractor(
+        canned=Intent(
+            q="python",
+            location="Madrid",
+            experience_years=None,
+            remote=None,
+            employment_type=None,
+            confidence=0.95,
+        )
+    )
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator,  # type: ignore[arg-type]
+        llm=llm,
+        intent_extractor=intent_extractor,
+        # `location_resolver=None` is the default.
+    )
+    await use_case.execute(
+        message="python in Madrid",
+        q="",
+        location="",
+        limit=20,
+    )
+    # The aggregator received `linkedin_geo_id=None` (no
+    # resolver injected; the use case forwards `None`).
+    assert aggregator.calls == [("python", "Madrid", 100, ["linkedin", "indeed", "infojobs"], None)]
+
+
+async def test_2stage_resolver_call_is_resilient_to_exceptions(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Resolver raises an exception → use case catches it, WARNING logs, `linkedin_geo_id=None`.
+
+    A future `HybridLocationResolver` (geocoding API
+    fallback) could fail at runtime (timeout, network
+    error, etc.). The use case MUST be resilient: a
+    resolver exception is caught, a WARNING is logged,
+    and the path proceeds with `linkedin_geo_id=None` (the
+    LinkedIn scraper falls back to broken `?location=`).
+    The user-facing behavior is identical to a `None`
+    return — the exception is NOT propagated to the
+    route (the chat filter is still functional; only the
+    LinkedIn location filter is degraded).
+    """
+    jobs = [_make_job("a")]
+    aggregator = FakeAggregator(jobs=jobs)
+    llm = FakeLLMClient(selection=LLMSelection(matching_ids=["a"], explanation="match"))
+    intent_extractor = FakeIntentExtractor(
+        canned=Intent(
+            q="python",
+            location="Madrid",
+            experience_years=None,
+            remote=None,
+            employment_type=None,
+            confidence=0.95,
+        )
+    )
+    resolver = FakeLocationResolver(
+        canned=None,
+        error=RuntimeError("resolver backend unavailable"),
+    )
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator,  # type: ignore[arg-type]
+        llm=llm,
+        intent_extractor=intent_extractor,
+        location_resolver=resolver,
+    )
+
+    with caplog.at_level("WARNING"):
+        await use_case.execute(
+            message="python in Madrid",
+            q="",
+            location="",
+            limit=20,
+        )
+
+    # The aggregator received `linkedin_geo_id=None` (the
+    # resolver raised; the use case caught and continued
+    # with `None`).
+    assert aggregator.calls == [("python", "Madrid", 100, ["linkedin", "indeed", "infojobs"], None)]
+    # A WARNING was logged for the resolver failure.
+    resolver_warnings = [
+        record
+        for record in caplog.records
+        if "resolver" in record.getMessage().lower() and "madrid" in record.getMessage().lower()
+    ]
+    assert len(resolver_warnings) == 1

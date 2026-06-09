@@ -73,6 +73,14 @@ class _FakeJobSearchPort:
     exception to raise. Mirrors the `_FakeJobSearchPort` used by the
     other test files but is defined inline here so this test file
     remains self-contained.
+
+    The `geo_id` kwarg is part of the `JobSearchPort` Protocol
+    signature since the `fix-linkedin-geoid` change (the
+    aggregator forwards it to the LinkedIn port; Indeed +
+    InfoJobs ignore it). The 4-tuple `calls` shape captures
+    the per-source forwarding contract: a LinkedIn call
+    records `(keywords, location, limit, geo_id)`; an Indeed
+    or InfoJobs call records `(keywords, location, limit, None)`.
     """
 
     def __init__(
@@ -82,10 +90,16 @@ class _FakeJobSearchPort:
     ) -> None:
         self._jobs: list[Job] = list(jobs) if jobs is not None else []
         self._error: Exception | None = error
-        self.calls: list[tuple[str, str, int]] = []
+        self.calls: list[tuple[str, str, int, int | None]] = []
 
-    async def search(self, keywords: str, location: str, limit: int = 20) -> list[Job]:
-        self.calls.append((keywords, location, limit))
+    async def search(
+        self,
+        keywords: str,
+        location: str,
+        limit: int = 20,
+        geo_id: int | None = None,
+    ) -> list[Job]:
+        self.calls.append((keywords, location, limit, geo_id))
         if self._error is not None:
             raise self._error
         return list(self._jobs)
@@ -403,9 +417,177 @@ async def test_search_forwards_keywords_location_and_limit_to_each_port() -> Non
 
     await use_case.search("rust", "barcelona", 7, ["linkedin", "indeed", "infojobs"])
 
-    assert linkedin_port.calls == [("rust", "barcelona", 7)]
-    assert indeed_port.calls == [("rust", "barcelona", 7)]
-    assert infojobs_port.calls == [("rust", "barcelona", 7)]
+    assert linkedin_port.calls == [("rust", "barcelona", 7, None)]
+    assert indeed_port.calls == [("rust", "barcelona", 7, None)]
+    assert infojobs_port.calls == [("rust", "barcelona", 7, None)]
+
+
+# ---------------------------------------------------------------------------
+# `linkedin_geo_id` dispatch (REQ-LOC-GEO-001 + REQ-A-001)
+#
+# The 2-stage chat filter calls the aggregator with
+# `linkedin_geo_id=103374081` (Madrid's captured geoId) when
+# the resolver returned a value. The aggregator MUST forward
+# the kwarg ONLY to the LinkedIn use case (the per-source
+# port that consumes it) — Indeed + InfoJobs are unaffected
+# (they accept `location=` strings; they don't need a
+# `geoId=`). The forwarding is the seam between the use
+# case's 2-stage path and the LinkedIn scraper's URL
+# formula.
+# ---------------------------------------------------------------------------
+
+
+async def test_linkedin_geo_id_is_forwarded_to_linkedin_port_only() -> None:
+    """`linkedin_geo_id=103374081` → LinkedIn port receives it; Indeed + InfoJobs do NOT.
+
+    The aggregator's per-source dispatch is the seam
+    between the 2-stage chat filter (which has the
+    resolved `geo_id` from the resolver) and the LinkedIn
+    scraper (which uses the `geo_id` in the URL formula).
+    The kwarg flows ONLY to the LinkedIn use case;
+    Indeed + InfoJobs are called with the existing 3-arg
+    signature (`keywords`, `location`, `limit`).
+    """
+    linkedin_port = _FakeJobSearchPort(jobs=[_job(1)])
+    indeed_port = _FakeJobSearchPort(jobs=[_job(2)])
+    infojobs_port = _FakeJobSearchPort(jobs=[_job(3)])
+    use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
+
+    await use_case.search(
+        "python", "Madrid", 20, ["linkedin", "indeed", "infojobs"], linkedin_geo_id=103374081
+    )
+
+    # The LinkedIn port received the `geo_id=103374081` kwarg.
+    assert len(linkedin_port.calls) == 1
+    keywords, location, limit, geo_id = linkedin_port.calls[0]
+    assert keywords == "python"
+    assert location == "Madrid"
+    assert limit == 20
+    assert geo_id == 103374081
+    # The Indeed port received the 3-arg call (NO `geo_id`).
+    assert indeed_port.calls == [("python", "Madrid", 20, None)]
+    # The InfoJobs port received the 3-arg call (NO `geo_id`).
+    assert infojobs_port.calls == [("python", "Madrid", 20, None)]
+
+
+async def test_linkedin_geo_id_none_is_forwarded_to_linkedin_port() -> None:
+    """`linkedin_geo_id=None` (resolver miss) → LinkedIn port receives `geo_id=None`.
+
+    When the resolver returns `None` (unknown / country-
+    level / País Vasco / Canarias / empty), the aggregator
+    forwards `geo_id=None` to the LinkedIn port. The
+    LinkedIn port's `search()` accepts the kwarg and the
+    scraper's URL builder falls back to `?location=`
+    (the broken-but-doesn't-500 path). The test pins
+    the forwarding contract end-to-end.
+    """
+    linkedin_port = _FakeJobSearchPort(jobs=[_job(1)])
+    indeed_port = _FakeJobSearchPort(jobs=[_job(2)])
+    infojobs_port = _FakeJobSearchPort(jobs=[_job(3)])
+    use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
+
+    await use_case.search(
+        "python", "Madrid", 20, ["linkedin", "indeed", "infojobs"], linkedin_geo_id=None
+    )
+
+    # The LinkedIn port received `geo_id=None`.
+    keywords, location, limit, geo_id = linkedin_port.calls[0]
+    assert keywords == "python"
+    assert location == "Madrid"
+    assert limit == 20
+    assert geo_id is None
+    # Indeed + InfoJobs are still 3-arg.
+    assert indeed_port.calls == [("python", "Madrid", 20, None)]
+    assert infojobs_port.calls == [("python", "Madrid", 20, None)]
+
+
+async def test_linkedin_geo_id_default_is_none() -> None:
+    """`aggregator.search(...)` WITHOUT `linkedin_geo_id` defaults to `None`.
+
+    Backward compat: callers that pre-date WU3 invoke the
+    aggregator with the 4-arg signature
+    (`keywords`, `location`, `limit`, `sources`); the
+    `linkedin_geo_id` kwarg is optional with a `None`
+    default. The test pins the default so existing
+    callers (the v1 chat-filter path, the `/jobs`
+    aggregator route) keep working unchanged.
+    """
+    linkedin_port = _FakeJobSearchPort(jobs=[_job(1)])
+    indeed_port = _FakeJobSearchPort(jobs=[_job(2)])
+    infojobs_port = _FakeJobSearchPort(jobs=[_job(3)])
+    use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
+
+    await use_case.search("python", "Madrid", 20, ["linkedin", "indeed", "infojobs"])
+
+    # The LinkedIn port received `geo_id=None` (default).
+    keywords, location, limit, geo_id = linkedin_port.calls[0]
+    assert geo_id is None
+    # Indeed + InfoJobs received 3-arg calls.
+    assert indeed_port.calls == [("python", "Madrid", 20, None)]
+    assert infojobs_port.calls == [("python", "Madrid", 20, None)]
+
+
+async def test_linkedin_geo_id_is_forwarded_only_when_linkedin_is_queried() -> None:
+    """`sources=["indeed", "infojobs"]` + `linkedin_geo_id=103374081` → no LinkedIn call at all.
+
+    The per-source dispatch validates `sources` first; a
+    call with `linkedin_geo_id` but no `linkedin` in
+    `sources` does NOT invoke the LinkedIn port (the kwarg
+    is silently dropped — the per-source dispatch only
+    loops over the queried sources). The test pins the
+    "no LinkedIn call when LinkedIn is not queried"
+    contract.
+    """
+    linkedin_port = _FakeJobSearchPort(jobs=[])
+    indeed_port = _FakeJobSearchPort(jobs=[_job(2)])
+    infojobs_port = _FakeJobSearchPort(jobs=[_job(3)])
+    use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
+
+    await use_case.search("python", "Madrid", 20, ["indeed", "infojobs"], linkedin_geo_id=103374081)
+
+    # The LinkedIn port was NOT called.
+    assert linkedin_port.calls == []
+    # The Indeed + InfoJobs ports received 3-arg calls.
+    assert indeed_port.calls == [("python", "Madrid", 20, None)]
+    assert infojobs_port.calls == [("python", "Madrid", 20, None)]
+
+
+# ---------------------------------------------------------------------------
+# Cache-key 5th field dispatch (REQ-C-005 + REQ-LOC-GEO-001)
+#
+# A query with `linkedin_geo_id=103374081` and the same
+# query with `linkedin_geo_id=None` MUST be different
+# cache entries (different results — the geoId-filtered
+# scrape returns Madrid-specific jobs, the unresolved
+# scrape returns LinkedIn's default landing page). The
+# `JobSearchCacheKey` 5th field pins the isolation.
+# ---------------------------------------------------------------------------
+
+
+async def test_aggregator_distinguishes_geo_id_in_cache_key_for_linkedin() -> None:
+    """`linkedin_geo_id=103374081` vs `linkedin_geo_id=None` → 2 cache MISSes, 0 HITs.
+
+    The `JobSearchCacheKey` 5th field (`geo_id`) isolates
+    the 2 cache entries. The first call with
+    `geo_id=103374081` is a MISS; the second call with
+    `geo_id=None` (same keywords/location/limit) is ALSO
+    a MISS (different cache key). The 3rd call with
+    `geo_id=103374081` again is a HIT (same as the first).
+    """
+    linkedin_port = _FakeJobSearchPort(jobs=[_job(1)])
+    indeed_port = _FakeJobSearchPort(jobs=[])
+    infojobs_port = _FakeJobSearchPort(jobs=[])
+    use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
+
+    first = await use_case.search("python", "Madrid", 20, ["linkedin"], linkedin_geo_id=103374081)
+    second = await use_case.search("python", "Madrid", 20, ["linkedin"], linkedin_geo_id=None)
+    third = await use_case.search("python", "Madrid", 20, ["linkedin"], linkedin_geo_id=103374081)
+
+    # First + third: same `geo_id=103374081` cache entry.
+    # Second: different `geo_id=None` cache entry.
+    assert first.cache_statuses["linkedin"] == "MISS"
+    assert second.cache_statuses["linkedin"] == "MISS"
+    assert third.cache_statuses["linkedin"] == "HIT"
 
 
 # ---------------------------------------------------------------------------

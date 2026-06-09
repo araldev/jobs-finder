@@ -41,7 +41,13 @@ class _FakeJobSearchPort:
     def __init__(self) -> None:
         self.search_calls = 0
 
-    async def search(self, keywords: str, location: str, limit: int = 20) -> list[Any]:
+    async def search(
+        self,
+        keywords: str,
+        location: str,
+        limit: int = 20,
+        geo_id: int | None = None,
+    ) -> list[Any]:
         self.search_calls += 1
         return []
 
