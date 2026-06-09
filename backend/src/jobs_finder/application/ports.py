@@ -107,6 +107,20 @@ class JobSearchCacheKey(NamedTuple):
     for the other 2 sources (Indeed + InfoJobs accept
     `location=` strings; they don't need a `geoId=`).
 
+    The 6th `query_tokens: tuple[str, ...] = ()` field (added
+    in `backend-scraper-query-tuning`, REQ-CACHE-001) is the
+    normalized query tokens used by the InfoJobs filter and
+    the opt-in `keyword_score` sort. The default `()`
+    preserves backward compat: a v1 caller that constructs
+    the key with 5 positional args gets a key with
+    `query_tokens=()`. A pre-WU2 query with `query_tokens=()`
+    is byte-distinct from the same query with
+    `query_tokens=("react",)` (different cache entries,
+    different jobs). The `query_tokens` value is NORMALIZED
+    (lowercased, sorted, deduped) at the cache-wrapper
+    boundary so a `set` passed by the caller becomes a
+    canonical `tuple`.
+
     Tuple equality and hashing are exact for `NamedTuple`, so
     there is no key collision risk.
     """
@@ -116,6 +130,7 @@ class JobSearchCacheKey(NamedTuple):
     location: str
     limit: int
     geo_id: int | None = None
+    query_tokens: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------

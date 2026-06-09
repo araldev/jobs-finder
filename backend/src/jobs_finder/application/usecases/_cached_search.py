@@ -97,6 +97,7 @@ class CachedJobSearchUseCase:
         location: str,
         limit: int = 20,
         geo_id: int | None = None,
+        query_tokens: tuple[str, ...] = (),
     ) -> SearchResult:
         """Run the search, served from the cache when possible.
 
@@ -114,6 +115,18 @@ class CachedJobSearchUseCase:
         with `geo_id=103374081` is byte-distinct from
         `geo_id=None`. Indeed + InfoJobs ports ignore the
         kwarg; the LinkedIn port uses it in the URL formula.
+
+        The 5th `query_tokens: tuple[str, ...] = ()` kwarg
+        (added in `backend-scraper-query-tuning`, REQ-CACHE-001)
+        is the normalized query tokens. The kwarg is part of
+        the `JobSearchCacheKey` 6th field so a query with
+        `query_tokens=("react",)` is byte-distinct from the
+        same query with `query_tokens=()`. The kwarg is
+        NORMALIZED via `tuple(sorted(query_tokens))` so the
+        caller's `set` (or any iterable) becomes a canonical
+        sorted tuple. The kwarg is NOT forwarded to the port
+        — it's a cache-only concern (REQ-CACHE-001: the
+        scraper ports do not need to know about query tokens).
         """
         key = JobSearchCacheKey(
             source=self._source,
@@ -121,6 +134,7 @@ class CachedJobSearchUseCase:
             location=location,
             limit=limit,
             geo_id=geo_id,
+            query_tokens=tuple(sorted(query_tokens)),
         )
         cached = await self._cache.get(key)
         if cached is not None:
