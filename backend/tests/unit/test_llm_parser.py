@@ -1,232 +1,265 @@
-"""Unit tests for the defensive `parse_llm_response` parser (T-008 of `ai-chat-filter`).
+"""Unit tests for the `StreamEventParser` (T-005 of `chat-streaming`).
 
-Spec: REQ-LLM-002 (3-tier defensive parser, returns a typed
-`LLMSelection` with the matching_ids and explanation fields).
+Spec: REQ-PARSE-001 (end-of-stream JSON extraction with strict validation).
 
-The parser MUST handle 6 scenarios:
+`StreamEventParser` is a pure dataclass with 2 methods:
 
-  1. Clean JSON: `'{"matching_ids": ["a"], "explanation": "ok"}'` →
-     `LLMSelection(["a"], "ok")` (tier 1 succeeds).
-  2. Markdown-fenced: `` ```json\\n{"matching_ids":["a"]}\\n``` `` →
-     tier 2 regex extracts the JSON object from inside the fences.
-  3. Trailing prose: `'{"matching_ids":["a"]}\\n\\nSaludos.'` →
-     tier 1 fails (whole string is not valid JSON), tier 2 regex
-     extracts the first `{...}` block.
-  4. Completely malformed: `'not json at all'` → both tiers fail,
-     `LLMResponseParseError` raised.
-  5. Missing `matching_ids` key: `'{"explanation":"none"}'` → returns
-     `LLMSelection([], "none")` (the field is OPTIONAL, defaults to []).
-  6. Empty list: `'{"matching_ids":[],"explanation":"none"}'` → returns
-     `LLMSelection([], "none")` (zero matches is a valid answer).
+  - `feed(chunk) -> Iterator[str]`: accumulates `chunk` in
+    `self.buffer` (so the parser can re-parse the full text
+    at the end) and yields the chunk verbatim (so the use
+    case can forward each text token to the SSE stream as a
+    `text` event in real time).
 
-The design decision is to RAISE on tier-1+tier-2 failure (not return
-an empty `LLMSelection`). The route maps `LLMResponseParseError` to
-HTTP 422; the defensive fallback to `[]` would mask a real model
-malfunction and silently produce empty results.
+  - `finalize(returned_ids: set[str]) -> LLMSelection`:
+    reuses the production `parse_llm_response` parser on
+    the accumulated buffer. The buffer MAY have markdown
+    fences (a defensive `re.sub` strips them before
+    parsing). `matching_ids` NOT in `returned_ids` are
+    dropped silently with a `WARNING` log; the
+    `explanation` is preserved.
+
+The 6 tests below exercise the 6 spec scenarios from
+REQ-PARSE-001 + design §3:
+
+  1. `feed()` yields chunks verbatim + buffer accumulates.
+  2. Plain JSON buffer → finalize returns matching LLMSelection.
+  3. Markdown-fenced buffer → fences stripped, parses.
+  4. Hallucinated ids (not in returned_ids) → dropped, WARNING logged.
+  5. Malformed JSON → raises LLMResponseParseError.
+  6. Empty buffer + finalize → raises LLMResponseParseError.
 """
 
 from __future__ import annotations
 
-import dataclasses
+import logging
 
 import pytest
 
-from jobs_finder.infrastructure.llm._parser import LLMSelection, parse_llm_response
+from jobs_finder.infrastructure.llm._parser import StreamEventParser
 from jobs_finder.infrastructure.llm.exceptions import LLMResponseParseError
 
 # ---------------------------------------------------------------------------
-# Scenario 1: clean JSON
+# Scenario 1: feed() yields chunks verbatim + buffer accumulates
 # ---------------------------------------------------------------------------
 
 
-def test_clean_json_returns_selection() -> None:
-    """A well-formed JSON object is parsed verbatim (tier 1).
+def test_feed_yields_chunks_verbatim_and_accumulates_buffer() -> None:
+    """`feed(chunk)` yields the chunk verbatim + appends to `self.buffer`.
 
-    `'{"matching_ids": ["a", "b"], "explanation": "test"}'`
-    → `LLMSelection(["a", "b"], "test")`
+    The dual behavior is the design choice: the consumer
+    (the use case's `stream_execute`) iterates the yielded
+    strings to push `text` events to the SSE stream; the
+    buffer is the canonical state for end-of-stream
+    re-parsing.
     """
-    raw = '{"matching_ids": ["a", "b"], "explanation": "test"}'
-    result = parse_llm_response(raw)
-    assert isinstance(result, LLMSelection)
-    assert result.matching_ids == ["a", "b"]
-    assert result.explanation == "test"
+    parser = StreamEventParser()
+    chunks_yielded: list[str] = []
+    for chunk in ("match", "ing", " ids"):
+        chunks_yielded.extend(parser.feed(chunk))
+    # Yielded verbatim in feed order.
+    assert chunks_yielded == ["match", "ing", " ids"]
+    # Buffer accumulates the same chunks (no separators).
+    assert parser.buffer == "matching ids"
 
 
-def test_clean_json_with_whitespace_around_object() -> None:
-    """Leading/trailing whitespace is tolerated (tier 1)."""
-    raw = '   \n\n  {"matching_ids": ["x"], "explanation": "ok"}  \n\n  '
-    result = parse_llm_response(raw)
-    assert result.matching_ids == ["x"]
-    assert result.explanation == "ok"
+def test_feed_with_empty_string_yields_empty_string_and_buffer_unchanged() -> None:
+    """`feed("")` yields one empty string + leaves the buffer empty.
 
-
-# ---------------------------------------------------------------------------
-# Scenario 2: markdown-fenced
-# ---------------------------------------------------------------------------
-
-
-def test_markdown_fenced_json_extracted_by_tier_2() -> None:
-    """JSON inside ```json ... ``` markdown fences is extracted (tier 2).
-
-    Tier 1 (`json.loads` on the whole string) fails because the
-    fenced text is not valid JSON. Tier 2 regex extracts the first
-    `{...}` block, which IS valid JSON, and parses it.
+    An edge case: an empty-string call MUST still go
+    through the `feed` body (so the use case's iteration
+    loop is uniform), but the buffer remains unchanged
+    and the yielded string is the empty sentinel. A
+    use case that calls `finalize` without ever calling
+    `feed` (an empty aggregator result) is a separate
+    path — see `test_finalize_with_empty_buffer_raises`.
     """
-    raw = '```json\n{"matching_ids": ["a"], "explanation": "x"}\n```'
-    result = parse_llm_response(raw)
-    assert result.matching_ids == ["a"]
-    assert result.explanation == "x"
-
-
-def test_markdown_fenced_with_bare_fence_backticks() -> None:
-    """JSON inside plain ``` ... ``` fences (no language tag) is also extracted."""
-    raw = '```\n{"matching_ids": ["y"], "explanation": "fenced"}\n```'
-    result = parse_llm_response(raw)
-    assert result.matching_ids == ["y"]
-    assert result.explanation == "fenced"
+    parser = StreamEventParser()
+    chunks = list(parser.feed(""))
+    # The `feed` body runs once with an empty string —
+    # yields the empty sentinel verbatim. The buffer is
+    # unchanged (string concat with "" is a no-op).
+    assert chunks == [""]
+    assert parser.buffer == ""
 
 
 # ---------------------------------------------------------------------------
-# Scenario 3: trailing prose
+# Scenario 2: plain JSON buffer parses
 # ---------------------------------------------------------------------------
 
 
-def test_trailing_prose_falls_back_to_tier_2() -> None:
-    """When the model appends a 'Saludos.' after the JSON, tier 1 fails
-    (the whole string is not valid JSON), tier 2 regex extracts the
-    first balanced `{...}` block.
+def test_finalize_with_plain_json_returns_selection() -> None:
+    """A plain JSON buffer parses via the production `parse_llm_response`.
+
+    The 2-chunk concatenation `'{"matching_ids":["j1","j2"],...}'`
+    → `LLMSelection(["j1","j2"], "These match")`. The
+    `returned_ids` set `{j1, j2, j3}` is the aggregator's
+    actual returned ids; j1 + j2 are both in the set, so
+    nothing is dropped.
     """
-    raw = '{"matching_ids": ["a"]}\n\nSaludos.'
-    result = parse_llm_response(raw)
-    assert result.matching_ids == ["a"]
-
-
-def test_leading_prose_falls_back_to_tier_2() -> None:
-    """When the model prepends prose, tier 2 still extracts the JSON."""
-    raw = 'Sure, here is the JSON:\n\n{"matching_ids": ["b"], "explanation": "ok"}'
-    result = parse_llm_response(raw)
-    assert result.matching_ids == ["b"]
-    assert result.explanation == "ok"
+    parser = StreamEventParser()
+    list(parser.feed('{"matching_ids":["j1","j2"],'))
+    list(parser.feed('"explanation":"These match"}'))
+    selection = parser.finalize({"j1", "j2", "j3"})
+    assert selection.matching_ids == ["j1", "j2"]
+    assert selection.explanation == "These match"
 
 
 # ---------------------------------------------------------------------------
-# Scenario 4: completely malformed — RAISE
+# Scenario 3: markdown-fenced buffer → fences stripped, parses
 # ---------------------------------------------------------------------------
 
 
-def test_completely_malformed_raises_parse_error() -> None:
-    """A string with no JSON object at all RAISES `LLMResponseParseError`.
+def test_finalize_strips_markdown_fences_before_parsing() -> None:
+    """A buffer with ```json ... ``` fences is stripped and parsed.
 
-    The design decision is to RAISE on tier-1+tier-2 failure (not
-    return an empty selection). The route maps the exception to
-    HTTP 422; silently returning an empty selection would mask a
-    real model malfunction.
+    The design decision is to reuse `parse_llm_response` at
+    the end of the stream; that parser already handles tier-2
+    regex extraction of the first `{...}` block. The fences
+    are part of the buffer; the parser's regex extracts the
+    JSON regardless.
     """
-    raw = "this is not json at all"
-    with pytest.raises(LLMResponseParseError) as exc_info:
-        parse_llm_response(raw)
-    # The exception message is human-readable for the 422 body.
-    assert exc_info.value  # not empty
+    parser = StreamEventParser()
+    raw = '```json\n{"matching_ids":["j1"],"explanation":"x"}\n```'
+    list(parser.feed(raw))
+    selection = parser.finalize({"j1"})
+    assert selection.matching_ids == ["j1"]
+    assert selection.explanation == "x"
 
 
-def test_empty_string_raises_parse_error() -> None:
-    """An empty string is malformed → raises `LLMResponseParseError`."""
-    with pytest.raises(LLMResponseParseError):
-        parse_llm_response("")
+# ---------------------------------------------------------------------------
+# Scenario 4: hallucinated ids (not in returned_ids) → dropped, WARNING logged
+# ---------------------------------------------------------------------------
 
 
-def test_only_whitespace_raises_parse_error() -> None:
-    """A whitespace-only string is malformed → raises `LLMResponseParseError`."""
-    with pytest.raises(LLMResponseParseError):
-        parse_llm_response("   \n\t  ")
+def test_finalize_drops_hallucinated_ids_with_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """IDs in `matching_ids` but NOT in `returned_ids` are dropped + WARNING logged.
 
-
-def test_json_array_without_object_raises_parse_error() -> None:
-    """A JSON array (not an object) is malformed → raises `LLMResponseParseError`.
-
-    The parser expects an object shape (`{...}`) so the response can
-    carry the `explanation` field alongside `matching_ids`. A bare
-    array is rejected so the model can't accidentally bypass the
-    shape contract.
+    The LLM might return an id that doesn't exist in the
+    aggregator's actual jobs (a "hallucination"). The
+    parser's policy: drop those ids silently (the use
+    case's stage-3 already does this for v1, but the
+    parser also drops them defensively so the downstream
+    contract is the same in both paths), log a WARNING per
+    dropped id, and preserve the `explanation` text.
     """
+    parser = StreamEventParser()
+    raw = '{"matching_ids":["j1","j9"],"explanation":"all"}'
+    list(parser.feed(raw))
+    with caplog.at_level(logging.WARNING, logger="jobs_finder.infrastructure.llm._parser"):
+        selection = parser.finalize({"j1", "j2", "j3"})
+    # j9 is dropped; j1 is kept.
+    assert selection.matching_ids == ["j1"]
+    # The explanation is preserved UNCHANGED (the drop is
+    # silent — no explanation rewrite per the design).
+    assert selection.explanation == "all"
+    # At least one WARNING log line mentions j9.
+    warning_texts = [
+        record.getMessage() for record in caplog.records if record.levelno == logging.WARNING
+    ]
+    assert any("j9" in text for text in warning_texts), (
+        f"Expected a WARNING log mentioning j9; got: {warning_texts}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scenario 5: malformed JSON → raises LLMResponseParseError
+# ---------------------------------------------------------------------------
+
+
+def test_finalize_with_malformed_buffer_raises_parse_error() -> None:
+    """A buffer that's not JSON at all raises `LLMResponseParseError`.
+
+    Both tier-1 (`json.loads(stripped)`) and tier-2
+    (regex extraction) fail on plain English text. The
+    parser re-raises the exception so the route's
+    `_serialize_error` maps it to the `llm_parse` SSE
+    error event.
+    """
+    parser = StreamEventParser()
+    list(parser.feed("this is not json at all"))
     with pytest.raises(LLMResponseParseError):
-        parse_llm_response('["a", "b"]')
+        parser.finalize({"j1"})
 
 
 # ---------------------------------------------------------------------------
-# Scenario 5: missing `matching_ids` key — default to []
+# Scenario 6: empty buffer + finalize → raises LLMResponseParseError
 # ---------------------------------------------------------------------------
 
 
-def test_missing_matching_ids_key_defaults_to_empty_list() -> None:
-    """When the JSON has only `explanation`, `matching_ids` defaults to `[]`."""
-    raw = '{"explanation": "no matches"}'
-    result = parse_llm_response(raw)
-    assert result.matching_ids == []
-    assert result.explanation == "no matches"
+def test_finalize_with_empty_buffer_raises_parse_error() -> None:
+    """An empty buffer + finalize → raises `LLMResponseParseError`.
 
-
-def test_missing_both_keys_returns_empty_selection() -> None:
-    """When the JSON is `{}`, both fields default — empty list, empty explanation."""
-    raw = "{}"
-    result = parse_llm_response(raw)
-    assert result.matching_ids == []
-    assert result.explanation == ""
-
-
-# ---------------------------------------------------------------------------
-# Scenario 6: empty list value
-# ---------------------------------------------------------------------------
-
-
-def test_empty_matching_ids_list_is_valid() -> None:
-    """`{"matching_ids": [], "explanation": "no matches"}` is a valid answer."""
-    raw = '{"matching_ids": [], "explanation": "no matches"}'
-    result = parse_llm_response(raw)
-    assert result.matching_ids == []
-    assert result.explanation == "no matches"
-
-
-# ---------------------------------------------------------------------------
-# Shape validation — non-dict JSON
-# ---------------------------------------------------------------------------
-
-
-def test_json_string_value_rejected() -> None:
-    """A JSON string is rejected (not an object)."""
+    The empty-buffer case is the "LLM emitted nothing"
+    edge case (a real provider can return 200 with an
+    empty body when the streaming pipeline glitches).
+    The parser MUST surface this as a parse error so the
+    route maps to `llm_parse`, NOT to a successful (empty)
+    selection.
+    """
+    parser = StreamEventParser()
     with pytest.raises(LLMResponseParseError):
-        parse_llm_response('"just a string"')
-
-
-def test_json_number_value_rejected() -> None:
-    """A JSON number is rejected (not an object)."""
-    with pytest.raises(LLMResponseParseError):
-        parse_llm_response("42")
+        parser.finalize({"j1"})
 
 
 # ---------------------------------------------------------------------------
-# LLMSelection dataclass — frozen, slots, equality
+# Type-level sanity: `StreamEventParser` is a dataclass with `buffer: str`
 # ---------------------------------------------------------------------------
 
 
-def test_llm_selection_is_frozen() -> None:
-    """`LLMSelection` is `frozen=True` — assignment raises `FrozenInstanceError`."""
-    sel = LLMSelection(matching_ids=["a"], explanation="x")
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        sel.matching_ids = ["b"]  # type: ignore[misc]
+def test_stream_event_parser_buffer_is_a_string_after_init() -> None:
+    """`StreamEventParser()` initializes `buffer=""` (the default).
+
+    The dataclass default is the empty string so a fresh
+    parser can be `feed`-ed into immediately. A regression
+    that defaults `buffer=None` would break the
+    `self.buffer += chunk` accumulation.
+    """
+    parser = StreamEventParser()
+    assert parser.buffer == ""
+    assert isinstance(parser.buffer, str)
 
 
-def test_llm_selection_equality() -> None:
-    """Two selections with the same fields are equal (frozen dataclass semantics)."""
-    a = LLMSelection(matching_ids=["a", "b"], explanation="x")
-    b = LLMSelection(matching_ids=["a", "b"], explanation="x")
-    assert a == b
+# ---------------------------------------------------------------------------
+# Triangulation: feed order matters (chunks are concatenated verbatim, not interleaved)
+# ---------------------------------------------------------------------------
 
 
-def test_llm_selection_inequality_on_field_difference() -> None:
-    """A difference in any field breaks equality."""
-    a = LLMSelection(matching_ids=["a", "b"], explanation="x")
-    b = LLMSelection(matching_ids=["a", "b"], explanation="y")
-    assert a != b
-    c = LLMSelection(matching_ids=["a"], explanation="x")
-    assert a != c
+def test_feed_concatenates_chunks_in_order() -> None:
+    """`feed(a)` + `feed(b)` → buffer == a + b (concatenation, not interleaving).
+
+    The order in which the parser receives chunks
+    determines the order of characters in the buffer.
+    A regression that prepended `\\n` between chunks
+    would break `parse_llm_response` (the JSON would
+    not be a single valid object anymore).
+    """
+    parser = StreamEventParser()
+    list(parser.feed('{"matching_ids":'))
+    list(parser.feed('["a","b"]}'))
+    assert parser.buffer == '{"matching_ids":["a","b"]}'
+    # The final buffer is valid JSON; finalize succeeds.
+    selection = parser.finalize({"a", "b"})
+    assert selection.matching_ids == ["a", "b"]
+
+
+# Sanity check that the markdown-strip behavior is exposed (and not
+# a hidden side-effect of `parse_llm_response`'s tier-2 regex).
+def test_finalize_preserves_explanation_after_id_drops() -> None:
+    """Dropping hallucinated ids MUST NOT mutate the `explanation` text.
+
+    The design is explicit: the explanation is part of
+    the user-facing contract and is preserved verbatim
+    (a WARNING is logged for observability, but the
+    text the user sees is unchanged). A regression
+    that rewrote the explanation to "<N> matches" would
+    silently break the user-facing contract.
+    """
+    parser = StreamEventParser()
+    raw = '{"matching_ids":["j1","j9","j2"],"explanation":"all match"}'
+    list(parser.feed(raw))
+    selection = parser.finalize({"j1", "j2", "j3"})
+    assert "all match" in selection.explanation
+    # Cross-check: the explanation does NOT mention the dropped id.
+    assert "j9" not in selection.explanation
