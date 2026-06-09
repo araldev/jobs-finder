@@ -24,13 +24,12 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Any
 
 import pytest
 
 from jobs_finder.application.aggregator import SearchAllSourcesUseCase
 from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase
-from jobs_finder.domain.exceptions import AllSourcesFailedError, JobSearchError
+from jobs_finder.domain.exceptions import AllSourcesFailedError
 from jobs_finder.domain.job import Job
 from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCache
 from jobs_finder.infrastructure.indeed.exceptions import (
@@ -40,19 +39,26 @@ from jobs_finder.infrastructure.indeed.exceptions import (
 from jobs_finder.infrastructure.infojobs.exceptions import InfoJobsBlockedError
 from jobs_finder.infrastructure.linkedin.exceptions import LinkedInBlockedError
 
-
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------
 
 
-def _job(idx: int, title: str = "Title") -> Job:
+def _job(idx: int, title: str = "Title", source_id: str = "j") -> Job:
+    """Build a deterministic `Job` for tests.
+
+    `posted_at` is tz-aware UTC to satisfy the `Job.__post_init__`
+    invariant. The default `title="Title"` is intentionally
+    constant — the dedup key is `(title, company, location)`,
+    so distinct `id`s with the same title dedup to 1 entry.
+    Use `source_id` to make ids unique per source.
+    """
     return Job(
-        id=f"j{idx}",
+        id=f"{source_id}{idx}",
         title=title,
         company="Co",
         location="Madrid",
-        url=f"https://example.com/j{idx}",
+        url=f"https://example.com/{source_id}{idx}",
         posted_at=datetime(2026, 6, idx, tzinfo=UTC),
     )
 
@@ -116,14 +122,20 @@ async def test_aggregator_returns_partial_results_on_indeed_failure() -> None:
     recorded in `per_source` with the exception; the
     aggregator does NOT raise.
     """
-    linkedin_port = _FakeJobSearchPort(jobs=[_job(i) for i in range(1, 16)])
+    # Distinct titles so the dedup key (title, company,
+    # location) does not merge them. `source_id` keeps the
+    # `id` field unique per source (the dedup key doesn't
+    # include id, but id is part of the `Job` value object).
+    linkedin_port = _FakeJobSearchPort(
+        jobs=[_job(i, title=f"LinkedIn Job {i}", source_id="l") for i in range(1, 16)]
+    )
     indeed_port = _FakeJobSearchPort(error=IndeedBlockedError("cloudflare"))
-    infojobs_port = _FakeJobSearchPort(jobs=[_job(i, title=f"IJ{i}") for i in range(1, 9)])
+    infojobs_port = _FakeJobSearchPort(
+        jobs=[_job(i, title=f"InfoJobs Job {i}", source_id="i") for i in range(1, 9)]
+    )
     use_case = _build(linkedin_port, indeed_port, infojobs_port)
 
-    result = await use_case.search(
-        "python", "madrid", 20, ["linkedin", "indeed", "infojobs"]
-    )
+    result = await use_case.search("python", "madrid", 20, ["linkedin", "indeed", "infojobs"])
 
     # 15 LinkedIn + 8 InfoJobs = 23 (Indeed is excluded).
     assert len(result.jobs) == 23
@@ -141,14 +153,14 @@ async def test_aggregator_returns_200_on_partial_2_fail_1_succeed() -> None:
     Aggregator returns the 10 LinkedIn jobs. The aggregator
     does NOT raise (the route returns 200).
     """
-    linkedin_port = _FakeJobSearchPort(jobs=[_job(i) for i in range(1, 11)])
-    indeed_port = _FakeJobSearchPort(error=IndeedTimeoutError())
+    linkedin_port = _FakeJobSearchPort(
+        jobs=[_job(i, title=f"LinkedIn Job {i}", source_id="l") for i in range(1, 11)]
+    )
+    indeed_port = _FakeJobSearchPort(error=IndeedTimeoutError("timed out"))
     infojobs_port = _FakeJobSearchPort(error=InfoJobsBlockedError("distil"))
     use_case = _build(linkedin_port, indeed_port, infojobs_port)
 
-    result = await use_case.search(
-        "python", "madrid", 20, ["linkedin", "indeed", "infojobs"]
-    )
+    result = await use_case.search("python", "madrid", 20, ["linkedin", "indeed", "infojobs"])
 
     assert len(result.jobs) == 10
     assert result.per_source["linkedin"].succeeded is True
@@ -194,22 +206,22 @@ async def test_failed_source_logged_once(
     `source="indeed"` appears exactly 1 time, not 25. (A
     regression that logged per-job would surface here.)
     """
-    linkedin_port = _FakeJobSearchPort(jobs=[_job(i) for i in range(1, 26)])
+    linkedin_port = _FakeJobSearchPort(
+        jobs=[_job(i, title=f"LinkedIn Job {i}", source_id="l") for i in range(1, 26)]
+    )
     indeed_port = _FakeJobSearchPort(error=IndeedBlockedError("cloudflare"))
     infojobs_port = _FakeJobSearchPort(jobs=[])
     use_case = _build(linkedin_port, indeed_port, infojobs_port)
 
     with caplog.at_level(logging.WARNING, logger="jobs_finder.application.aggregator"):
-        result = await use_case.search(
-            "python", "madrid", 20, ["linkedin", "indeed", "infojobs"]
-        )
+        result = await use_case.search("python", "madrid", 20, ["linkedin", "indeed", "infojobs"])
 
     # The aggregator returned 25 LinkedIn jobs.
     assert len(result.jobs) == 25
     # The WARNING log for the failed source appears exactly 1 time.
     indeed_warnings = [
-        rec for rec in caplog.records
-        if rec.levelno == logging.WARNING
-        and getattr(rec, "source", None) == "indeed"
+        rec
+        for rec in caplog.records
+        if rec.levelno == logging.WARNING and getattr(rec, "source", None) == "indeed"
     ]
     assert len(indeed_warnings) == 1

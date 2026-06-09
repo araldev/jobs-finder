@@ -52,6 +52,7 @@ production callers (`app_factory.build_app`) nor tests need
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol, cast
@@ -62,8 +63,16 @@ from jobs_finder.application.ranking import (
     rank_jobs,
 )
 from jobs_finder.application.usecases._cached_search import SearchResult
-from jobs_finder.domain.exceptions import JobSearchError
+from jobs_finder.domain.exceptions import AllSourcesFailedError, JobSearchError
 from jobs_finder.domain.job import Job
+
+# Module-level logger (REQ-DEFENSIVE-001, T-005). The
+# WARNING log is emitted from the `_call_one` except clause
+# so the log line is associated with the SOURCE that failed
+# (not the route, not the app factory). The log carries
+# `source` and `error_type` as structured `extra` fields so
+# an aggregation pipeline can group failures by source.
+_logger = logging.getLogger(__name__)
 
 # Type aliases for the 2 injected pure-function helpers
 # (REQ-FILTER-001 + REQ-SCORE-001, T-004). The signatures
@@ -335,9 +344,23 @@ class SearchAllSourcesUseCase:
             except JobSearchError as exc:
                 # Per-source error isolation: record the failed
                 # source in `per_source` so the route can surface
-                # it in `X-Aggregator-Errors`. Re-raise non-`JobSearchError`
-                # exceptions (a programming bug, e.g. `KeyError`)
-                # so the registered handler maps it to 500.
+                # it in `X-Aggregator-Errors`. Emit a WARNING
+                # log so ops can spot failure patterns (REQ-
+                # DEFENSIVE-001 scenario 4). The log is
+                # emitted ONCE per failed source (NOT once
+                # per job the source would have returned) —
+                # the `try/except` wraps the source CALL, not
+                # the post-scrape processing. Re-raise non-
+                # `JobSearchError` exceptions (a programming
+                # bug, e.g. `KeyError`) so the registered
+                # handler maps it to 500.
+                _logger.warning(
+                    "aggregator source failed",
+                    extra={
+                        "source": source,
+                        "error_type": type(exc).__name__,
+                    },
+                )
                 return SourceResult(source=source, error=exc)
             except Exception:
                 # Non-`JobSearchError`: programming bug, re-raise so
@@ -372,6 +395,20 @@ class SearchAllSourcesUseCase:
         # an unnecessary lambda wrapper.
         ordered_sources = sorted(sources, key=SOURCE_PRIORITY.index)
         results = await asyncio.gather(*(_call_one(s) for s in ordered_sources))
+
+        # REQ-DEFENSIVE-001 scenario 2: when ALL 3 sources
+        # failed, raise `AllSourcesFailedError` so the
+        # registered `JobSearchError` handler maps the request
+        # to HTTP 502. The `asyncio.gather` call already
+        # completed — every source's WARNING log was emitted
+        # in `_call_one` — so this branch only triggers the
+        # exception, not new log noise. `success_count == 0`
+        # is the only condition that raises; a single
+        # successful source returns partial results with a
+        # 200 status (no exception).
+        success_count = sum(1 for r in results if r.succeeded)
+        if success_count == 0:
+            raise AllSourcesFailedError("all sources failed")
 
         # Build the dedup map. Iteration order is `ordered_sources`
         # order, so the `sources` list accumulates in source-priority
