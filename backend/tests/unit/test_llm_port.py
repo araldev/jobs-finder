@@ -1,7 +1,9 @@
-"""Unit tests for the `LLMClientPort` Protocol (T-010 of `ai-chat-filter`).
+"""Unit tests for the `LLMClientPort` Protocol (T-010 of `ai-chat-filter`,
+extended in T-003 of `chat-streaming`).
 
 Spec: REQ-LLM-001 (the use case MUST depend on the Protocol, not on
-the concrete `MiniMaxLLMClient`).
+the concrete `MiniMaxLLMClient`), REQ-LLM-001 from `chat-streaming`
+(Protocol grows `stream_complete` for the streaming endpoint).
 
 `LLMClientPort` is a `typing.Protocol` (NOT `@runtime_checkable`).
 The application layer uses it for static type checking; the
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+from collections.abc import AsyncIterator
 
 import pytest
 
@@ -72,6 +75,12 @@ class FakeLLMClient:
     the right `system` / `user` arguments. Returns a fixed response
     string (or raises a fixed exception) for testability.
 
+    The class also exposes a no-op `stream_complete` async
+    generator (added in T-003 of `chat-streaming`) so the
+    `LLMClientPort` Protocol's structural conformance test
+    passes for the new streaming method. Tests that need
+    canned stream chunks override the method locally.
+
     This class is intentionally NOT marked as `LLMClientPort` —
     structural conformance is what the Protocol test verifies.
     The `@runtime_checkable` decorator is NOT used on the
@@ -92,6 +101,19 @@ class FakeLLMClient:
         if self._error is not None:
             raise self._error
         return self._response
+
+    async def stream_complete(self, *, system: str, user: str) -> AsyncIterator[str]:
+        """No-op default `stream_complete` for Protocol conformance.
+
+        T-003 of `chat-streaming` added `stream_complete` to the
+        Protocol. The base class yields nothing so callers that
+        iterate the stream get an empty generator (the v1 callers
+        that never invoked `stream_complete` are unaffected).
+        Tests that need canned chunks override the method locally.
+        """
+        del system, user
+        if False:  # pragma: no cover — yields nothing
+            yield ""
 
 
 async def test_fake_llm_client_can_be_constructed_and_called() -> None:
@@ -155,3 +177,60 @@ def test_application_layer_does_not_import_infrastructure_client() -> None:
     assert not bad_imports, (
         f"application/ports.py must not import from infrastructure: {bad_imports}"
     )
+
+
+# ---------------------------------------------------------------------------
+# `stream_complete` Protocol extension (T-003 of `chat-streaming`)
+#
+# REQ-LLM-001 from `chat-streaming` extends `LLMClientPort` with
+# `async def stream_complete(self, *, system: str, user: str)
+# -> AsyncIterator[str]`. The new method is the application's
+# seam to the streaming LLM call (the `POST /jobs/chat/stream`
+# endpoint). Conformance is enforced by mypy --strict; the
+# runtime call is duck-typed.
+# ---------------------------------------------------------------------------
+
+
+def test_llm_client_port_declares_stream_complete() -> None:
+    """`LLMClientPort` declares `stream_complete` (REQ-LLM-001 streaming).
+
+    The Protocol's `__abstractmethods__` (Python ≥ 3.12) or the
+    presence of the method on the class is enough to verify the
+    declaration. The runtime check is a guard against a
+    regression that drops the method from the Protocol; mypy
+    --strict is the primary enforcement.
+    """
+    has_method = hasattr(LLMClientPort, "stream_complete")
+    # `__annotations__` is the Pydantic-free way to confirm the
+    # Protocol declares the method. The Protocol's `__dict__`
+    # also lists it once it's defined in the class body.
+    assert has_method, "LLMClientPort must declare `stream_complete` (REQ-LLM-001 streaming)"
+
+
+def test_stream_complete_signature_is_keyword_only() -> None:
+    """`stream_complete`'s `system` and `user` params are keyword-only.
+
+    The design mirrors `complete(*, system, user)`. A regression
+    to positional args would break the call sites (and obscure
+    which string is the system vs the user message).
+    """
+    import inspect as _inspect  # noqa: PLC0415
+
+    sig = _inspect.signature(LLMClientPort.stream_complete)
+    # Both `system` and `user` MUST be KEYWORD_ONLY.
+    assert sig.parameters["system"].kind == _inspect.Parameter.KEYWORD_ONLY
+    assert sig.parameters["user"].kind == _inspect.Parameter.KEYWORD_ONLY
+
+
+async def test_fake_llm_client_stream_complete_default_yields_nothing() -> None:
+    """The `FakeLLMClient.stream_complete` default yields nothing.
+
+    The default is a no-op (empty async generator) so a v1
+    caller that never overrode the method does not crash.
+    Tests that need canned chunks override the method.
+    """
+    fake = FakeLLMClient()
+    chunks: list[str] = []
+    async for chunk in fake.stream_complete(system="s", user="u"):
+        chunks.append(chunk)
+    assert chunks == []
