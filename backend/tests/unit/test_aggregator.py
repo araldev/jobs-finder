@@ -125,11 +125,26 @@ def _build_aggregator(
     indeed_port: _FakeJobSearchPort,
     infojobs_port: _FakeJobSearchPort,
 ) -> SearchAllSourcesUseCase:
-    """Build a `SearchAllSourcesUseCase` whose 3 use cases wrap the given ports."""
+    """Build a `SearchAllSourcesUseCase` whose 3 use cases wrap the given ports.
+
+    Wires the production pure-function helpers
+    (`filter_infojobs_results` + `keyword_score`) at
+    construction time so the v1 + T-004 behaviors are both
+    exercised. The aggregator's no-op defaults preserve
+    backward compat for direct callers; tests that exercise
+    the new behavior need the real helpers.
+    """
+    from jobs_finder.infrastructure.aggregator_filters import (  # noqa: PLC0415
+        filter_infojobs_results,
+    )
+    from jobs_finder.infrastructure.keyword_score import keyword_score  # noqa: PLC0415
+
     return SearchAllSourcesUseCase(
         linkedin_use_case=_build_cached_use_case(linkedin_port, "linkedin"),
         indeed_use_case=_build_cached_use_case(indeed_port, "indeed"),
         infojobs_use_case=_build_cached_use_case(infojobs_port, "infojobs"),
+        filter_infojobs_results=filter_infojobs_results,
+        keyword_score=keyword_score,
     )
 
 
@@ -645,7 +660,10 @@ async def test_aggregator_applies_infojobs_filter() -> None:
     use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
 
     result = await use_case.search(
-        "react", "malaga", 20, ["linkedin", "indeed", "infojobs"],
+        "react",
+        "malaga",
+        20,
+        ["linkedin", "indeed", "infojobs"],
         query_tokens=frozenset({"react", "málaga"}),
     )
 
@@ -672,7 +690,10 @@ async def test_aggregator_does_not_filter_linkedin_or_indeed() -> None:
     use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
 
     result = await use_case.search(
-        "react", "malaga", 20, ["linkedin", "indeed", "infojobs"],
+        "react",
+        "malaga",
+        20,
+        ["linkedin", "indeed", "infojobs"],
         query_tokens=frozenset({"react", "málaga"}),
     )
 
@@ -683,14 +704,18 @@ async def test_aggregator_does_not_filter_linkedin_or_indeed() -> None:
 
 
 async def test_aggregator_sorts_by_keyword_score_when_enabled() -> None:
-    """`enable_keyword_scoring=True` → jobs are sorted by `keyword_score` DESC, then `posted_at` DESC.
+    """`enable_keyword_scoring=True` → sorted by score DESC, then posted_at DESC.
 
-    Two jobs: `A` with `title="React Developer"` (full match
-    → score=1.0), `B` with `title="Python Developer"` (0 match
-    → score=0.0). With `enable_keyword_scoring=True` and
-    `query_tokens={"react"}`, A sorts BEFORE B. The tie-breaker
-    (`posted_at` DESC) handles equal scores; here A's score
-    is higher so A wins regardless of date.
+    Two jobs:
+    - `A` with `title="React Developer"` (matches `react` AND
+      `developer` → score = 1.0 — full title match).
+    - `B` with `title="Python Developer"` (matches `developer`
+      only → score = 0.5 — partial title match).
+
+    With `query_tokens={"react", "developer"}` and
+    `enable_keyword_scoring=True`, A sorts BEFORE B. The
+    `query_tokens` is chosen so BOTH jobs survive the
+    InfoJobs filter (1+ token overlap on `developer`).
     """
     job_a = _job(1, title="React Developer")
     job_b = _job(2, title="Python Developer")
@@ -700,8 +725,11 @@ async def test_aggregator_sorts_by_keyword_score_when_enabled() -> None:
     use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
 
     result = await use_case.search(
-        "react", "madrid", 20, ["linkedin", "indeed", "infojobs"],
-        query_tokens=frozenset({"react"}),
+        "react",
+        "madrid",
+        20,
+        ["linkedin", "indeed", "infojobs"],
+        query_tokens=frozenset({"react", "developer"}),
         enable_keyword_scoring=True,
     )
 
@@ -718,11 +746,14 @@ async def test_aggregator_sorts_by_posted_at_when_disabled() -> None:
     `enable_keyword_scoring=False` (the default), the
     aggregator MUST call the existing sort path, NOT the
     `keyword_score` path. The test pins the contract: a
-    later-posted job with a 0-keyword-score sorts BEFORE an
-    earlier-posted job with a 1.0-keyword-score.
+    later-posted job sorts BEFORE an earlier-posted job
+    regardless of keyword relevance. No `query_tokens` is
+    passed so the InfoJobs filter is a no-op.
     """
-    # j1: title="React" (high score, but EARLY date)
-    # j2: title="Python" (0 score, but LATE date)
+    # j1: EARLY date, "React Developer" (would have a high
+    #     score if `enable_keyword_scoring=True`).
+    # j3: LATE date, "Python Developer" (would have a 0
+    #     score if `enable_keyword_scoring=True`).
     job_early_react = _job(1, title="React Developer")
     job_late_python = _job(3, title="Python Developer")
     linkedin_port = _FakeJobSearchPort(jobs=[job_early_react])
@@ -731,8 +762,10 @@ async def test_aggregator_sorts_by_posted_at_when_disabled() -> None:
     use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
 
     result = await use_case.search(
-        "react", "madrid", 20, ["linkedin", "indeed", "infojobs"],
-        query_tokens=frozenset({"react"}),
+        "react",
+        "madrid",
+        20,
+        ["linkedin", "indeed", "infojobs"],
         enable_keyword_scoring=False,  # default behavior
     )
 
@@ -759,7 +792,10 @@ async def test_aggregator_forwards_query_tokens_to_filter() -> None:
     use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
 
     await use_case.search(
-        "react", "malaga", 20, ["linkedin", "indeed", "infojobs"],
+        "react",
+        "malaga",
+        20,
+        ["linkedin", "indeed", "infojobs"],
         query_tokens=frozenset({"react"}),
     )
 
@@ -789,9 +825,7 @@ async def test_aggregator_default_query_tokens_does_not_filter() -> None:
     infojobs_port = _FakeJobSearchPort(jobs=[infojobs_recep])
     use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
 
-    result = await use_case.search(
-        "react", "malaga", 20, ["linkedin", "indeed", "infojobs"]
-    )
+    result = await use_case.search("react", "malaga", 20, ["linkedin", "indeed", "infojobs"])
 
     # No filter applied: the InfoJobs job is in the result.
     assert len(result.jobs) == 1
