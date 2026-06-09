@@ -63,7 +63,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 
 from jobs_finder.application.aggregator import SearchAllSourcesUseCase
@@ -74,7 +74,11 @@ from jobs_finder.application.ports import (
     LocationResolverPort,
 )
 from jobs_finder.domain.job import Job
-from jobs_finder.infrastructure.llm._parser import LLMSelection, parse_llm_response
+from jobs_finder.infrastructure.llm._parser import (
+    LLMSelection,
+    StreamEventParser,
+    parse_llm_response,
+)
 from jobs_finder.infrastructure.llm._prompt import SYSTEM_PROMPT, build_user_message
 from jobs_finder.infrastructure.llm.exceptions import LLMResponseParseError
 
@@ -132,6 +136,78 @@ class FilteredJobsResult:
     total_considered: int
     total_matched: int
     used_fallback: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Streaming event dataclasses (T-006 of `chat-streaming`)
+#
+# The streaming endpoint (`POST /jobs/chat/stream`) emits 3 kinds
+# of events in this exact order:
+#   - `StreamEventMeta` (zero or one, 2-stage path only)
+#   - `StreamEventText` (one or more, per LLM token)
+#   - `StreamEventDone` (exactly one, terminal)
+#
+# The 3 dataclasses are `frozen=True, slots=True` (mirrors the
+# project's value-object style) so consumers cannot mutate the
+# events. The `StreamEvent` union type (defined below) is the
+# return type of `stream_execute(...)` for downstream consumers
+# (the route's SSE generator, the integration tests).
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class StreamEventMeta:
+    """The stage-1 `Intent` emitted as the FIRST event (2-stage path only).
+
+    REQ-META-001: the meta event is OPTIONAL (the v1 path
+    emits no `meta`) and MUST precede the first `text`
+    event. The `intent` field is the EXACT `Intent` the
+    `IntentExtractor` returned — the route serializes it
+    verbatim (no fabrication, no defaults).
+    """
+
+    intent: Intent
+
+
+@dataclass(frozen=True, slots=True)
+class StreamEventText:
+    """A single LLM token emitted as a `text` event.
+
+    The `delta` field is the verbatim string the LLM
+    emitted (NOT a re-derivation). The route serializes
+    it as `event: text\\ndata: {"delta": <delta>}\\n\\n`.
+    """
+
+    delta: str
+
+
+@dataclass(frozen=True, slots=True)
+class StreamEventDone:
+    """The terminal `done` event carrying the filtered jobs + counts.
+
+    REQ-SSE-001 3rd scenario: the `done` event MUST
+    contain the same fields as v1 `ChatResponse`
+    (`jobs`, `explanation`, `total_considered`,
+    `total_matched`, `used_fallback`) PLUS the SSE-only
+    `request_id` (the route injects it; the use case
+    does NOT set it). The `jobs` list is in the
+    AGGREGATOR's order (NOT the LLM's emission order).
+    """
+
+    jobs: Sequence[Job]
+    explanation: str
+    total_considered: int
+    total_matched: int
+    used_fallback: bool
+    request_id: str = ""
+
+
+# The discriminated union for `stream_execute` callers. Python
+# 3.12+ has a native `type` syntax; the 3.10-compatible
+# `Union[...]` keeps mypy --strict happy on all supported
+# versions. Consumers `isinstance`-discriminate to map each
+# event to its SSE wire shape.
+StreamEvent = StreamEventMeta | StreamEventText | StreamEventDone
 
 
 class FilterJobsByIntentUseCase:
@@ -337,6 +413,195 @@ class FilterJobsByIntentUseCase:
             limit=limit,
             resolved_sources=resolved_sources,
             used_fallback=True,
+        )
+
+    # ------------------------------------------------------------------
+    # Streaming sibling (NEW in T-006 of `chat-streaming`):
+    # `stream_execute(...) -> AsyncIterator[StreamEvent]`.
+    #
+    # The streaming path is the SIBLING of `execute(...)`: it
+    # shares the v1 dispatch + validation (stage 1 + stage 2
+    # + the short-circuit on empty aggregator) but emits
+    # `StreamEvent*` dataclasses instead of returning a single
+    # `FilteredJobsResult`. The `stream_complete` call lives in
+    # the new `_run_stage3_streaming(...)` helper. The v1
+    # `_run_stage3(...)` helper and `execute(...)` are
+    # UNCHANGED per REQ-BACKWARDS-COMPAT-001.
+    # ------------------------------------------------------------------
+
+    async def stream_execute(  # noqa: PLR0912
+        self,
+        *,
+        message: str,
+        q: str,
+        location: str,
+        limit: int,
+        sources: Sequence[str] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream-execute the chat-filter flow, yielding `StreamEvent*` per token.
+
+        The 3-stage flow mirrors `execute(...)` but yields
+        events in real time:
+
+          1. (2-stage only) `StreamEventMeta(intent)` — the
+             stage-1 `Intent`. Omitted when 2-stage is
+             disabled (`intent_extraction_enabled=False` or
+             no `intent_extractor`).
+          2. Aggregator `search(...)` — silent (no event
+             yielded). The route's keepalive covers the
+             wait (see REQ-SSE-002).
+          3. (LLM) `StreamEventText(delta)` × N — one per
+             LLM token, in the LLM's emission order. The
+             `StreamEventParser` accumulates the chunks
+             in the background for end-of-stream
+             re-parsing.
+          4. (Terminal) `StreamEventDone(jobs, ...)` —
+             carries the matched jobs in the
+             AGGREGATOR's order + the LLM's
+             explanation + the counts. The `request_id`
+             field is set by the route (the use case
+             leaves it empty).
+
+        On the empty-aggregator short-circuit, exactly
+        ONE `StreamEventDone` is yielded (the
+        "no se encontraron ofertas" payload); the LLM
+        is never called.
+
+        Args:
+            message: The user's message (pre-normalized by
+                the route; the use case does NOT re-normalize).
+            q / location / limit: Forwarded to the
+                aggregator (the v1 semantics).
+            sources: The aggregator's `sources` filter
+                (`None` means all 3 sources).
+
+        Yields:
+            `StreamEventMeta` (zero or one), then
+            `StreamEventText` × N (one per LLM token), then
+            `StreamEventDone` (exactly one, terminal).
+
+        Raises:
+            Does NOT raise domain exceptions. The route's
+            SSE generator catches them and maps to SSE
+            `event: error`. The use case yields the
+            normal happy-path events only.
+        """
+        # Resolve `sources` once; the 2 paths share it.
+        if sources is None:
+            resolved_sources: list[str] = ["linkedin", "indeed", "infojobs"]
+        else:
+            resolved_sources = list(sources)
+
+        # Stage 1: extract intent (only when the 2-stage flow
+        # is active). The intent's `confidence` drives the
+        # dispatch AND the `meta` event.
+        intent: Intent | None = None
+        used_fallback = True  # default for v1 path
+        if self._intent_extraction_enabled and self._intent_extractor is not None:
+            try:
+                intent = await self._intent_extractor.extract(message=message)
+            except LLMResponseParseError:
+                # Stage-1 parse failure → v1 fallback (no meta).
+                intent = None
+
+        # Confidence gate: low-confidence intent → v1 fallback
+        # (no meta event).
+        if intent is not None and intent.confidence < self._intent_extraction_confidence_threshold:
+            intent = None  # v1 path: no meta
+
+        # Stage 2: aggregator scrape. The `q` / `location` /
+        # `limit` selection mirrors the v1 dispatch:
+        #   - 2-stage: `intent.q` / `intent.location` / `intent_max_results`
+        #   - v1: the caller's `q` / `location` / `limit`
+        if intent is not None:
+            stage2_q = intent.q if intent.q is not None else ""
+            stage2_location = intent.location if intent.location is not None else ""
+            used_fallback = False
+            # Emit the `meta` event FIRST (2-stage path).
+            yield StreamEventMeta(intent=intent)
+            # Resolve the geo_id for the LinkedIn scraper
+            # (same logic as `_execute_2stage`).
+            linkedin_geo_id: int | None = None
+            if intent.location is not None and self._location_resolver is not None:
+                try:
+                    linkedin_geo_id = self._location_resolver.resolve(intent.location)
+                except Exception:  # noqa: BLE001
+                    linkedin_geo_id = None
+            aggregated = await self._aggregator.search(
+                keywords=stage2_q,
+                location=stage2_location,
+                limit=self._intent_max_results,
+                sources=resolved_sources,
+                linkedin_geo_id=linkedin_geo_id,
+            )
+        else:
+            aggregated = await self._aggregator.search(
+                keywords=q,
+                location=location,
+                limit=limit,
+                sources=resolved_sources,
+            )
+        flat_jobs: list[Job] = [agg.job for agg in aggregated.jobs]
+
+        # Empty-aggregator short-circuit: emit a single `done`
+        # and return. The LLM is NEVER called.
+        if not flat_jobs:
+            yield StreamEventDone(
+                jobs=[],
+                explanation=_EMPTY_RESULT_EXPLANATION,
+                total_considered=0,
+                total_matched=0,
+                used_fallback=used_fallback,
+            )
+            return
+
+        # Stage 3: the LLM stream. Build the same 5-key
+        # LLM-facing dicts per job that `_run_stage3` uses;
+        # call `stream_complete` (instead of `complete`);
+        # feed each chunk into a `StreamEventParser` and yield
+        # the verbatim `text` events; finalize the parser at
+        # the end; yield `done` with the strict-subset
+        # matched jobs in the AGGREGATOR's order.
+        jobs_dicts = [dataclasses.asdict(j) for j in flat_jobs]
+        parser = StreamEventParser()
+        async for chunk in self._llm.stream_complete(
+            system=SYSTEM_PROMPT,
+            user=build_user_message(message, jobs_dicts),
+        ):
+            for text in parser.feed(chunk):
+                yield StreamEventText(delta=text)
+
+        # Re-parse the accumulated buffer; drop hallucinated
+        # ids (defense in depth — the parser already logs a
+        # WARNING per drop).
+        valid_ids: set[str] = {j.id for j in flat_jobs}
+        try:
+            selection = parser.finalize(valid_ids)
+        except LLMResponseParseError:
+            # The stream completed but the buffer wasn't
+            # valid JSON. Yield a `done` with the
+            # aggregator's order + an empty list + a
+            # zero count + a Spanish error explanation.
+            # The route catches `LLMResponseParseError`
+            # raised HERE (from the `stream_execute`
+            # iterator) and maps to `llm_parse`.
+            yield StreamEventDone(
+                jobs=[],
+                explanation="LLM response could not be parsed.",
+                total_considered=len(flat_jobs),
+                total_matched=0,
+                used_fallback=used_fallback,
+            )
+            return
+
+        # Build the filtered list in the AGGREGATOR's order.
+        filtered = [j for j in flat_jobs if j.id in set(selection.matching_ids)]
+        yield StreamEventDone(
+            jobs=filtered,
+            explanation=selection.explanation,
+            total_considered=len(flat_jobs),
+            total_matched=len(filtered),
+            used_fallback=used_fallback,
         )
 
     # ------------------------------------------------------------------
