@@ -34,6 +34,18 @@ describe("mapBackendError", () => {
     expect(err.message).toMatch(/servidor/i);
   });
 
+  it("maps 504 to an upstream_timeout ApiError with a Spanish user-facing message", () => {
+    const err = mapBackendError(504, { message: "Backend request to /jobs timed out" }, "req-1");
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(504);
+    expect(err.code).toBe("upstream_timeout");
+    // The Spanish message should mention that the search is taking too long
+    // AND suggest the user retries or tries a different query. The exact
+    // wording can change in future redesigns — match on the key ideas.
+    expect(err.message).toMatch(/tardando/i);
+    expect(err.message).toMatch(/reintent|proba|probar/i);
+  });
+
   it("maps 429 with Retry-After to a rate_limited ApiError", () => {
     const err = mapBackendError(429, {}, "req-1", 30);
     expect(err.status).toBe(429);
