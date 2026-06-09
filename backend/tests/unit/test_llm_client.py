@@ -543,3 +543,68 @@ async def test_stream_complete_malformed_json_raises_llm_stream_error() -> None:
     with pytest.raises(LLMStreamError):
         async for _ in client.stream_complete(system="sys", user="usr"):
             pass  # pragma: no cover — must raise on malformed JSON
+
+
+# ---------------------------------------------------------------------------
+# Live fixture-driven test (T-010 of `chat-streaming`)
+#
+# Spec: REQ-LLM-002 — the `stream_complete` parser is
+# validated against a REAL captured MiniMax-M3 response
+# (not a synthetic mock). The capture is a one-time
+# manual action (NEVER in CI per AGENTS.md rule #1);
+# the test is gated by `LLM_LIVE_TESTS=1` and SKIPS
+# when the env var is unset.
+#
+# The fixture path is `tests/fixtures/minimax_streaming_capture.txt`
+# — a raw bytes file with `data: {...}\\n\\n` lines + a
+# `data: [DONE]` sentinel. The test reads the file, feeds
+# it through `stream_complete`, and asserts ≥1 chunk is
+# yielded (the production-fidelity validation).
+# ---------------------------------------------------------------------------
+
+
+import os  # noqa: E402  (imported after the module-level fixtures above)
+from pathlib import Path  # noqa: E402
+
+LIVE_FIXTURE_PATH = (
+    Path(__file__).resolve().parent.parent / "fixtures" / "minimax_streaming_capture.txt"
+)
+
+
+@pytest.mark.skipif(
+    "LLM_LIVE_TESTS" not in os.environ or os.environ.get("LLM_LIVE_TESTS") != "1",
+    reason="Live LLM test, gated by LLM_LIVE_TESTS=1 (per AGENTS.md rule #1)",
+)
+async def test_stream_complete_parses_real_capture() -> None:
+    """`stream_complete` parses a real captured MiniMax-M3 SSE response.
+
+    The fixture file is a manual one-time capture of a
+    real `MiniMax-M3` streaming response. When the
+    fixture is missing (the default at this commit —
+    the capture is a follow-up action), the test
+    SKIPS at the `LIVE_FIXTURE_PATH.exists()` check
+    below. When present, the test reads the file's
+    raw bytes, runs them through `stream_complete`,
+    and asserts ≥1 chunk is yielded.
+    """
+    if not LIVE_FIXTURE_PATH.exists():
+        pytest.skip(
+            f"Live capture fixture missing: {LIVE_FIXTURE_PATH}. "
+            "Run the one-time manual capture to enable this test."
+        )
+
+    # Build a MockTransport that streams the fixture
+    # bytes as the response body.
+    raw_bytes = LIVE_FIXTURE_PATH.read_bytes()
+    response = httpx.Response(200, content=raw_bytes)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return response
+
+    client = _build_client_with_transport(httpx.MockTransport(handler))
+    chunks: list[str] = []
+    async for chunk in client.stream_complete(system="sys", user="usr"):
+        chunks.append(chunk)
+    # At least 1 chunk is yielded from a real MiniMax
+    # response (the model emitted ≥1 token).
+    assert len(chunks) >= 1
