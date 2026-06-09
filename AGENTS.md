@@ -13,7 +13,7 @@ acts on a workspace is run from **inside that workspace** (usually
 | Workspace   | Stack                    | Tooling entry point        |
 | ----------- | ------------------------ | -------------------------- |
 | `backend/`  | Python 3.12 · FastAPI    | `backend/pyproject.toml`   |
-| `frontend/` | _not chosen yet_         | _TBD_                      |
+| `frontend/` | Next.js 15 · React 19 · TypeScript · Tailwind v4 · shadcn/ui (nova) | `frontend/package.json` |
 
 ## Stack (backend)
 
@@ -37,6 +37,36 @@ is planned.
 | pydantic-settings| >= 2.0   | Env-driven configuration.                |
 | mypy             | >= 1.10  | Static type checking (`--strict`).       |
 | ruff             | >= 0.5   | Lint + format.                           |
+
+## Stack (frontend)
+
+The tools below are installed in the frontend workspace **right
+now** (see `frontend/package.json` for exact pins). All versions
+are pinned to an exact number — no `^`, no `*` — to match the
+backend's "no floating versions" convention.
+
+| Tool                          | Version  | Purpose                                       |
+| ----------------------------- | -------- | --------------------------------------------- |
+| Node                          | >= 20    | Runtime (create-next-app assumes Node 20+).   |
+| npm                           | >= 10    | Package manager.                              |
+| Next.js                       | 15.5.19  | App Router, RSC, Route Handlers.              |
+| React                         | 19.1.0   | UI runtime.                                   |
+| TypeScript                    | 5.9.2    | Strict + `noUncheckedIndexedAccess`.          |
+| Tailwind CSS                  | 4.1.13   | CSS-only v4 config (no `tailwind.config.ts`). |
+| shadcn/ui (base / nova)       | 4.11.0   | Components copied to `src/components/ui/`.    |
+| @tanstack/react-query         | 5.101.0  | Server-state cache for the search.            |
+| motion                        | 12.40.0  | Successor to framer-motion.                   |
+| sonner                        | 2.0.7    | Toasts.                                       |
+| lucide-react                  | 1.17.0   | Icons.                                        |
+| vitest                        | 4.1.8    | Test runner.                                  |
+| @testing-library/react        | 16.3.2   | React component-test utilities.               |
+| jsdom                         | 29.1.1   | Test environment for hooks and DOM logic.     |
+| eslint-config-next            | 15.5.19  | Wraps `next/core-web-vitals` + TS rules.      |
+
+The frontend talks to the backend **only** through Next.js Route
+Handlers in `src/app/api/`. The browser never calls
+`BACKEND_URL` directly. See `frontend/README.md` "How to consume
+the backend API" for the full contract.
 
 ## Project layout
 
@@ -72,7 +102,33 @@ jobs-finder/
 │   │   └── integration/                # FastAPI app + composition root + X-Cache headers
 │   ├── uv.lock
 │   └── README.md        # full backend documentation
-└── frontend/            # placeholder; README only for now
+└── frontend/            # Next.js 15, React 19, shadcn/ui (nova)
+    ├── .env.example     # template — copy to `frontend/.env.local` for local dev
+    ├── components.json  # shadcn config (style: base-nova, base: base)
+    ├── eslint.config.mjs
+    ├── next.config.ts
+    ├── package.json
+    ├── postcss.config.mjs
+    ├── tsconfig.json
+    ├── vitest.config.ts
+    ├── vitest.setup.ts
+    ├── public/          # create-next-app default assets
+    ├── src/
+    │   ├── app/         # App Router (RSC + Route Handlers)
+    │   │   ├── api/     # server-side proxies (jobs, chat/stream, health)
+    │   │   ├── globals.css
+    │   │   ├── layout.tsx
+    │   │   ├── page.tsx
+    │   │   └── providers.tsx
+    │   ├── components/
+    │   │   ├── chat/    # ChatPanel, ChatMessage, ChatInput, ChatStreamBanner, …
+    │   │   ├── layout/  # Topbar, OnboardingOverlay, PageEntry, Workbench
+    │   │   ├── search/  # SearchBar, ResultsGrid, JobCard, EmptyState, …
+    │   │   └── ui/      # 15 shadcn primitives (button, input, card, …)
+    │   ├── hooks/       # useDebouncedValue, useDebouncedJobsSearch, useChatStream
+    │   └── lib/         # types, api, backend, format, chat-stream-forwarder
+    │       └── __tests__/   # 3 unit test files (test-after policy)
+    └── README.md        # full frontend documentation
 ```
 
 ### Workspace-local `.env` files
@@ -81,21 +137,31 @@ Each workspace reads its own env vars from a workspace-local `.env`.
 There is no shared `.env` at the repo root because the two
 workspaces will (eventually) read different env vars with different
 shapes — the backend uses `pydantic-settings` (`backend/.env`),
-the frontend will use whatever its framework provides
-(`frontend/.env` or `frontend/.env.local`).
+the frontend reads its env vars via `process.env.BACKEND_URL`
+inside the Node server runtime (Next.js Route Handlers).
 
 - `backend/.env.example` is the **template** for backend env vars.
   Copy it to `backend/.env` to run the backend locally.
   `backend/.env` is git-ignored.
-- `frontend/.env.example` will be added when a frontend stack is
-  chosen.
+- `frontend/.env.example` is the **template** for frontend env
+  vars. Copy it to `frontend/.env.local` to run the frontend
+  locally. `frontend/.env.local` is git-ignored (the `.gitignore`
+  has an `!.env.example` exception so the template ships with
+  the repo).
 
-The dependency rule is
+The dependency rule for the backend is
 `presentation → application → domain ← infrastructure`. `application/`
 must not import `infrastructure/` or `presentation/`. Each source
 (`linkedin`, `indeed`, `infojobs`) has its own sub-package under
 `infrastructure/` and its own route file under `presentation/routes/`,
 mirrored by per-source fixtures under `tests/fixtures/`.
+
+For the frontend, the rule is
+`app (server) ← lib (server-only) | app (client) ← lib (browser-safe)`.
+`src/lib/backend.ts` carries `import "server-only"` so any
+accidental client import fails the build. The browser always
+talks to the same-origin `/api/*` endpoints, never to
+`BACKEND_URL` directly.
 
 ### Caching
 
@@ -237,32 +303,41 @@ a follow-up change to extend the helper — don't bypass it.
 
 ## How to run
 
-All backend commands are run from `backend/` and use `uv` (NOT `pip`,
-NOT `poetry`).
+Backend commands are run from `backend/` and use `uv` (NOT `pip`,
+NOT `poetry`). Frontend commands are run from `frontend/` and
+use `npm` (NOT `yarn`, NOT `pnpm`, NOT `bun` — `create-next-app`
+defaulted to npm and the lockfile is `package-lock.json`).
 
 ```bash
-# Install dependencies into a project-local virtualenv
+# Backend
 cd backend
 uv sync
-
-# Run the test suite
 uv run pytest
-
-# Static type check (strict)
 uv run mypy
-
-# Lint
 uv run ruff check
-
-# Format check
 uv run ruff format --check
+
+# Frontend
+cd frontend
+npm install
+npm run dev            # http://localhost:3000
+npm run typecheck      # tsc --noEmit (strict + noUncheckedIndexedAccess)
+npm run lint           # next lint
+npm run test           # vitest run --passWithNoTests
+npm run build          # production build
 ```
 
 ## Pre-commit
 
-Run `backend/scripts/check.sh` before every commit. CI runs the same
-commands (`ruff check`, `ruff format --check`, `mypy`, `pytest`). Do
-not commit if any check fails.
+Run the workspace's check commands before every commit.
+
+- **Backend** — `cd backend && bash scripts/check.sh` runs `ruff
+  check`, `ruff format --check`, `mypy`, `pytest`.
+- **Frontend** — `cd frontend && npm run typecheck && npm run
+  lint && npm run test && npm run build` runs the four gates
+  this project uses.
+
+CI runs the same commands. Do not commit if any check fails.
 
 ## Conventions
 
@@ -296,3 +371,20 @@ not commit if any check fails.
 7. **No secrets in the repo.** `li_at` cookies, proxy credentials, or
    any LinkedIn / Indeed authentication material are explicitly
    forbidden by the spec.
+8. **Use `npm`, not `yarn` or `pnpm`** (frontend). All Node
+   dependency operations go through `cd frontend && npm install`
+   and `cd frontend && npm run ...`. The lockfile is
+   `package-lock.json`.
+9. **Src layout only — within `frontend/`.** Production code lives
+   under `frontend/src/`. Never add modules at the repo root or at
+   `frontend/` directly (no loose `.ts`/`.tsx` files next to
+   `package.json`).
+10. **Pin every dep, no `^`.** Every dependency in
+    `frontend/package.json` is an exact version. If a transitive
+    upgrade is needed, open a separate change and pin the new
+    version explicitly.
+11. **No business logic in `__init__.ts`.** Same rule as Python.
+12. **The browser never talks to the backend directly.** All
+    backend traffic goes through a Next.js Route Handler in
+    `frontend/src/app/api/`. Adding `fetch(${BACKEND_URL}…)` to a
+    client component is a build-time architectural violation.
