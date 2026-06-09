@@ -3,16 +3,29 @@
 > Operating manual for humans and AI agents working on `jobs-finder`.
 > Read this **first** before running commands, writing code, or making commits.
 
-## Stack
+## Workspaces
 
-The tools below are installed in the project **right now** (see
-`pyproject.toml` for exact pins). Do not claim future state as if it were
-shipped — the README "Manual verification" section and the SDD tasks
-track what is real vs. what is planned.
+This is a monorepo with independent workspaces. Every command that
+acts on a workspace is run from **inside that workspace** (usually
+`cd backend` or `cd frontend`). The root has no `pyproject.toml` or
+`package.json` of its own — there is no "top-level" install.
+
+| Workspace   | Stack                    | Tooling entry point        |
+| ----------- | ------------------------ | -------------------------- |
+| `backend/`  | Python 3.12 · FastAPI    | `backend/pyproject.toml`   |
+| `frontend/` | _not chosen yet_         | _TBD_                      |
+
+## Stack (backend)
+
+The tools below are installed in the backend workspace **right now**
+(see `backend/pyproject.toml` for exact pins). Do not claim future
+state as if it were shipped — the backend README "Manual
+verification" section and the SDD tasks track what is real vs. what
+is planned.
 
 | Tool             | Version  | Purpose                                  |
 | ---------------- | -------- | ---------------------------------------- |
-| Python           | 3.12     | Runtime (see `.python-version`).         |
+| Python           | 3.12     | Runtime (see `backend/.python-version`). |
 | uv               | >= 0.4   | Package manager and virtualenv.          |
 | pytest           | >= 8.0   | Test runner.                             |
 | pytest-asyncio   | >= 0.23  | Async test support.                      |
@@ -30,35 +43,52 @@ track what is real vs. what is planned.
 ```
 jobs-finder/
 ├── .gitignore
-├── .python-version
 ├── AGENTS.md            # this file
-├── README.md            # Legal Notice is the FIRST section
-├── pyproject.toml       # PEP 621 metadata + tool config
-├── scripts/
-│   └── check.sh         # local CI: ruff + mypy + pytest
-├── src/
-│   └── jobs_finder/     # src layout, imported as `jobs_finder`
-│       ├── __init__.py
-│       ├── main.py                 # composition root + uvicorn entry
-│       ├── domain/                 # Job value object, base exceptions
-│       ├── application/            # JobSearchPort, CachePort, use cases, DTOs
-│       │   └── usecases/           # one use case file per source + cached wrapper
-│       ├── infrastructure/         # Playwright scrapers, parsers, throttle, cache
-│       │   ├── linkedin/           # LinkedInPlaywrightScraper + parsers
-│       │   ├── indeed/             # IndeedPlaywrightScraper + parsers
-│       │   ├── infojobs/           # InfoJobsPlaywrightScraper + parsers
-│       │   └── cache/              # InMemoryTTLCache primitive
-│       └── presentation/           # FastAPI app, routes, middleware, schemas
-│           └── routes/             # one route file per source (linkedin, indeed, infojobs) + aggregator
-└── tests/
-    ├── conftest.py
-    ├── fixtures/                   # inline HTML for parser tests
-    │   ├── linkedin_search.py
-    │   ├── indeed_search.py
-    │   └── infojobs_search.py
-    ├── unit/                       # parsers, throttle, use case, scraper, exceptions, cache
-    └── integration/                # FastAPI app + composition root + X-Cache headers
+├── README.md            # workspace index + Legal Notice
+├── backend/             # Python 3.12, FastAPI, Playwright
+│   ├── .env.example     # template — copy to `backend/.env` for local dev
+│   ├── .python-version
+│   ├── pyproject.toml   # PEP 621 metadata + tool config
+│   ├── scripts/
+│   │   └── check.sh     # local CI: ruff + mypy + pytest
+│   ├── src/
+│   │   └── jobs_finder/ # src layout, imported as `jobs_finder`
+│   │       ├── __init__.py
+│   │       ├── main.py                 # composition root + uvicorn entry
+│   │       ├── domain/                 # Job value object, base exceptions
+│   │       ├── application/            # JobSearchPort, CachePort, use cases, DTOs
+│   │       │   └── usecases/           # one use case file per source + cached wrapper
+│   │       ├── infrastructure/         # Playwright scrapers, parsers, throttle, cache
+│   │       │   ├── linkedin/           # LinkedInPlaywrightScraper + parsers
+│   │       │   ├── indeed/             # IndeedPlaywrightScraper + parsers
+│   │       │   ├── infojobs/           # InfoJobsPlaywrightScraper + parsers
+│   │       │   └── cache/              # InMemoryTTLCache primitive
+│   │       └── presentation/           # FastAPI app, routes, middleware, schemas
+│   │           └── routes/             # one route file per source (linkedin, indeed, infojobs) + aggregator
+│   ├── tests/
+│   │   ├── conftest.py
+│   │   ├── fixtures/                   # inline HTML for parser tests
+│   │   ├── unit/                       # parsers, throttle, use case, scraper, exceptions, cache
+│   │   └── integration/                # FastAPI app + composition root + X-Cache headers
+│   ├── uv.lock
+│   └── README.md        # full backend documentation
+└── frontend/            # placeholder; README only for now
 ```
+
+### Workspace-local `.env` files
+
+Each workspace reads its own env vars from a workspace-local `.env`.
+There is no shared `.env` at the repo root because the two
+workspaces will (eventually) read different env vars with different
+shapes — the backend uses `pydantic-settings` (`backend/.env`),
+the frontend will use whatever its framework provides
+(`frontend/.env` or `frontend/.env.local`).
+
+- `backend/.env.example` is the **template** for backend env vars.
+  Copy it to `backend/.env` to run the backend locally.
+  `backend/.env` is git-ignored.
+- `frontend/.env.example` will be added when a frontend stack is
+  chosen.
 
 The dependency rule is
 `presentation → application → domain ← infrastructure`. `application/`
@@ -207,11 +237,12 @@ a follow-up change to extend the helper — don't bypass it.
 
 ## How to run
 
-All commands are run from the project root and use `uv` (NOT `pip`, NOT
-`poetry`).
+All backend commands are run from `backend/` and use `uv` (NOT `pip`,
+NOT `poetry`).
 
 ```bash
 # Install dependencies into a project-local virtualenv
+cd backend
 uv sync
 
 # Run the test suite
@@ -229,27 +260,31 @@ uv run ruff format --check
 
 ## Pre-commit
 
-Run `./scripts/check.sh` before every commit. CI runs the same commands
-(`ruff check`, `ruff format --check`, `mypy`, `pytest`). Do not commit
-if any check fails.
+Run `backend/scripts/check.sh` before every commit. CI runs the same
+commands (`ruff check`, `ruff format --check`, `mypy`, `pytest`). Do
+not commit if any check fails.
 
 ## Conventions
 
 1. **No live scraping in tests — covers LinkedIn, Indeed, AND InfoJobs.**
-   The end-to-end live paths are documented in the README "Manual
-   verification" sections (one per source), but they are **never**
-   executed in CI or in the automated test suite. Parser tests use
-   inline HTML fixtures (`tests/fixtures/linkedin_search.py` and
-   `tests/fixtures/indeed_search.py`). The only sanctioned exception
-   is the one-time Playwright capture of `es.indeed.com` performed
-   manually during a follow-up test- fixture refresh — that capture
-   is NEVER run in CI; the captured HTML is committed to the fixture
-   file and the rest of the suite re-runs offline against the new
-   capture.
+   The end-to-end live paths are documented in the backend README
+   "Manual verification" sections (one per source), but they are
+   **never** executed in CI or in the automated test suite. Parser
+   tests use inline HTML fixtures
+   (`backend/tests/fixtures/linkedin_search.py`,
+   `backend/tests/fixtures/indeed_search.py`, and
+   `backend/tests/fixtures/infojobs_search.py`). The only sanctioned
+   exception is the one-time Playwright capture of `es.indeed.com`
+   performed manually during a follow-up test- fixture refresh — that
+   capture is NEVER run in CI; the captured HTML is committed to the
+   fixture file and the rest of the suite re-runs offline against the
+   new capture.
 2. **Use `uv`, not `pip` or `poetry`.** All Python dependency operations
-   go through `uv sync` and `uv run ...`.
-3. **Src layout only.** Production code lives under `src/jobs_finder/`.
-   Never add modules at the repo root.
+   go through `cd backend && uv sync` and `cd backend && uv run ...`.
+3. **Src layout only — within `backend/`.** Production code lives
+   under `backend/src/jobs_finder/`. Never add modules at the repo
+   root or at `backend/` directly (no loose `.py` files next to
+   `pyproject.toml`).
 4. **No business logic in `__init__.py`.** `__init__.py` files may
    contain a module docstring and nothing else.
    Domain/application/infrastructure code goes in its own module.

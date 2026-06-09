@@ -33,6 +33,22 @@ htmlcov/
 # Playwright
 .playwright/
 
+# Node / frontend tooling
+node_modules/
+.next/
+.nuxt/
+.svelte-kit/
+dist/
+.parcel-cache/
+.turbo/
+.turbo-cache/
+*.tsbuildinfo
+.pnp.*
+.yarn/
+.pnpm-store/
+bun.lockb
+package-lock.json.bak
+
 # Editor / OS
 .idea/
 .vscode/
