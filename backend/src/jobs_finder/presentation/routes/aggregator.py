@@ -46,6 +46,7 @@ from jobs_finder.application.aggregator import (
     AggregatedResult,
     SearchAllSourcesUseCase,
 )
+from jobs_finder.infrastructure.aggregator_filters import tokenize
 from jobs_finder.presentation.schemas import (
     AGGREGATOR_SOURCES,
     AggregatedJobResponse,
@@ -133,6 +134,7 @@ def _to_aggregated_response(result: AggregatedResult) -> AggregatedJobsResponse:
 @router.get("/jobs", response_model=AggregatedJobsResponse)
 async def aggregate_jobs(
     query: Annotated[AggregatedJobsQuery, Query()],
+    request: Request,
     use_case: Annotated[SearchAllSourcesUseCase, Depends(get_aggregator_use_case)],
     response: Response,
 ) -> AggregatedJobsResponse:
@@ -145,11 +147,36 @@ async def aggregate_jobs(
     """
     source_list = _parse_sources(query.sources)
 
+    # T-009 (`backend-scraper-query-tuning`): forward the 3
+    # new kwargs to the use case.
+    # - `query_tokens`: the tokenized `q` parameter. The
+    #   `tokenize()` helper is the canonical query-side
+    #   tokenization (lowercased, punctuation-stripped,
+    #   deduped). The use case's `filter_infojobs_results`
+    #   applies ONLY to InfoJobs; the `query_tokens` is the
+    #   cross-source relevance signal.
+    # - `linkedin_geo_id`: the resolver's response for
+    #   `query.location`. The `HardcodedLocationResolver` is
+    #   built at composition time and exposed on
+    #   `app.state.location_resolver`; a `None` return value
+    #   (unknown location) is forwarded as `None` and the
+    #   LinkedIn scraper falls back to `?location=<str>`.
+    # - `enable_keyword_scoring`: the opt-in toggle from
+    #   `Settings.enable_keyword_scoring`. The route reads
+    #   the setting from `app.state` (exposed by
+    #   `build_app`).
+    query_tokens = frozenset(tokenize(query.q))
+    linkedin_geo_id = request.app.state.location_resolver.resolve(query.location)
+    enable_keyword_scoring = request.app.state.settings.enable_keyword_scoring
+
     result = await use_case.search(
         keywords=query.q,
         location=query.location,
         limit=query.limit,
         sources=source_list,
+        query_tokens=query_tokens,
+        linkedin_geo_id=linkedin_geo_id,
+        enable_keyword_scoring=enable_keyword_scoring,
     )
 
     # T-003 (REQ-A-006): per-source observability headers. The route
