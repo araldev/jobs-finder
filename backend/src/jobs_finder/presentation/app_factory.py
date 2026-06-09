@@ -169,6 +169,21 @@ def build_app(  # noqa: PLR0915
     """
     effective_settings = settings if settings is not None else Settings()
 
+    # T-007 (`backend-scraper-query-tuning`): construct the
+    # `HardcodedLocationResolver` ALWAYS (NOT gated by
+    # `chat_enabled`). The resolver is a read-only in-process
+    # dict lookup; the cost is one import + one dict
+    # construction per app build. The scraper reads
+    # `_settings.location_resolver` in its `search()` method
+    # (REQ-LOC-001) — without this injection, the scraper
+    # falls back to the broken `?location=<str>` URL formula
+    # (the pre-`fix-linkedin-geoid` path). The resolver is
+    # also reused by the chat filter (`location_resolver`
+    # arg of `FilterJobsByIntentUseCase`) and by the
+    # `GET /jobs` route (`app.state.location_resolver`,
+    # T-009).
+    location_resolver = HardcodedLocationResolver()
+
     # Logging MUST be configured before any middleware or route runs
     # so that log records emitted during request processing are
     # formatted as JSON (or plain) with the request_id bound.
@@ -220,18 +235,6 @@ def build_app(  # noqa: PLR0915
         llm_http_client = httpx.AsyncClient(timeout=effective_settings.llm_request_timeout_seconds)
 
     if use_case is None:
-        # T-007 (`backend-scraper-query-tuning`): construct
-        # the `HardcodedLocationResolver` ALWAYS (NOT gated by
-        # `chat_enabled`). The resolver is a read-only in-process
-        # dict lookup; the cost is one import + one dict
-        # construction per app build. The scraper reads
-        # `_settings.location_resolver` in its `search()` method
-        # (REQ-LOC-001) — without this injection, the scraper
-        # falls back to the broken `?location=<str>` URL formula
-        # (the pre-`fix-linkedin-geoid` path). The resolver
-        # is also reused by the chat filter (`location_resolver`
-        # arg of `FilterJobsByIntentUseCase`) below.
-        location_resolver = HardcodedLocationResolver()
         scraper = LinkedInPlaywrightScraper(
             throttle=AsyncThrottle(min_interval_seconds=effective_settings.throttle_seconds),
             # REQ-L-008: `LinkedInScraperSettings` was renamed from the
@@ -507,6 +510,16 @@ def build_app(  # noqa: PLR0915
     app.state.infojobs_job_search_port = (
         _unwrap_to_port(infojobs_use_case) if infojobs_use_case is not None else None
     )
+    # T-009 (`backend-scraper-query-tuning`): expose the
+    # `Settings` instance and the `HardcodedLocationResolver`
+    # on `app.state` so the `GET /jobs` route can read them
+    # without re-importing the modules. The settings is the
+    # SAME instance used for the scraper + cache wiring (no
+    # re-read of env vars per request). The resolver is the
+    # SAME instance injected into the LinkedIn scraper (no
+    # re-build per request).
+    app.state.settings = effective_settings
+    app.state.location_resolver = location_resolver
 
     # T-002 (jobs-aggregator-endpoint): the aggregator wraps the 3
     # per-source use cases and runs them in parallel via
