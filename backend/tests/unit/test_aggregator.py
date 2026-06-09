@@ -318,22 +318,29 @@ async def test_one_source_fails_with_job_search_error_returns_others() -> None:
     assert result.per_source["infojobs"].succeeded is True
 
 
-async def test_all_3_sources_fail_returns_empty_jobs_with_all_errors() -> None:
-    """All 3 sources raise `JobSearchError`; aggregator returns empty jobs and tracks 3 errors."""
+async def test_all_3_sources_fail_raises_all_sources_failed_error() -> None:
+    """All 3 sources raise `JobSearchError`; aggregator raises `AllSourcesFailedError`.
+
+    REQ-DEFENSIVE-001 scenario 2: when all 3 sources fail,
+    the aggregator raises `AllSourcesFailedError` (a
+    `JobSearchError` subclass) so the registered handler
+    maps to HTTP 502. Pre-T-005 behavior (return
+    `result.jobs == []` with no exception) is a known
+    design correction — the v1 contract silently returned
+    200 + empty list, which misled clients into thinking
+    "no jobs found" instead of "all sources failed".
+    """
+    from jobs_finder.domain.exceptions import (  # noqa: PLC0415
+        AllSourcesFailedError,
+    )
+
     linkedin_port = _FakeJobSearchPort(error=JobSearchError("linkedin down"))
     indeed_port = _FakeJobSearchPort(error=JobSearchError("indeed down"))
     infojobs_port = _FakeJobSearchPort(error=JobSearchError("infojobs down"))
     use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
 
-    result = await use_case.search("python", "madrid", 20, ["linkedin", "indeed", "infojobs"])
-
-    assert result.jobs == []
-    assert result.per_source["linkedin"].error is not None
-    assert result.per_source["indeed"].error is not None
-    assert result.per_source["infojobs"].error is not None
-    assert result.per_source["linkedin"].succeeded is False
-    assert result.per_source["indeed"].succeeded is False
-    assert result.per_source["infojobs"].succeeded is False
+    with pytest.raises(AllSourcesFailedError):
+        await use_case.search("python", "madrid", 20, ["linkedin", "indeed", "infojobs"])
 
 
 async def test_non_job_search_error_reraises() -> None:

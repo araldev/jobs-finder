@@ -291,13 +291,18 @@ async def test_aggregator_dedupes_same_job_across_2_sources() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_aggregator_with_all_sources_failing_returns_200_and_empty_jobs() -> None:
-    """All 3 sources raise `JobSearchError`; the route returns 200 with empty jobs.
+async def test_aggregator_with_all_sources_failing_returns_502() -> None:
+    """All 3 sources raise `JobSearchError`; the route returns 502.
 
-    The aggregator is designed to NOT propagate per-source 502s —
-    partial failure is normal. The body's `jobs` list is empty;
-    the `X-Aggregator-Errors` header is verified in T-003's
-    `test_aggregator_headers.py`.
+    REQ-DEFENSIVE-001 scenario 2: when ALL 3 sources fail, the
+    aggregator raises `AllSourcesFailedError` (a
+    `JobSearchError` subclass) and the registered
+    `JobSearchError` handler maps to HTTP 502. The body is
+    the masked `{"detail": "upstream source unavailable",
+    "request_id": "..."}` shape (the same as any per-source
+    failure). The pre-`backend-scraper-query-tuning` v1
+    contract returned 200 + empty jobs (a silent
+    failure-mode that misled clients).
     """
     linkedin_port = FakeJobSearchPort(error=LinkedInBlockedError("auth wall"))
     indeed_port = FakeJobSearchPort(error=IndeedBlockedError("cloudflare"))
@@ -308,9 +313,10 @@ async def test_aggregator_with_all_sources_failing_returns_200_and_empty_jobs() 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/jobs?q=python&location=madrid")
 
-    assert response.status_code == 200
+    assert response.status_code == 502
     body = response.json()
-    assert body == {"jobs": []}
+    assert body["detail"] == "upstream source unavailable"
+    assert "request_id" in body
 
 
 # ---------------------------------------------------------------------------
