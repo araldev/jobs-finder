@@ -43,7 +43,11 @@ from typing import Any
 import httpx
 from pydantic import SecretStr
 
-from jobs_finder.infrastructure.llm.exceptions import LLMUnavailableError
+from jobs_finder.infrastructure.llm.exceptions import (
+    LLMRequestTimeoutError,
+    LLMStreamError,
+    LLMUnavailableError,
+)
 
 # HTTP status codes that are PERMANENT (no retry).
 _AUTH_STATUS_CODES: frozenset[int] = frozenset({401, 403})
@@ -297,6 +301,13 @@ class MiniMaxLLMClient:
         `data: <json>` line. The `[DONE]` sentinel breaks
         the loop; empty `delta.content` is skipped (no yield).
 
+        The body is a thin wrapper over
+        `self._http.stream("POST", url, ...)` + `aiter_lines()`.
+        The `stream: True` field is added to the body (the
+        same OpenAI-compatible shape used by `complete`, with
+        the streaming flag flipped). The auth headers are
+        reused verbatim.
+
         Raises:
             LLMStreamError: on non-200 status or malformed SSE
                 (status code embedded in the message). NO
@@ -307,19 +318,73 @@ class MiniMaxLLMClient:
                 is allowed to complete in the background
                 (the proposal's user decision; cost is
                 negligible).
-
-        T-004 of `chat-streaming` implements the full body
-        (httpx stream + aiter_lines + data: parsing). T-003
-        ships the stub (an empty async generator) so the
-        `LLMClientPort` Protocol extension is type-checked
-        end-to-end without breaking `app_factory`'s
-        dependency-injection call site.
         """
-        del system, user
-        # T-003 stub: yields nothing. T-004 replaces this with
-        # the real `httpx.stream("POST", ...)` + `aiter_lines`
-        # body. The T-003 gate is GREEN because the Protocol
-        # is satisfied (the method exists, the right return
-        # type); T-004's gate adds the behavior tests.
-        if False:  # pragma: no cover — T-004 replaces this body
-            yield ""
+        url = f"{self._base_url}/v1/chat/completions"
+        body = self._build_request_body(system, user)
+        # The streaming variant is byte-identical to the
+        # non-streaming body shape with `stream: True` flipped.
+        body["stream"] = True
+        headers = self._build_headers()
+
+        try:
+            async with self._http.stream("POST", url, json=body, headers=headers) as response:
+                if response.status_code != 200:
+                    # Surface the status + body excerpt so the
+                    # route's SSE error event carries the same
+                    # info (the `data.message` field).
+                    body_excerpt = response.text[:200] if response.text else ""
+                    raise LLMStreamError(
+                        f"stream status {response.status_code}: {body_excerpt!r}",
+                    )
+                async for line in response.aiter_lines():
+                    # SSE protocol lines: each `data: <json>` line
+                    # carries one token; empty lines are framing
+                    # separators. Lines not starting with `data: `
+                    # (e.g. `event:` lines, comments) are ignored.
+                    if not line.startswith("data: "):
+                        continue
+                    payload = line.removeprefix("data: ").strip()
+                    if payload == "[DONE]":
+                        # The OpenAI-compatible stream signals
+                        # end-of-stream with the literal
+                        # `data: [DONE]` line. Break BEFORE
+                        # attempting to JSON-parse the sentinel.
+                        break
+                    try:
+                        chunk = json.loads(payload)
+                    except (json.JSONDecodeError, ValueError) as exc:
+                        # A malformed `data: <garbage>` line is
+                        # a protocol-level error; surface as
+                        # LLMStreamError (the route maps to the
+                        # `llm_stream` machine code, NOT the
+                        # `llm_parse` machine code — `llm_parse`
+                        # is reserved for the end-of-stream
+                        # `StreamEventParser`).
+                        raise LLMStreamError(
+                            f"malformed SSE line: {payload[:200]!r}",
+                            cause=exc,
+                        ) from exc
+                    # Extract `choices[0].delta.content`. A
+                    # missing `content` key (or a missing
+                    # `choices` array) is a defensible "skip"
+                    # case (the model emitted an empty delta,
+                    # e.g. a function-call delta or a
+                    # tool-call delta) — the spec says skip
+                    # empties, do not yield.
+                    try:
+                        delta = chunk["choices"][0]["delta"].get("content")
+                    except (KeyError, IndexError, TypeError):
+                        delta = None
+                    if delta:
+                        yield delta
+        except httpx.TimeoutException as exc:
+            # The streaming timeout is a separate class from
+            # the non-streaming one — the route maps it to
+            # the `llm_timeout` machine code (REQ-ERROR-
+            # MAPPING-001). NO retry: a hung stream is hung,
+            # and the proposal's user decision is to let the
+            # upstream request complete in the background.
+            raise LLMRequestTimeoutError(
+                f"streaming request timed out after {self._timeout_seconds}s",
+                cause=exc,
+            ) from exc

@@ -33,7 +33,10 @@ import pytest
 from pydantic import SecretStr
 
 from jobs_finder.infrastructure.llm._client import MiniMaxLLMClient
-from jobs_finder.infrastructure.llm.exceptions import LLMUnavailableError
+from jobs_finder.infrastructure.llm.exceptions import (
+    LLMStreamError,
+    LLMUnavailableError,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -387,3 +390,156 @@ async def test_llm_unavailable_error_str_includes_cause() -> None:
         await client.complete(system="sys", user="usr")
     # `str(err)` includes both the message and the cause's repr.
     assert "401" in str(exc_info.value) or "auth" in str(exc_info.value).lower()
+
+
+# ---------------------------------------------------------------------------
+# `stream_complete` (T-004 of `chat-streaming`)
+#
+# Spec: REQ-LLM-002 — `MiniMaxLLMClient.stream_complete` MUST use
+# `httpx.AsyncClient.stream("POST", url, json={"stream": True, ...})`
+# and `response.aiter_lines()`. For each `data: <json>` line it
+# extracts `choices[0].delta.content` and yields it. Status != 200
+# raises `LLMStreamError` with the status + body excerpt. Reuse the
+# shared `llm_http_client` (the constructor's `http_client` kwarg).
+# NO retry mid-stream.
+#
+# The 5 tests below use `httpx.MockTransport` to inject canned
+# streaming responses. The `MockTransport` returns an
+# `httpx.Response` whose `aiter_lines()` method yields the SSE
+# lines as separate strings (verified empirically — the
+# `content=b"..."` parameter is split on `\n` by httpx).
+# ---------------------------------------------------------------------------
+
+
+def _sse_response(lines: list[str], status_code: int = 200) -> httpx.Response:
+    """Build an `httpx.Response` whose `aiter_lines()` yields the given SSE lines.
+
+    The body is `\\n\\n`-separated `data: <json>` lines (the
+    OpenAI-compatible SSE shape) plus a trailing `data: [DONE]`
+    sentinel. The `aiter_lines()` coroutine yields the lines
+    verbatim (with empty lines between them) — the
+    `stream_complete` consumer strips empty lines and the
+    `data: ` prefix.
+    """
+    body = "\n\n".join(lines) + "\n\n"
+    return httpx.Response(status_code, content=body.encode("utf-8"))
+
+
+async def test_stream_complete_parses_valid_sse_chunks() -> None:
+    """`stream_complete` yields `choices[0].delta.content` for each `data: {...}` line.
+
+    REQ-LLM-002 1st scenario. The MockTransport response
+    streams 2 valid chunks then `[DONE]`. The yielded list
+    MUST be `["foo", "bar"]` in order; the `[DONE]` line MUST
+    NOT produce a yield.
+    """
+    chunk1 = json.dumps({"choices": [{"delta": {"content": "foo"}}]})
+    chunk2 = json.dumps({"choices": [{"delta": {"content": "bar"}}]})
+    response = _sse_response([f"data: {chunk1}", f"data: {chunk2}", "data: [DONE]"])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return response
+
+    client = _build_client_with_transport(httpx.MockTransport(handler))
+    chunks: list[str] = []
+    async for chunk in client.stream_complete(system="sys", user="usr"):
+        chunks.append(chunk)
+    assert chunks == ["foo", "bar"]
+
+
+async def test_stream_complete_skips_empty_delta_content() -> None:
+    """A `data: {...}` line with NO `content` field yields nothing for that line.
+
+    REQ-LLM-002 3rd scenario. A chunk with
+    `{"choices":[{"delta":{}}]}` (no `content` key) MUST NOT
+    produce a yield — empty deltas would push a useless
+    `event: text\\ndata: {"delta": ""}\\n\\n` to the SSE
+    stream. The implementation MUST skip them.
+    """
+    empty_delta = json.dumps({"choices": [{"delta": {}}]})
+    real_chunk = json.dumps({"choices": [{"delta": {"content": "real"}}]})
+    response = _sse_response([f"data: {empty_delta}", f"data: {real_chunk}", "data: [DONE]"])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return response
+
+    client = _build_client_with_transport(httpx.MockTransport(handler))
+    chunks: list[str] = []
+    async for chunk in client.stream_complete(system="sys", user="usr"):
+        chunks.append(chunk)
+    # Empty delta is skipped; only "real" is yielded.
+    assert chunks == ["real"]
+    # And no empty string snuck in.
+    assert "" not in chunks
+
+
+async def test_stream_complete_non_200_raises_llm_stream_error() -> None:
+    """A non-200 response raises `LLMStreamError` with the status in the message.
+
+    REQ-LLM-002 2nd scenario. The `stream_complete` MUST
+    check the status BEFORE iterating the body; a 500
+    response MUST surface as `LLMStreamError`, not as a
+    successful (empty) stream. The status code MUST appear
+    in the message so operators can grep for it.
+    """
+    response = httpx.Response(
+        500, content=b'{"error":"internal"}', headers={"content-type": "application/json"}
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return response
+
+    client = _build_client_with_transport(httpx.MockTransport(handler))
+    with pytest.raises(LLMStreamError) as exc_info:
+        async for _ in client.stream_complete(system="sys", user="usr"):
+            pass  # pragma: no cover — must raise before any yield
+    # The status is in the message so the SSE error event's
+    # `data.message` (set by the route) carries the same info.
+    assert "500" in str(exc_info.value)
+
+
+async def test_stream_complete_does_not_retry_mid_stream() -> None:
+    """`stream_complete` makes exactly ONE HTTP call (no retry mid-stream).
+
+    REQ-LLM-002 — retrying would destroy chunks already
+    enqueued for the client. The MockTransport's handler is
+    counted; the test asserts exactly 1 call regardless of
+    the response shape (success or 500).
+    """
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        # Even on a 500, the implementation must NOT retry —
+        # the test counts the calls to prove it.
+        return httpx.Response(500, content=b"server error")
+
+    client = _build_client_with_transport(httpx.MockTransport(handler))
+    with pytest.raises(LLMStreamError):
+        async for _ in client.stream_complete(system="sys", user="usr"):
+            pass  # pragma: no cover
+    # Exactly 1 call — no retry mid-stream, no retry on 5xx.
+    assert call_count == 1
+
+
+async def test_stream_complete_malformed_json_raises_llm_stream_error() -> None:
+    """A `data: <garbage>` line raises `LLMStreamError`.
+
+    A real MiniMax server can (rarely) emit a malformed
+    `data: ` line; the client MUST surface that as
+    `LLMStreamError` (NOT `LLMResponseParseError` — that
+    class is reserved for the JSON body parser at end-of-
+    stream, not for the streaming protocol parser). The
+    route maps `LLMStreamError` to the `llm_stream` SSE
+    error machine code.
+    """
+    response = _sse_response(["data: this-is-not-valid-json{{", "data: [DONE]"])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return response
+
+    client = _build_client_with_transport(httpx.MockTransport(handler))
+    with pytest.raises(LLMStreamError):
+        async for _ in client.stream_complete(system="sys", user="usr"):
+            pass  # pragma: no cover — must raise on malformed JSON
