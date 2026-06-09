@@ -60,8 +60,8 @@ def test_cache_port_get_is_a_method() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_job_search_cache_key_has_five_fields() -> None:
-    """`JobSearchCacheKey` declares exactly the 5 documented fields.
+def test_job_search_cache_key_has_six_fields() -> None:
+    """`JobSearchCacheKey` declares exactly the 6 documented fields.
 
     The 5th `geo_id: int | None = None` field was added in the
     `fix-linkedin-geoid` change so a query with
@@ -71,9 +71,24 @@ def test_job_search_cache_key_has_five_fields() -> None:
     one would silently corrupt the other. The field is `None`
     by default for Indeed + InfoJobs (they accept `location=`
     strings; they don't need a `geoId=`).
+
+    The 6th `query_tokens: tuple[str, ...] = ()` field was
+    added in the `backend-scraper-query-tuning` change
+    (REQ-CACHE-001) so a query with
+    `query_tokens=("react",)` is byte-distinct from the same
+    query with `query_tokens=()` — they return different
+    jobs (the InfoJobs filter is opt-in based on the
+    `query_tokens`).
     """
     hints = getattr(JobSearchCacheKey, "__annotations__", {})
-    assert set(hints.keys()) == {"source", "keywords", "location", "limit", "geo_id"}
+    assert set(hints.keys()) == {
+        "source",
+        "keywords",
+        "location",
+        "limit",
+        "geo_id",
+        "query_tokens",
+    }
 
 
 def test_job_search_cache_key_geo_id_field_default_is_none() -> None:

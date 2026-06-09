@@ -627,9 +627,7 @@ async def test_cache_key_default_query_tokens_is_empty() -> None:
     field defaults to `()` (the empty tuple). The test
     pins the default.
     """
-    key = JobSearchCacheKey(
-        source="linkedin", keywords="react", location="malaga", limit=20
-    )
+    key = JobSearchCacheKey(source="linkedin", keywords="react", location="malaga", limit=20)
     assert key.query_tokens == ()
 
 
@@ -645,11 +643,12 @@ async def test_cache_key_includes_normalized_tokens() -> None:
     cache = _FakeCachePort()
     wrapper = CachedJobSearchUseCase(port=port, cache=cache, source="linkedin")
 
-    first = await wrapper.search(
-        "react", "malaga", 20, query_tokens=("react", "málaga")
-    )
+    first = await wrapper.search("react", "malaga", 20, query_tokens=("react", "málaga"))
     second = await wrapper.search(
-        "react", "malaga", 20, query_tokens=("málaga", "react")  # different order
+        "react",
+        "malaga",
+        20,
+        query_tokens=("málaga", "react"),  # different order
     )
 
     # Both calls hit the same cache entry (the second is a
@@ -691,15 +690,19 @@ async def test_cache_separates_entries_by_query_tokens() -> None:
     different `query_tokens` returns `None` (MISS), even
     when the other 5 fields are identical.
     """
-    cache: InMemoryTTLCache[JobSearchCacheKey, list[Job]] = InMemoryTTLCache(
-        ttl_seconds=60.0
-    )
+    cache: InMemoryTTLCache[JobSearchCacheKey, list[Job]] = InMemoryTTLCache(ttl_seconds=60.0)
     key_react = JobSearchCacheKey(
-        source="linkedin", keywords="react", location="malaga", limit=20,
+        source="linkedin",
+        keywords="react",
+        location="malaga",
+        limit=20,
         query_tokens=("react",),
     )
     key_python = JobSearchCacheKey(
-        source="linkedin", keywords="react", location="malaga", limit=20,
+        source="linkedin",
+        keywords="react",
+        location="malaga",
+        limit=20,
         query_tokens=("python",),
     )
     await cache.set(key_react, [_job(1)])
