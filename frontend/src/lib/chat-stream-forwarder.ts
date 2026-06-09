@@ -128,6 +128,20 @@ export async function forwardChatStream(args: ForwardChatStreamArgs): Promise<vo
   let doneEmitted = false;
   let errorEmitted = false;
 
+  // Forward the signal abort to the reader so an in-flight
+  // reader.read() rejects instead of blocking forever.
+  const onSignalAbort = () => {
+    try {
+      void reader.cancel();
+    } catch {
+      // reader may already be released
+    }
+  };
+  if (signal) {
+    if (signal.aborted) onSignalAbort();
+    else signal.addEventListener("abort", onSignalAbort, { once: true });
+  }
+
   try {
     while (!doneEmitted && !errorEmitted) {
       if (signal?.aborted) {
@@ -152,12 +166,21 @@ export async function forwardChatStream(args: ForwardChatStreamArgs): Promise<vo
       }
     }
   } catch (cause) {
+    // Distinguish "we cancelled the reader because of the signal"
+    // from a genuine stream failure.
+    if (signal?.aborted) {
+      await callbacks.onError({ code: "aborted", message: "Stream aborted" });
+      return;
+    }
     await callbacks.onError({
       code: "stream_interrupted",
       message: cause instanceof Error ? cause.message : String(cause),
     });
     return;
   } finally {
+    if (signal) {
+      signal.removeEventListener("abort", onSignalAbort);
+    }
     try {
       reader.releaseLock();
     } catch {
