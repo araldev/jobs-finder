@@ -20,3 +20,18 @@ class JobSearchError(DomainError):
     Catching this in the presentation layer maps to 502 — the source is
     unreachable, blocked, or returned an unparseable payload.
     """
+
+
+class AllSourcesFailedError(JobSearchError):
+    """Raised when the aggregator's 3 sources all fail.
+
+    Spec: REQ-DEFENSIVE-001 (`backend-scraper-query-tuning` change).
+    The aggregator's `asyncio.gather` waits for all 3 source
+    calls to complete; if ALL 3 raise `JobSearchError`, the
+    aggregator raises `AllSourcesFailedError` so the
+    registered `JobSearchError` handler maps it to HTTP 502
+    (the same status as any individual source failure).
+    Subclassing `JobSearchError` (NOT `Exception`) means the
+    existing exception handler covers this case automatically
+    — no separate handler registration.
+    """

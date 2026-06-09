@@ -554,6 +554,33 @@ class Settings(BaseSettings):
         default="posted_at",
         validation_alias=AliasChoices("AGGREGATOR_RANKING_STRATEGY", "aggregator_ranking_strategy"),
     )
+
+    # ------------------------------------------------------------------
+    # Opt-in keyword-score ranking (REQ-SCORE-001 scenarios 5-6,
+    # `backend-scraper-query-tuning` T-008)
+    #
+    # The 1 field below configures the opt-in `keyword_score`
+    # relevance ranking. When `False` (the default), the
+    # aggregator's sort path is the v1 `posted_at` desc
+    # (REQ-SCORE-001 scenario 5). When `True`, the aggregator
+    # uses `keyword_score desc, posted_at desc` (REQ-SCORE-001
+    # scenario 6). The opt-in pattern is intentional: the
+    # `keyword_score` heuristic is a v1 best-effort signal;
+    # operators enable it on a per-deployment basis without
+    # code changes.
+    #
+    # The env var is `ENABLE_KEYWORD_SCORING` (model-level
+    # `env_prefix="LINKEDIN_"` does not apply because the
+    # field declares its own `validation_alias`).
+    # `bool` type accepts the canonical truthy strings
+    # (`"true"`, `"1"`, `"yes"`, `"on"`, case-insensitive)
+    # via Pydantic's standard bool coercion.
+    # ------------------------------------------------------------------
+
+    enable_keyword_scoring: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("ENABLE_KEYWORD_SCORING", "enable_keyword_scoring"),
+    )
     aggregator_priority_map: dict[str, int] = Field(
         default_factory=lambda: {"linkedin": 0, "indeed": 1, "infojobs": 2},
         validation_alias=AliasChoices("AGGREGATOR_PRIORITY_MAP", "aggregator_priority_map"),

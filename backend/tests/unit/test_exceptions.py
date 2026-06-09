@@ -16,7 +16,11 @@ from typing import Any
 
 import pytest
 
-from jobs_finder.domain.exceptions import DomainError, JobSearchError
+from jobs_finder.domain.exceptions import (
+    AllSourcesFailedError,
+    DomainError,
+    JobSearchError,
+)
 from jobs_finder.infrastructure.linkedin.exceptions import (
     LinkedInBlockedError,
     LinkedInParseError,
@@ -107,3 +111,33 @@ def test_distinct_subclasses_are_not_interchangeable() -> None:
     assert not issubclass(LinkedInBlockedError, LinkedInTimeoutError)
     assert not issubclass(LinkedInTimeoutError, LinkedInBlockedError)
     assert not issubclass(LinkedInParseError, LinkedInBlockedError)
+
+
+# ---------------------------------------------------------------------------
+# `AllSourcesFailedError` (REQ-DEFENSIVE-001, T-005)
+#
+# A new `JobSearchError` subclass raised by the aggregator when
+# the 3 per-source use cases ALL fail. The registered
+# `JobSearchError` handler maps it to HTTP 502 (the same as
+# every other `JobSearchError`).
+# ---------------------------------------------------------------------------
+
+
+def test_all_sources_failed_error_subclasses_job_search_error() -> None:
+    """`AllSourcesFailedError` is a `JobSearchError` (and `DomainError`)."""
+    assert issubclass(AllSourcesFailedError, JobSearchError)
+    assert issubclass(AllSourcesFailedError, DomainError)
+    assert issubclass(AllSourcesFailedError, Exception)
+
+
+def test_all_sources_failed_error_is_instantiable() -> None:
+    """`AllSourcesFailedError("all sources failed")` constructs with a message."""
+    exc = AllSourcesFailedError("all sources failed")
+    assert exc.args == ("all sources failed",)
+    assert "all sources failed" in str(exc)
+
+
+def test_all_sources_failed_error_is_catchable_as_job_search_error() -> None:
+    """`AllSourcesFailedError` is catchable via the `JobSearchError` base class."""
+    with pytest.raises(JobSearchError, match="caught-as-base"):
+        raise AllSourcesFailedError("caught-as-base")

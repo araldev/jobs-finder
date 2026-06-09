@@ -65,7 +65,7 @@ from playwright.async_api import (
     async_playwright,
 )
 
-from jobs_finder.application.ports import JobSearchPort
+from jobs_finder.application.ports import JobSearchPort, LocationResolverPort
 from jobs_finder.domain.job import Job
 from jobs_finder.infrastructure.pagination import paginated_search
 
@@ -115,7 +115,13 @@ class LinkedInScraperSettings:
     LinkedIn scraper to parity with the Indeed and InfoJobs scrapers.
     """
 
-    __slots__ = ("inter_page_delay_seconds", "max_pages", "timeout_ms", "user_agent")
+    __slots__ = (
+        "inter_page_delay_seconds",
+        "location_resolver",
+        "max_pages",
+        "timeout_ms",
+        "user_agent",
+    )
 
     def __init__(
         self,
@@ -124,17 +130,27 @@ class LinkedInScraperSettings:
         timeout_ms: int,
         max_pages: int = 10,
         inter_page_delay_seconds: float = 1.0,
+        location_resolver: LocationResolverPort | None = None,
     ) -> None:
         self.user_agent = user_agent
         self.timeout_ms = timeout_ms
         self.max_pages = max_pages
         self.inter_page_delay_seconds = inter_page_delay_seconds
+        # Optional `LocationResolverPort` (added in
+        # `backend-scraper-query-tuning`, REQ-LOC-002). When
+        # `None` (the default), the scraper falls back to
+        # `?location=<str>` for every `search()` call (the
+        # legacy v1 broken-but-doesn't-500 path). When set, the
+        # scraper calls `resolve(location)` ONCE per `search()`
+        # and uses the returned `geoId` in the URL formula.
+        self.location_resolver = location_resolver
 
     def __repr__(self) -> str:
         return (
             f"LinkedInScraperSettings(user_agent={self.user_agent!r}, "
             f"timeout_ms={self.timeout_ms}, max_pages={self.max_pages}, "
-            f"inter_page_delay_seconds={self.inter_page_delay_seconds})"
+            f"inter_page_delay_seconds={self.inter_page_delay_seconds}, "
+            f"location_resolver={self.location_resolver!r})"
         )
 
     def __eq__(self, other: object) -> bool:
@@ -145,6 +161,7 @@ class LinkedInScraperSettings:
             and self.timeout_ms == other.timeout_ms
             and self.max_pages == other.max_pages
             and self.inter_page_delay_seconds == other.inter_page_delay_seconds
+            and self.location_resolver == other.location_resolver
         )
 
     def __hash__(self) -> int:
@@ -154,6 +171,7 @@ class LinkedInScraperSettings:
                 self.timeout_ms,
                 self.max_pages,
                 self.inter_page_delay_seconds,
+                self.location_resolver,
             )
         )
 
@@ -217,7 +235,19 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         REQ-L-007: a `wait_for_selector` timeout on page > 0
         breaks the loop gracefully and returns the first page's
         results. A timeout on page 0 raises `LinkedInTimeoutError`.
+
+        `geo_id` resolution (REQ-LOC-001, T-001 of
+        `backend-scraper-query-tuning`): when the caller does
+        NOT pass `geo_id` (the default, used by the
+        `LinkedInScraperSettings`-only path), the scraper
+        calls `self._settings.location_resolver.resolve(location)`
+        ONCE per `search()` and uses the returned int as the
+        `geoId` URL parameter. The resolver is called AT MOST
+        once per `search()` (not per page); the result is
+        captured in the closure.
         """
+        if geo_id is None and self._settings.location_resolver is not None:
+            geo_id = self._settings.location_resolver.resolve(location)
         ctx = await self._browser.new_context(
             user_agent=self._settings.user_agent,
             viewport=VIEWPORT,
@@ -228,7 +258,7 @@ class LinkedInPlaywrightScraper(JobSearchPort):
                 return await paginated_search(
                     page=page,
                     throttle=self._throttle,
-                    fetch_one_page=self._make_fetch_one_page(keywords, location),
+                    fetch_one_page=self._make_fetch_one_page(keywords, location, geo_id=geo_id),
                     limit=limit,
                     max_pages=self._settings.max_pages,
                     inter_page_delay_seconds=self._settings.inter_page_delay_seconds,

@@ -125,11 +125,26 @@ def _build_aggregator(
     indeed_port: _FakeJobSearchPort,
     infojobs_port: _FakeJobSearchPort,
 ) -> SearchAllSourcesUseCase:
-    """Build a `SearchAllSourcesUseCase` whose 3 use cases wrap the given ports."""
+    """Build a `SearchAllSourcesUseCase` whose 3 use cases wrap the given ports.
+
+    Wires the production pure-function helpers
+    (`filter_infojobs_results` + `keyword_score`) at
+    construction time so the v1 + T-004 behaviors are both
+    exercised. The aggregator's no-op defaults preserve
+    backward compat for direct callers; tests that exercise
+    the new behavior need the real helpers.
+    """
+    from jobs_finder.infrastructure.aggregator_filters import (  # noqa: PLC0415
+        filter_infojobs_results,
+    )
+    from jobs_finder.infrastructure.keyword_score import keyword_score  # noqa: PLC0415
+
     return SearchAllSourcesUseCase(
         linkedin_use_case=_build_cached_use_case(linkedin_port, "linkedin"),
         indeed_use_case=_build_cached_use_case(indeed_port, "indeed"),
         infojobs_use_case=_build_cached_use_case(infojobs_port, "infojobs"),
+        filter_infojobs_results=filter_infojobs_results,
+        keyword_score=keyword_score,
     )
 
 
@@ -303,22 +318,29 @@ async def test_one_source_fails_with_job_search_error_returns_others() -> None:
     assert result.per_source["infojobs"].succeeded is True
 
 
-async def test_all_3_sources_fail_returns_empty_jobs_with_all_errors() -> None:
-    """All 3 sources raise `JobSearchError`; aggregator returns empty jobs and tracks 3 errors."""
+async def test_all_3_sources_fail_raises_all_sources_failed_error() -> None:
+    """All 3 sources raise `JobSearchError`; aggregator raises `AllSourcesFailedError`.
+
+    REQ-DEFENSIVE-001 scenario 2: when all 3 sources fail,
+    the aggregator raises `AllSourcesFailedError` (a
+    `JobSearchError` subclass) so the registered handler
+    maps to HTTP 502. Pre-T-005 behavior (return
+    `result.jobs == []` with no exception) is a known
+    design correction — the v1 contract silently returned
+    200 + empty list, which misled clients into thinking
+    "no jobs found" instead of "all sources failed".
+    """
+    from jobs_finder.domain.exceptions import (  # noqa: PLC0415
+        AllSourcesFailedError,
+    )
+
     linkedin_port = _FakeJobSearchPort(error=JobSearchError("linkedin down"))
     indeed_port = _FakeJobSearchPort(error=JobSearchError("indeed down"))
     infojobs_port = _FakeJobSearchPort(error=JobSearchError("infojobs down"))
     use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
 
-    result = await use_case.search("python", "madrid", 20, ["linkedin", "indeed", "infojobs"])
-
-    assert result.jobs == []
-    assert result.per_source["linkedin"].error is not None
-    assert result.per_source["indeed"].error is not None
-    assert result.per_source["infojobs"].error is not None
-    assert result.per_source["linkedin"].succeeded is False
-    assert result.per_source["indeed"].succeeded is False
-    assert result.per_source["infojobs"].succeeded is False
+    with pytest.raises(AllSourcesFailedError):
+        await use_case.search("python", "madrid", 20, ["linkedin", "indeed", "infojobs"])
 
 
 async def test_non_job_search_error_reraises() -> None:
@@ -613,3 +635,205 @@ def test_aggregator_does_not_import_infrastructure_or_presentation() -> None:
     assert "presentation" not in joined, f"{source_path} imports presentation"
     assert "playwright" not in joined, f"{source_path} imports playwright"
     assert "fastapi" not in joined, f"{source_path} imports fastapi"
+
+
+# ---------------------------------------------------------------------------
+# InfoJobs client-side filter (REQ-FILTER-001, T-004)
+#
+# The `SearchAllSourcesUseCase.search()` method accepts a
+# `query_tokens: frozenset[str] = frozenset()` kwarg. When
+# non-empty, the aggregator applies `filter_infojobs_results`
+# to the InfoJobs slice of the deduped jobs (post-cache,
+# post-scrape). LinkedIn and Indeed are NOT filtered. The
+# default empty set preserves the v1 contract (no filter
+# applied, full result set returned).
+# ---------------------------------------------------------------------------
+
+
+async def test_aggregator_applies_infojobs_filter() -> None:
+    """InfoJobs job with 0-token-overlap title is dropped; LinkedIn job with same title is kept.
+
+    `query_tokens={"react", "málaga"}`. InfoJobs returns
+    `Recepcionista` (0 overlap → dropped). LinkedIn returns
+    `Senior Python` (also 0 overlap → kept, because the
+    filter applies ONLY to InfoJobs). The result has 1 job
+    from LinkedIn.
+    """
+    infojobs_recep = _job(1, title="Recepcionista")
+    linkedin_python = _job(2, title="Senior Python")
+    linkedin_port = _FakeJobSearchPort(jobs=[linkedin_python])
+    indeed_port = _FakeJobSearchPort(jobs=[])
+    infojobs_port = _FakeJobSearchPort(jobs=[infojobs_recep])
+    use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
+
+    result = await use_case.search(
+        "react",
+        "malaga",
+        20,
+        ["linkedin", "indeed", "infojobs"],
+        query_tokens=frozenset({"react", "málaga"}),
+    )
+
+    # The LinkedIn job is in the result (filter does NOT apply to LinkedIn).
+    assert len(result.jobs) == 1
+    assert result.jobs[0].job.id == "j2"
+    assert result.jobs[0].sources == ["linkedin"]
+
+
+async def test_aggregator_does_not_filter_linkedin_or_indeed() -> None:
+    """A 0-overlap LinkedIn job + a 0-overlap Indeed job are BOTH kept.
+
+    The filter applies ONLY to InfoJobs (REQ-FILTER-001
+    scenario 3). A LinkedIn job with no token overlap is
+    still surfaced; an Indeed job with no token overlap is
+    also still surfaced. Only the InfoJobs slice is filtered.
+    """
+    linkedin_no_match = _job(1, title="Senior Java Developer")
+    indeed_no_match = _job(2, title="Recepcionista Hotel")
+    infojobs_no_match = _job(3, title="Pintor Industrial")
+    linkedin_port = _FakeJobSearchPort(jobs=[linkedin_no_match])
+    indeed_port = _FakeJobSearchPort(jobs=[indeed_no_match])
+    infojobs_port = _FakeJobSearchPort(jobs=[infojobs_no_match])
+    use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
+
+    result = await use_case.search(
+        "react",
+        "malaga",
+        20,
+        ["linkedin", "indeed", "infojobs"],
+        query_tokens=frozenset({"react", "málaga"}),
+    )
+
+    # LinkedIn + Indeed are kept; InfoJobs is dropped.
+    assert len(result.jobs) == 2
+    result_ids = sorted(job.job.id for job in result.jobs)
+    assert result_ids == ["j1", "j2"]
+
+
+async def test_aggregator_sorts_by_keyword_score_when_enabled() -> None:
+    """`enable_keyword_scoring=True` → sorted by score DESC, then posted_at DESC.
+
+    Two jobs:
+    - `A` with `title="React Developer"` (matches `react` AND
+      `developer` → score = 1.0 — full title match).
+    - `B` with `title="Python Developer"` (matches `developer`
+      only → score = 0.5 — partial title match).
+
+    With `query_tokens={"react", "developer"}` and
+    `enable_keyword_scoring=True`, A sorts BEFORE B. The
+    `query_tokens` is chosen so BOTH jobs survive the
+    InfoJobs filter (1+ token overlap on `developer`).
+    """
+    job_a = _job(1, title="React Developer")
+    job_b = _job(2, title="Python Developer")
+    linkedin_port = _FakeJobSearchPort(jobs=[job_a])
+    indeed_port = _FakeJobSearchPort(jobs=[])
+    infojobs_port = _FakeJobSearchPort(jobs=[job_b])
+    use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
+
+    result = await use_case.search(
+        "react",
+        "madrid",
+        20,
+        ["linkedin", "indeed", "infojobs"],
+        query_tokens=frozenset({"react", "developer"}),
+        enable_keyword_scoring=True,
+    )
+
+    # A is first (higher score).
+    assert result.jobs[0].job.id == "j1"
+    assert result.jobs[1].job.id == "j2"
+
+
+async def test_aggregator_sorts_by_posted_at_when_disabled() -> None:
+    """`enable_keyword_scoring=False` (default) → existing `posted_at` DESC sort is used.
+
+    Backward compat: the v1 `rank_jobs` function sorts by
+    `posted_at` DESC (with source-priority tie-breaker). When
+    `enable_keyword_scoring=False` (the default), the
+    aggregator MUST call the existing sort path, NOT the
+    `keyword_score` path. The test pins the contract: a
+    later-posted job sorts BEFORE an earlier-posted job
+    regardless of keyword relevance. No `query_tokens` is
+    passed so the InfoJobs filter is a no-op.
+    """
+    # j1: EARLY date, "React Developer" (would have a high
+    #     score if `enable_keyword_scoring=True`).
+    # j3: LATE date, "Python Developer" (would have a 0
+    #     score if `enable_keyword_scoring=True`).
+    job_early_react = _job(1, title="React Developer")
+    job_late_python = _job(3, title="Python Developer")
+    linkedin_port = _FakeJobSearchPort(jobs=[job_early_react])
+    indeed_port = _FakeJobSearchPort(jobs=[])
+    infojobs_port = _FakeJobSearchPort(jobs=[job_late_python])
+    use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
+
+    result = await use_case.search(
+        "react",
+        "madrid",
+        20,
+        ["linkedin", "indeed", "infojobs"],
+        enable_keyword_scoring=False,  # default behavior
+    )
+
+    # j3 (later date) sorts first per the `posted_at` DESC
+    # sort; the keyword_score is irrelevant.
+    assert result.jobs[0].job.id == "j3"
+    assert result.jobs[1].job.id == "j1"
+
+
+async def test_aggregator_forwards_query_tokens_to_filter() -> None:
+    """`query_tokens` is forwarded to the InfoJobs filter; the LinkedIn/Indeed paths are unaffected.
+
+    A LinkedIn port spy records the call. The aggregator
+    receives `query_tokens={"react"}`; the LinkedIn port
+    receives the 4-arg call (`keywords, location, limit, None`)
+    — the new kwarg is filter-only and does NOT propagate to
+    the LinkedIn/Indeed ports. (The `query_tokens` is
+    aggregator-internal; the per-source use cases are
+    unchanged.)
+    """
+    linkedin_port = _FakeJobSearchPort(jobs=[])
+    indeed_port = _FakeJobSearchPort(jobs=[])
+    infojobs_port = _FakeJobSearchPort(jobs=[])
+    use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
+
+    await use_case.search(
+        "react",
+        "malaga",
+        20,
+        ["linkedin", "indeed", "infojobs"],
+        query_tokens=frozenset({"react"}),
+    )
+
+    # LinkedIn + Indeed + InfoJobs all received 4-arg calls
+    # (no `query_tokens` kwarg in the per-source signature).
+    assert linkedin_port.calls == [("react", "malaga", 20, None)]
+    assert indeed_port.calls == [("react", "malaga", 20, None)]
+    assert infojobs_port.calls == [("react", "malaga", 20, None)]
+
+
+# ---------------------------------------------------------------------------
+# `query_tokens` backward-compat: default empty set does NOT filter
+# ---------------------------------------------------------------------------
+
+
+async def test_aggregator_default_query_tokens_does_not_filter() -> None:
+    """`query_tokens` default (empty) → no InfoJobs filter applied (backward compat).
+
+    A pre-WU2 caller invokes `aggregator.search(...)` WITHOUT
+    the new `query_tokens` kwarg. The default is
+    `frozenset()` (empty). The filter is a no-op: the
+    InfoJobs `Recepcionista` job is kept.
+    """
+    infojobs_recep = _job(1, title="Recepcionista")
+    linkedin_port = _FakeJobSearchPort(jobs=[])
+    indeed_port = _FakeJobSearchPort(jobs=[])
+    infojobs_port = _FakeJobSearchPort(jobs=[infojobs_recep])
+    use_case = _build_aggregator(linkedin_port, indeed_port, infojobs_port)
+
+    result = await use_case.search("react", "malaga", 20, ["linkedin", "indeed", "infojobs"])
+
+    # No filter applied: the InfoJobs job is in the result.
+    assert len(result.jobs) == 1
+    assert result.jobs[0].job.id == "j1"
