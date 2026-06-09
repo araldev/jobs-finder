@@ -257,6 +257,19 @@ is already expired by the time it's read; Redis: no `SET` issued).
 Subsequent `get`s are always a miss, so the scraper is invoked
 on every call.
 
+#### `query_tokens` field (REQ-CACHE-001)
+
+The 6th field of `JobSearchCacheKey` is `query_tokens: tuple[str, ...]`,
+the normalized query tokens (lowercased, punctuation-stripped, sorted,
+deduped) used by the aggregator's InfoJobs client-side filter and
+the opt-in `keyword_score` sort. Two calls with the same
+`(source, keywords, location, limit, geo_id)` but different
+`query_tokens` are byte-distinct cache entries (different jobs are
+returned; cache HITs would silently corrupt the wrong response). The
+field is optional with a default `()` for backward compat: pre-change
+callers that construct `JobSearchCacheKey` with 5 positional args get
+`query_tokens=()` and the v1 cache-key behavior.
+
 #### Cache env-var table
 
 | Env var | Type | Default | Effect |
@@ -683,12 +696,65 @@ The strategy is configurable via 2 env vars (see the
   key for `priority` AND as the tie-breaker for `posted_at`.
   Sources not in the map are treated as priority `999` (last).
   Invalid JSON raises a Pydantic `ValidationError` at startup.
+- `ENABLE_KEYWORD_SCORING=false` (default): opt-in `keyword_score`
+  relevance ranking. When `true`, the aggregator sorts by
+  `keyword_score desc, posted_at desc` (per-job match rate
+  against the query tokens, with title match weighted `0.6` +
+  description match weighted `0.4`, capped at `1.0`). The v1
+  `posted_at` sort is preserved when `false`. The setting is
+  opt-in (not the default) because the `keyword_score` heuristic
+  is a best-effort signal — a v1 deployment that depends on
+  the freshness-first order is not affected unless the operator
+  flips the switch. See "InfoJobs client-side filter" below for
+  the always-active `filter_infojobs_results` step that the
+  `keyword_score` sort complements (the filter discards 0-overlap
+  jobs; the sort orders the survivors).
 
 **None `posted_at` defensive branch**: the ranking function
 places `posted_at=None` jobs at the bottom (REQ-AR-007). This
 is a future-proofing safety net — all 3 scrapers fall back to
 `datetime.now(UTC)` when the parser returns `None`, so in
 practice every `posted_at` is non-`None`.
+
+### InfoJobs client-side filter (REQ-FILTER-001)
+
+The `SearchAllSourcesUseCase` applies a post-scrape filter to
+the InfoJobs slice of the aggregated results. The filter is a
+pure function `filter_infojobs_results(jobs, query_tokens)`
+in `infrastructure/aggregator_filters.py` that discards any
+`Job` whose `title` has zero token overlap with the query
+tokens (lowercased, punctuation-stripped, deduped). A job
+is kept iff `len(tokenize(job.title) & query_tokens) > 0`.
+The filter is applied AFTER the per-source dedup step
+(post-cache, post-scrape). LinkedIn and Indeed results are
+NOT filtered (their server-side search is more accurate;
+only InfoJobs's broad keyword match needs a client-side
+narrowing). The `query_tokens` is the tokenized `q` query
+parameter from the `GET /jobs` route; an empty `query_tokens`
+(the v1 default) is a no-op (every job is kept). A
+`tokenize()` Unicode-safe accent is preserved: a query for
+`"Málaga"` matches `"Ingeniero Málaga"` (U+00E1) but does
+NOT match `"Ingeniero Malaga"` (no accent).
+
+### Defensive partial results (REQ-DEFENSIVE-001)
+
+The aggregator's per-source error isolation extends the
+v1 contract: when at least 1 source returns jobs, the
+aggregator returns 200 with the successful sources' jobs
+plus an `X-Aggregator-Errors` header listing the failed
+sources. The pre-`backend-scraper-query-tuning` v1
+behavior (return 200 + empty `jobs` when all 3 sources
+failed) was a silent failure mode that misled clients;
+the new spec maps `success_count == 0` to
+`AllSourcesFailedError` → HTTP 502 (the same status as
+any individual source failure). The response body is
+`{"detail": "upstream source unavailable",
+"request_id": "..."}` (the registered
+`JobSearchError` handler masks the original exception
+type). Per-source failures emit a WARNING log with
+`extra={source, error_type}` so ops can spot failure
+patterns (the log is emitted ONCE per failed source, not
+once per job the source would have returned).
 
 ### Response shape
 
@@ -1373,6 +1439,23 @@ the Indeed scraper so all three sources behave consistently.
 | --- | --- | --- | --- |
 | `LINKEDIN_MAX_PAGES` | int | `10` | Hard cap on pages per `search()`. Set to `1` for the v0 single-page behavior; raise it to drain longer result streams. |
 | `LINKEDIN_INTER_PAGE_DELAY_SECONDS` | float | `1.0` | Pacing between pages to reduce the chance of LinkedIn's anti-bot re-challenging the 2nd+ request. Set to `0.0` to skip the sleep entirely. |
+
+#### `geoId` plumb (REQ-LOC-001)
+
+The LinkedIn scraper resolves `location="malaga"` (free-form
+string) to `geoId=104401670` (the captured LinkedIn numeric ID)
+via the `HardcodedLocationResolver` injected into the
+`LinkedInScraperSettings` at composition time. The URL builder
+emits `?keywords=...&geoId=<n>&start=...` (the LinkedIn-correct
+form) instead of `?keywords=...&location=<str>&start=...`
+(the v0 broken-but-doesn't-500 form LinkedIn silently ignores).
+The resolver is a read-only in-process dict lookup; the
+34-entry `_CANONICAL_MAPPING` in
+`infrastructure/location/_mapping.py` lists every supported
+location. Unknown locations (country-level, País Vasco, Canarias,
+empty string) return `None` and the scraper falls back to
+`?location=<str>` — a strict improvement over the v0
+100%-broken behavior (no regression for unknown locations).
 
 #### Curl smoke test
 
