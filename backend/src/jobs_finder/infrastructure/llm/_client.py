@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -284,3 +285,41 @@ class MiniMaxLLMClient:
         """
         if self._owns_http:
             await self._http.aclose()
+
+    async def stream_complete(self, *, system: str, user: str) -> AsyncIterator[str]:
+        """Stream-complete a chat-completion request, yielding one string per token.
+
+        Spec: `chat-streaming` REQ-LLM-002. The streaming
+        counterpart of `complete(...)`. Posts to
+        `{base_url}/v1/chat/completions` with
+        `{"stream": True, ...}` and iterates the SSE response,
+        yielding the `choices[0].delta.content` of each
+        `data: <json>` line. The `[DONE]` sentinel breaks
+        the loop; empty `delta.content` is skipped (no yield).
+
+        Raises:
+            LLMStreamError: on non-200 status or malformed SSE
+                (status code embedded in the message). NO
+                retry mid-stream — retrying would destroy
+                chunks already enqueued for the client.
+            LLMRequestTimeoutError: on `httpx.TimeoutException`
+                mid-stream. NO retry — the upstream request
+                is allowed to complete in the background
+                (the proposal's user decision; cost is
+                negligible).
+
+        T-004 of `chat-streaming` implements the full body
+        (httpx stream + aiter_lines + data: parsing). T-003
+        ships the stub (an empty async generator) so the
+        `LLMClientPort` Protocol extension is type-checked
+        end-to-end without breaking `app_factory`'s
+        dependency-injection call site.
+        """
+        del system, user
+        # T-003 stub: yields nothing. T-004 replaces this with
+        # the real `httpx.stream("POST", ...)` + `aiter_lines`
+        # body. The T-003 gate is GREEN because the Protocol
+        # is satisfied (the method exists, the right return
+        # type); T-004's gate adds the behavior tests.
+        if False:  # pragma: no cover — T-004 replaces this body
+            yield ""

@@ -54,6 +54,7 @@ stage 3) vs the v1 path's 1 call (stage 3 only).
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import pytest
@@ -157,6 +158,12 @@ class FakeLLMClient:
                 "explanation": self._explanation,
             }
         )
+
+    async def stream_complete(self, *, system: str, user: str) -> AsyncIterator[str]:
+        """No-op `stream_complete` for `LLMClientPort` Protocol conformance (T-003)."""
+        del system, user
+        if False:  # pragma: no cover — yields nothing
+            yield ""
 
 
 def _build_chat_2stage_test_app(

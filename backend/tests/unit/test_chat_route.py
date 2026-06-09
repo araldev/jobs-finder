@@ -41,7 +41,7 @@ Starlette; see `test_app_lifespan.py` for the precedent).
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from datetime import UTC, datetime
 
 import httpx
@@ -109,6 +109,12 @@ class FakeLLMClient:
                 "explanation": self._selection.explanation,
             }
         )
+
+    async def stream_complete(self, *, system: str, user: str) -> AsyncIterator[str]:
+        """No-op `stream_complete` for `LLMClientPort` Protocol conformance (T-003)."""
+        del system, user
+        if False:  # pragma: no cover — yields nothing
+            yield ""
 
 
 class FakeAggregator:

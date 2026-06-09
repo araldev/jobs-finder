@@ -45,6 +45,7 @@ or LLM.
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import pytest
@@ -176,6 +177,18 @@ class FakeLLMClient:
                 "explanation": self._selection.explanation,
             }
         )
+
+    async def stream_complete(self, *, system: str, user: str) -> AsyncIterator[str]:
+        """No-op `stream_complete` for `LLMClientPort` Protocol conformance (T-003).
+
+        The v1 filter tests do not exercise `stream_complete`; this
+        default yields nothing so a v1 caller that iterates the
+        stream gets an empty generator. T-006 will add stream-
+        specific fakes that override this method.
+        """
+        del system, user
+        if False:  # pragma: no cover — yields nothing
+            yield ""
 
 
 # ---------------------------------------------------------------------------
