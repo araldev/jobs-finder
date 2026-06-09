@@ -538,6 +538,14 @@ def build_app(  # noqa: PLR0915
             infojobs_use_case=infojobs_use_case,
             ranking_strategy=effective_settings.aggregator_ranking_strategy,
             priority_map=effective_settings.aggregator_priority_map,
+            # T-008 (`backend-scraper-query-tuning`): forward
+            # the opt-in `enable_keyword_scoring` setting. The
+            # constructor default is `False` (the v1 sort
+            # behavior). The setting flows through to the
+            # `SearchAllSourcesUseCase.search()` method as a
+            # keyword-only arg; tests can also pass it
+            # programmatically.
+            enable_keyword_scoring=effective_settings.enable_keyword_scoring,
         )
     app.state.aggregator_use_case = aggregator_use_case
 

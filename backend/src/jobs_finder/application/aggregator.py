@@ -259,6 +259,7 @@ class SearchAllSourcesUseCase:
         priority_map: dict[str, int] = DEFAULT_PRIORITY_MAP,
         filter_infojobs_results: _FilterInfoJobsFn | None = None,
         keyword_score: _KeywordScoreFn | None = None,
+        enable_keyword_scoring: bool = False,
     ) -> None:
         self._sources: dict[str, _AggregatorSourcePort] = {
             "linkedin": linkedin_use_case,
@@ -282,6 +283,13 @@ class SearchAllSourcesUseCase:
         self._keyword_score: _KeywordScoreFn = (
             keyword_score if keyword_score is not None else _noop_keyword_score
         )
+        # T-008 (`backend-scraper-query-tuning`): the
+        # constructor `enable_keyword_scoring` is the
+        # opt-in toggle. Default `False` preserves the
+        # v1 `posted_at` sort behavior. The
+        # `app_factory` forwards the `Settings` value
+        # at composition-root time.
+        self._enable_keyword_scoring: bool = enable_keyword_scoring
 
     async def search(
         self,
@@ -292,7 +300,7 @@ class SearchAllSourcesUseCase:
         *,
         linkedin_geo_id: int | None = None,
         query_tokens: frozenset[str] = frozenset(),
-        enable_keyword_scoring: bool = False,
+        enable_keyword_scoring: bool | None = None,
     ) -> AggregatedResult:
         """Run the queried sources in parallel, dedupe, and return the aggregated result.
 
@@ -456,6 +464,16 @@ class SearchAllSourcesUseCase:
             ]
             deduped_list = other_jobs + kept_infojobs
 
+        # Resolve the `enable_keyword_scoring` kwarg: the
+        # caller's per-request value wins; otherwise fall
+        # back to the constructor value (the
+        # `app_factory`-supplied setting).
+        effective_enable_keyword_scoring = (
+            enable_keyword_scoring
+            if enable_keyword_scoring is not None
+            else self._enable_keyword_scoring
+        )
+
         # REQ-AR-002 / REQ-AR-003 + REQ-SCORE-001: post-cache
         # ranking step. The `rank_jobs` function is a pure
         # function on the deduped `list[AggregatedJob]`; it
@@ -466,7 +484,7 @@ class SearchAllSourcesUseCase:
         # `keyword_score desc, posted_at desc`. When
         # `False` (the default), the existing `rank_jobs`
         # path is used — the v1 contract is preserved.
-        if enable_keyword_scoring:
+        if effective_enable_keyword_scoring:
             tokens_set = set(query_tokens)
             ranked_jobs = sorted(
                 deduped_list,
