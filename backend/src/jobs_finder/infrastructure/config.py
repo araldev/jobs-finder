@@ -823,6 +823,36 @@ class Settings(BaseSettings):
         le=3,
     )
 
+    # ------------------------------------------------------------------
+    # Chat streaming — keepalive settings (REQ-SSE-002,
+    # `chat-streaming` change T-002)
+    #
+    # The 1 field below configures the SSE keepalive interval for
+    # the new `POST /jobs/chat/stream` endpoint. Each field declares
+    # its own `validation_alias` (same pattern as every other
+    # field group above). The model-level `env_prefix="LINKEDIN_"`
+    # does not apply to this field because it declares its own
+    # alias.
+    #
+    # - `sse_keepalive_seconds`: `float` (default 15.0, `ge=0.0`,
+    #   `le=60.0`) — the interval between `: keepalive\\n\\n`
+    #   comments during quiet periods (primarily the stage-2
+    #   aggregator scrape wait). The 60.0 upper bound matches
+    #   Chrome's idle timeout (a value above 60.0 risks the
+    #   browser closing the connection before the next event).
+    #   The 0.0 lower bound (NOT `gt=0.0`) is the design
+    #   decision flagged in the proposal: `SSE_KEEPALIVE_SECONDS=0`
+    #   is the documented kill switch per REQ-SSE-002 3rd
+    #   scenario (operators can disable keepalive entirely).
+    # ------------------------------------------------------------------
+
+    sse_keepalive_seconds: float = Field(
+        default=15.0,
+        validation_alias=AliasChoices("SSE_KEEPALIVE_SECONDS", "sse_keepalive_seconds"),
+        ge=0.0,
+        le=60.0,
+    )
+
 
 def load_settings() -> Settings:
     """Read env vars and return a fully-populated `Settings`.
