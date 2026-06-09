@@ -63,18 +63,18 @@ export function OnboardingOverlay(): React.ReactElement | null {
                   </DialogTitle>
                 </div>
                 <DialogDescription className="space-y-3 pt-2 text-sm leading-relaxed text-muted-foreground">
-                  <p>
+                  <span className="block">
                     Busca puestos en LinkedIn, Indeed e InfoJobs en un solo
                     lugar. Escribe palabras clave y una ubicación para
                     empezar.
-                  </p>
-                  <p>
+                  </span>
+                  <span className="block">
                     Cuando tengas resultados, abre el chat a la derecha para
                     refinarlos en lenguaje natural:{" "}
                     <em>&ldquo;busco junior en Madrid&rdquo;</em>,{" "}
                     <em>&ldquo;remoto y en español&rdquo;</em>, o{" "}
                     <em>&ldquo;menos de 30 días&rdquo;</em>.
-                  </p>
+                  </span>
                 </DialogDescription>
               </DialogHeader>
               <ul className="grid gap-2 text-sm">

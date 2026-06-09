@@ -122,7 +122,10 @@ export interface FetchJobsArgs {
 function buildJobsQuery(args: FetchJobsArgs): string {
   const params = new URLSearchParams();
   if (args.keywords !== undefined && args.keywords.length > 0) {
-    params.set("keywords", args.keywords);
+    // The FastAPI backend's /jobs route declares the param as `q` (not
+    // `keywords`); see AggregatedJobsQuery in
+    // backend/src/jobs_finder/presentation/schemas.py.
+    params.set("q", args.keywords);
   }
   if (args.location !== undefined && args.location.length > 0) {
     params.set("location", args.location);
@@ -131,10 +134,11 @@ function buildJobsQuery(args: FetchJobsArgs): string {
     params.set("limit", String(args.limit));
   }
   if (args.sources !== undefined && args.sources.length > 0) {
-    for (const source of args.sources) {
-      if (SOURCES.includes(source)) {
-        params.append("source", source);
-      }
+    // The backend takes a single comma-separated `sources` query param
+    // (e.g. `sources=linkedin,indeed`); an unknown token returns 422.
+    const valid = args.sources.filter((s) => SOURCES.includes(s));
+    if (valid.length > 0) {
+      params.set("sources", valid.join(","));
     }
   }
   const qs = params.toString();
