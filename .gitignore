@@ -46,6 +46,8 @@ dist/
 .pnp.*
 .yarn/
 .pnpm-store/
+.pnpm-workspace.yaml
+pnpm-lock.yaml
 bun.lockb
 package-lock.json.bak
 
