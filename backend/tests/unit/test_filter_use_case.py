@@ -1392,9 +1392,14 @@ async def test_stream_execute_text_chunks_in_feed_order() -> None:
     """Text chunks emitted in LLM's feed order."""
     jobs = [_make_job("a")]
     aggregator = FakeAggregator(jobs=jobs)
+    # The chunks are the verbatim LLM tokens; the parser
+    # concatenates them to form a valid JSON selection.
+    # The TEST asserts the chunks come out in the same
+    # order the LLM emitted them (NOT the final selection's
+    # matching_ids order).
     llm = FakeLLMClient(
         selection=LLMSelection(matching_ids=["a"], explanation="ok"),
-        stream_chunks=["first", "-", "second", "-", "third"],
+        stream_chunks=['{"matching_ids":["a"],', '"explanation":"', "ok", '"}'],
     )
     use_case = _build_stream_use_case(
         aggregator=aggregator,
@@ -1404,7 +1409,13 @@ async def test_stream_execute_text_chunks_in_feed_order() -> None:
 
     events = await _drain(use_case.stream_execute(message="python", q="", location="", limit=20))
     text_events = [e for e in events if isinstance(e, StreamEventText)]
-    assert [e.delta for e in text_events] == ["first", "-", "second", "-", "third"]
+    # Chunks come out in feed order.
+    assert [e.delta for e in text_events] == [
+        '{"matching_ids":["a"],',
+        '"explanation":"',
+        "ok",
+        '"}',
+    ]
 
 
 async def test_stream_execute_empty_aggregator_short_circuits_to_done() -> None:

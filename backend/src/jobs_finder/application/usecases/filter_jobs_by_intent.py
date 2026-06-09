@@ -575,24 +575,13 @@ class FilterJobsByIntentUseCase:
         # ids (defense in depth — the parser already logs a
         # WARNING per drop).
         valid_ids: set[str] = {j.id for j in flat_jobs}
-        try:
-            selection = parser.finalize(valid_ids)
-        except LLMResponseParseError:
-            # The stream completed but the buffer wasn't
-            # valid JSON. Yield a `done` with the
-            # aggregator's order + an empty list + a
-            # zero count + a Spanish error explanation.
-            # The route catches `LLMResponseParseError`
-            # raised HERE (from the `stream_execute`
-            # iterator) and maps to `llm_parse`.
-            yield StreamEventDone(
-                jobs=[],
-                explanation="LLM response could not be parsed.",
-                total_considered=len(flat_jobs),
-                total_matched=0,
-                used_fallback=used_fallback,
-            )
-            return
+        # Let `LLMResponseParseError` propagate from this
+        # generator. The route's producer wraps the
+        # `stream_execute` call in a `try / except
+        # BaseException` and maps the exception to the
+        # `event: error` SSE frame with the `llm_parse`
+        # machine code (REQ-ERROR-MAPPING-001).
+        selection = parser.finalize(valid_ids)
 
         # Build the filtered list in the AGGREGATOR's order.
         filtered = [j for j in flat_jobs if j.id in set(selection.matching_ids)]

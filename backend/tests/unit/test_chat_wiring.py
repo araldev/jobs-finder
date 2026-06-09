@@ -395,3 +395,63 @@ def test_app_factory_does_not_wire_location_resolver_when_chat_disabled() -> Non
     )
     use_case = app.state.filter_use_case
     assert use_case is None
+
+
+# ---------------------------------------------------------------------------
+# `build_chat_stream_router` registration (T-009 of `chat-streaming`)
+#
+# REQ-CORS-001 / REQ-SSE-001: the new `POST /jobs/chat/stream`
+# route is registered alongside `POST /jobs/chat` when the
+# chat feature is enabled. The test pins the new route's
+# presence on the app; v1 chat tests pin v1 chat (already
+# above).
+# ---------------------------------------------------------------------------
+
+
+def _chat_stream_path_registered(app: FastAPI) -> bool:
+    """`True` if `/jobs/chat/stream` is in the app's routes."""
+    return any(getattr(r, "path", None) == "/jobs/chat/stream" for r in app.routes)
+
+
+def test_app_factory_registers_chat_stream_route_when_chat_enabled() -> None:
+    """`Settings(llm_filter_enabled=True, llm_api_key=...)` → both v1 + stream routes.
+
+    The wiring test for the NEW stream endpoint: when
+    the chat feature is enabled, BOTH `/jobs/chat` (v1)
+    AND `/jobs/chat/stream` are registered. The new
+    route is mounted LAST in the routers section so
+    it does not shadow any per-source route.
+    """
+    settings = _settings_with_chat(enabled=True, api_key=SecretStr("test-key"))
+    app = build_app(
+        use_case=_build_fake_cached_use_case("linkedin"),
+        indeed_use_case=_build_fake_cached_use_case("indeed"),
+        infojobs_use_case=_build_fake_cached_use_case("infojobs"),
+        settings=settings,
+    )
+
+    # v1 chat route is registered (regression anchor).
+    assert _chat_path_registered(app)
+    # NEW stream route is also registered.
+    assert _chat_stream_path_registered(app), "stream route NOT registered when chat is enabled"
+
+
+def test_app_factory_does_not_register_chat_stream_route_when_chat_disabled() -> None:
+    """`Settings(llm_filter_enabled=False)` → no stream route.
+
+    When chat is disabled, NEITHER route is registered
+    (the v1 chat route + the new stream route are both
+    gated by the same `chat_use_case is not None` check).
+    """
+    settings = _settings_with_chat(enabled=False, api_key=SecretStr("test-key"))
+    app = build_app(
+        use_case=_build_fake_cached_use_case("linkedin"),
+        indeed_use_case=_build_fake_cached_use_case("indeed"),
+        infojobs_use_case=_build_fake_cached_use_case("infojobs"),
+        settings=settings,
+    )
+
+    assert not _chat_path_registered(app)
+    assert not _chat_stream_path_registered(app), (
+        "stream route registered when chat is disabled; default is OFF"
+    )

@@ -663,7 +663,14 @@ def build_app(  # noqa: PLR0915
     app.add_middleware(
         CORSMiddleware,
         allow_origins=effective_settings.cors_allow_origins,
-        allow_methods=["GET"],
+        # T-009 (chat-streaming) — REQ-CORS-001 widens
+        # `allow_methods` to include `POST` so a browser
+        # preflight for `POST /jobs/chat/stream` (and the
+        # future JSON POST endpoints) succeeds. The
+        # change is strictly additive; the v1 GET routes
+        # (`/jobs`, `/jobs/linkedin`, `/jobs/indeed`,
+        # `/jobs/infojobs`) are unchanged.
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
 
@@ -690,6 +697,22 @@ def build_app(  # noqa: PLR0915
             chat_routes.build_chat_router(
                 use_case=chat_use_case,
                 max_message_chars=effective_settings.llm_max_message_chars,
+            )
+        )
+        # T-009 (chat-streaming): the streaming sibling route
+        # is also registered ONLY when the chat feature is
+        # enabled (it shares the same use case as v1 chat).
+        # The route forwards `sse_keepalive_seconds` from
+        # `Settings` (default 15.0; `0` disables per
+        # REQ-SSE-002 3rd scenario). The chat_rate_limit
+        # middleware (mounted above) covers BOTH endpoints
+        # with the same per-user bucket (the key prefix
+        # is `chat:`).
+        app.include_router(
+            chat_routes.build_chat_stream_router(
+                use_case=chat_use_case,
+                max_message_chars=effective_settings.llm_max_message_chars,
+                sse_keepalive_seconds=effective_settings.sse_keepalive_seconds,
             )
         )
 
