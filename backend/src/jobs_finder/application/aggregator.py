@@ -52,6 +52,7 @@ production callers (`app_factory.build_app`) nor tests need
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol, cast
 
@@ -63,6 +64,51 @@ from jobs_finder.application.ranking import (
 from jobs_finder.application.usecases._cached_search import SearchResult
 from jobs_finder.domain.exceptions import JobSearchError
 from jobs_finder.domain.job import Job
+
+# Type aliases for the 2 injected pure-function helpers
+# (REQ-FILTER-001 + REQ-SCORE-001, T-004). The signatures
+# match `filter_infojobs_results` (in
+# `infrastructure.aggregator_filters`) and `keyword_score` (in
+# `infrastructure.keyword_score`). The aggregator does NOT
+# import the concrete modules — the dependency rule
+# `application → domain ← infrastructure` is preserved by
+# constructor injection (`app_factory` wires the real
+# functions at composition-root time). Tests can inject fakes
+# to assert the dispatch behavior.
+_FilterInfoJobsFn = Callable[[list[Job], set[str]], list[Job]]
+_KeywordScoreFn = Callable[[Job, set[str]], float]
+
+
+# Default no-op implementations for the 2 helpers — used when
+# the aggregator is constructed without the kwargs (e.g. in
+# the existing test suite that does not exercise the filter or
+# the scoring). The defaults preserve the v1 contract: a
+# default-constructed aggregator behaves EXACTLY like the
+# pre-T-004 one (no filter, `posted_at` sort, no opt-in score).
+# The "no filter" default is the identity function; the "no
+# score" default always returns 0.0 (the `posted_at` sort
+# step then uses `posted_at` as the primary key).
+def _noop_keyword_score(_job: Job, _query_tokens: set[str]) -> float:
+    """Default no-op scorer: always returns 0.0.
+
+    The aggregator's `posted_at` sort (the v1 default) does
+    not use the score; this default is the sentinel "no
+    score-based ranking is active" value.
+    """
+    return 0.0
+
+
+def _identity_filter(jobs: list[Job], _query_tokens: set[str]) -> list[Job]:
+    """Default no-op filter: returns a copy of the input list.
+
+    Preserves the v1 contract: when the aggregator is built
+    without an injected `filter_infojobs_results` callable,
+    no InfoJobs filter is applied. The function returns a new
+    `list[Job]` (not the input reference) so downstream code
+    that mutates the filtered list does not corrupt the input.
+    """
+    return list(jobs)
+
 
 # Source priority order: LinkedIn first, Indeed second, InfoJobs third.
 # When deduplicating, the first occurrence in this order wins; the
@@ -202,6 +248,8 @@ class SearchAllSourcesUseCase:
         *,
         ranking_strategy: RankingStrategy = "posted_at",
         priority_map: dict[str, int] = DEFAULT_PRIORITY_MAP,
+        filter_infojobs_results: _FilterInfoJobsFn | None = None,
+        keyword_score: _KeywordScoreFn | None = None,
     ) -> None:
         self._sources: dict[str, _AggregatorSourcePort] = {
             "linkedin": linkedin_use_case,
@@ -210,6 +258,21 @@ class SearchAllSourcesUseCase:
         }
         self._ranking_strategy = ranking_strategy
         self._priority_map = priority_map
+        # The 2 pure-function helpers are constructor-injected
+        # (REQ-FILTER-001 + REQ-SCORE-001, T-004). The
+        # dependency rule
+        # `application → domain ← infrastructure` is preserved
+        # by NOT importing the concrete modules from
+        # `infrastructure/`. The defaults are no-op fallbacks
+        # that preserve the v1 contract (no filter, no opt-in
+        # score). The `app_factory` wires the real functions
+        # at composition-root time.
+        self._filter_infojobs_results: _FilterInfoJobsFn = (
+            filter_infojobs_results if filter_infojobs_results is not None else _identity_filter
+        )
+        self._keyword_score: _KeywordScoreFn = (
+            keyword_score if keyword_score is not None else _noop_keyword_score
+        )
 
     async def search(
         self,
@@ -219,6 +282,8 @@ class SearchAllSourcesUseCase:
         sources: list[str],
         *,
         linkedin_geo_id: int | None = None,
+        query_tokens: frozenset[str] = frozenset(),
+        enable_keyword_scoring: bool = False,
     ) -> AggregatedResult:
         """Run the queried sources in parallel, dedupe, and return the aggregated result.
 
@@ -331,22 +396,55 @@ class SearchAllSourcesUseCase:
                 else:
                     dedup_map[key] = AggregatedJob(job=job, sources=[result.source])
 
-        # REQ-AR-002 / REQ-AR-003: post-cache ranking step. The
-        # `rank_jobs` function is a pure function on the deduped
-        # `list[AggregatedJob]`; it returns a new list, leaving
-        # the dedup map (and the per-source + cache_statuses
-        # structures) untouched. Ranking is post-cache: the cache
-        # key `(source, keywords, location, limit)` is unchanged,
-        # so flipping `AGGREGATOR_RANKING_STRATEGY` does not
-        # invalidate the cache. The `sources` lists on each
-        # `AggregatedJob` are preserved through the ranking
-        # (REQ-AR-006 — pinned by
-        # `test_preserves_aggregated_job_sources_list_through_ranking`).
-        ranked_jobs = rank_jobs(
-            jobs=list(dedup_map.values()),
-            strategy=self._ranking_strategy,
-            priority_map=self._priority_map,
-        )
+        # REQ-FILTER-001: client-side filter for the InfoJobs
+        # slice (post-cache, post-dedup, post-scrape). The
+        # filter is a pure function over the InfoJobs slice; a
+        # job is kept iff `len(tokenize(job.title) & query_tokens) > 0`.
+        # LinkedIn + Indeed slices are NOT filtered. When
+        # `query_tokens` is empty (the v1 default), the filter
+        # is a no-op (the injected function short-circuits on
+        # empty `query_tokens`).
+        deduped_list = list(dedup_map.values())
+        if query_tokens:
+            infojobs_jobs = [j for j in deduped_list if "infojobs" in j.sources]
+            other_jobs = [j for j in deduped_list if "infojobs" not in j.sources]
+            filtered_infojobs = self._filter_infojobs_results(
+                [j.job for j in infojobs_jobs], set(query_tokens)
+            )
+            filtered_infojobs_ids = {id(j) for j in filtered_infojobs}
+            kept_infojobs = [
+                j
+                for j in infojobs_jobs
+                if j.job in filtered_infojobs or id(j.job) in filtered_infojobs_ids
+            ]
+            deduped_list = other_jobs + kept_infojobs
+
+        # REQ-AR-002 / REQ-AR-003 + REQ-SCORE-001: post-cache
+        # ranking step. The `rank_jobs` function is a pure
+        # function on the deduped `list[AggregatedJob]`; it
+        # returns a new list, leaving the dedup map (and the
+        # per-source + cache_statuses structures) untouched.
+        # When `enable_keyword_scoring=True`, the opt-in
+        # `keyword_score` sort is used: jobs are sorted by
+        # `keyword_score desc, posted_at desc`. When
+        # `False` (the default), the existing `rank_jobs`
+        # path is used — the v1 contract is preserved.
+        if enable_keyword_scoring:
+            tokens_set = set(query_tokens)
+            ranked_jobs = sorted(
+                deduped_list,
+                key=lambda j: (
+                    self._keyword_score(j.job, tokens_set),
+                    j.job.posted_at,
+                ),
+                reverse=True,
+            )
+        else:
+            ranked_jobs = rank_jobs(
+                jobs=deduped_list,
+                strategy=self._ranking_strategy,
+                priority_map=self._priority_map,
+            )
 
         return AggregatedResult(
             jobs=ranked_jobs,
