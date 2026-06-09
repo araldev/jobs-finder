@@ -220,17 +220,36 @@ def build_app(  # noqa: PLR0915
         llm_http_client = httpx.AsyncClient(timeout=effective_settings.llm_request_timeout_seconds)
 
     if use_case is None:
+        # T-007 (`backend-scraper-query-tuning`): construct
+        # the `HardcodedLocationResolver` ALWAYS (NOT gated by
+        # `chat_enabled`). The resolver is a read-only in-process
+        # dict lookup; the cost is one import + one dict
+        # construction per app build. The scraper reads
+        # `_settings.location_resolver` in its `search()` method
+        # (REQ-LOC-001) — without this injection, the scraper
+        # falls back to the broken `?location=<str>` URL formula
+        # (the pre-`fix-linkedin-geoid` path). The resolver
+        # is also reused by the chat filter (`location_resolver`
+        # arg of `FilterJobsByIntentUseCase`) below.
+        location_resolver = HardcodedLocationResolver()
         scraper = LinkedInPlaywrightScraper(
             throttle=AsyncThrottle(min_interval_seconds=effective_settings.throttle_seconds),
             # REQ-L-008: `LinkedInScraperSettings` was renamed from the
             # in-module `ScraperSettings`; the two new env-driven
             # fields (`linkedin_max_pages`, `linkedin_inter_page_delay_seconds`)
             # are the pagination knobs (REQ-L-007, REQ-L-009).
+            # T-007: the `location_resolver` kwarg wires the
+            # resolver into the settings so the scraper's
+            # `search()` can call `resolve(location)` once per
+            # call (the pre-`backend-scraper-query-tuning`
+            # build had no resolver; the URL builder always
+            # fell back to `?location=<str>`).
             settings=LinkedInScraperSettings(
                 user_agent=effective_settings.user_agent,
                 timeout_ms=effective_settings.request_timeout_ms,
                 max_pages=effective_settings.linkedin_max_pages,
                 inter_page_delay_seconds=effective_settings.linkedin_inter_page_delay_seconds,
+                location_resolver=location_resolver,
             ),
         )
         raw_use_case = RawLinkedInJobsUseCase(port=scraper)
