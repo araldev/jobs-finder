@@ -300,7 +300,7 @@ class _FakeLocationResolver:
         return None
 
 
-async def test_search_uses_geoId_when_resolver_returns_int() -> None:
+async def test_search_uses_geo_id_when_resolver_returns_int() -> None:
     """`HardcodedLocationResolver().resolve("malaga") == 104401670` → URL has `geoId=`.
 
     The pre-existing bug: `_make_fetch_one_page(keywords, location)`
@@ -341,9 +341,7 @@ async def test_search_uses_geoId_when_resolver_returns_int() -> None:
             # without raising and the card-select returns [].
             return "<html><body></body></html>"
 
-        async def wait_for_selector(
-            self, selector: str, timeout: int = 0
-        ) -> None:
+        async def wait_for_selector(self, selector: str, timeout: int = 0) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -359,7 +357,7 @@ async def test_search_uses_geoId_when_resolver_returns_int() -> None:
         timeout_ms=10_000,
         max_pages=1,
         inter_page_delay_seconds=0.0,
-        location_resolver=resolver,  # type: ignore[arg-type]
+        location_resolver=resolver,
     )
     scraper = LinkedInPlaywrightScraper(
         throttle=AsyncThrottle(min_interval_seconds=0.0),
@@ -387,7 +385,7 @@ async def test_search_uses_geoId_when_resolver_returns_int() -> None:
     assert jobs == []
 
 
-async def test_search_uses_location_when_resolver_returns_None() -> None:
+async def test_search_uses_location_when_resolver_returns_none() -> None:
     """Resolver returns `None` (unknown location) → URL falls back to `location=`.
 
     The fallback path is the legacy v1 behavior: when the
@@ -408,9 +406,7 @@ async def test_search_uses_location_when_resolver_returns_None() -> None:
         async def content(self) -> str:
             return "<html><body></body></html>"
 
-        async def wait_for_selector(
-            self, selector: str, timeout: int = 0
-        ) -> None:
+        async def wait_for_selector(self, selector: str, timeout: int = 0) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -426,7 +422,7 @@ async def test_search_uses_location_when_resolver_returns_None() -> None:
         timeout_ms=10_000,
         max_pages=1,
         inter_page_delay_seconds=0.0,
-        location_resolver=resolver,  # type: ignore[arg-type]
+        location_resolver=resolver,
     )
     scraper = LinkedInPlaywrightScraper(
         throttle=AsyncThrottle(min_interval_seconds=0.0),
@@ -443,7 +439,7 @@ async def test_search_uses_location_when_resolver_returns_None() -> None:
     assert "geoId=" not in page.url
 
 
-async def test_search_uses_location_when_resolver_is_None() -> None:
+async def test_search_uses_location_when_resolver_is_none() -> None:
     """Scraper built WITHOUT a resolver (legacy wiring) → URL uses `location=`.
 
     Backward compat: a `LinkedInScraperSettings(...)` constructed
@@ -465,9 +461,7 @@ async def test_search_uses_location_when_resolver_is_None() -> None:
         async def content(self) -> str:
             return "<html><body></body></html>"
 
-        async def wait_for_selector(
-            self, selector: str, timeout: int = 0
-        ) -> None:
+        async def wait_for_selector(self, selector: str, timeout: int = 0) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -521,9 +515,7 @@ async def test_resolver_called_once_per_search_not_per_page() -> None:
         async def content(self) -> str:
             return self._html
 
-        async def wait_for_selector(
-            self, selector: str, timeout: int = 0
-        ) -> None:
+        async def wait_for_selector(self, selector: str, timeout: int = 0) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -546,7 +538,7 @@ async def test_resolver_called_once_per_search_not_per_page() -> None:
         timeout_ms=10_000,
         max_pages=3,
         inter_page_delay_seconds=0.0,
-        location_resolver=resolver,  # type: ignore[arg-type]
+        location_resolver=resolver,
     )
     scraper = LinkedInPlaywrightScraper(
         throttle=AsyncThrottle(min_interval_seconds=0.0),

@@ -193,7 +193,7 @@ def test_linkedin_env_vars_dont_cross_bleed_with_indeed_or_infojobs(
 # ---------------------------------------------------------------------------
 
 
-def test_settings_optional_resolver_defaults_to_None() -> None:
+def test_settings_optional_resolver_defaults_to_none() -> None:
     """`LinkedInScraperSettings(user_agent, timeout_ms)` → `location_resolver is None`.
 
     The new `location_resolver` field defaults to `None` so a
@@ -226,7 +226,7 @@ def test_settings_equality_includes_resolver() -> None:
     b = LinkedInScraperSettings(
         user_agent="ua",
         timeout_ms=10_000,
-        location_resolver=_StubResolver(),  # type: ignore[arg-type]
+        location_resolver=_StubResolver(),
     )
     assert a != b
     # `__hash__` is also updated: the two settings have
