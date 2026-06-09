@@ -46,42 +46,23 @@ case-insensitive matching and preserves accents (no
 tokenization; the scorer is agnostic to the raw query
 string.
 
-`tokenize` is inlined here (a copy of the canonical
-implementation in `infrastructure.aggregator_filters`) so
-T-002 can land independently. T-003's REFACTOR step will
-unify the two implementations (the function is a private
-helper of this module, NOT a public export).
+The `tokenize` helper lives in `aggregator_filters.py` (the
+single canonical implementation). This module re-exports it
+as `_tokenize` for backward compat with the v1 inline
+implementation (T-002 landed the inline copy; T-003's
+REFACTOR step unifies the two implementations).
 """
 
 from __future__ import annotations
 
-import re
-
 from jobs_finder.domain.job import Job
+from jobs_finder.infrastructure.aggregator_filters import tokenize as _tokenize
 
 # The description weight cap (0.3) is intentionally below the
 # title's contribution (1.0) so a description-only match can
 # never reach a full title match's score. The constant is
 # hoisted to module scope so the formula is self-documenting.
 _DESC_WEIGHT_CAP: float = 0.3
-
-# Tokenization regex: split on whitespace + non-word + underscore.
-# Matches the algorithm in `infrastructure.aggregator_filters.py`
-# (T-003 will deduplicate the two implementations; the inlined
-# version is intentional for T-002 to keep the tasks independent).
-_TOKENIZE_SPLIT_RE = re.compile(r"[\s\W_]+")
-
-
-def _tokenize(text: str) -> set[str]:
-    """Lowercase + split on whitespace + punctuation + dedupe.
-
-    Mirrors `infrastructure.aggregator_filters.tokenize` —
-    duplicated here so T-002 lands independently of T-003.
-    T-003's REFACTOR will unify the two implementations.
-    """
-    if not text:
-        return set()
-    return {tok for tok in _TOKENIZE_SPLIT_RE.split(text.casefold()) if tok}
 
 
 def keyword_score(job: Job, query_tokens: set[str]) -> float:
