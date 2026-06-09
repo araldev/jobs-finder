@@ -12,9 +12,11 @@ import "server-only";
 /** The URL of the FastAPI backend. Configurable per environment. */
 export const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8000";
 
-/** Per-request timeout for backend calls. 30s is the upper bound the
- *  chat stream is allowed to take end-to-end (LLM + scrape + parse). */
-const DEFAULT_TIMEOUT_MS = 30_000;
+/** Per-request timeout for backend calls. 60s is the upper bound for the
+ *  search endpoint (3 sources scraping in parallel, cold cache can take
+ *  20-30s on slow networks). The chat stream is allowed up to 120s
+ *  end-to-end (LLM + scrape + parse) — see app/api/chat/stream/route.ts. */
+const DEFAULT_TIMEOUT_MS = 60_000;
 
 export interface BackendFetchInit {
   readonly method?: string;

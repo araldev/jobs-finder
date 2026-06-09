@@ -81,6 +81,15 @@ export function mapBackendError(
       retryAfter: seconds,
     });
   }
+  if (status === 504) {
+    return new ApiError({
+      status,
+      code: "upstream_timeout",
+      message:
+        "La búsqueda está tardando más de lo esperado. El backend está scrapeando en vivo — probá con otra query o reintentá en unos segundos.",
+      requestId,
+    });
+  }
   if (status >= 500) {
     return new ApiError({
       status,
