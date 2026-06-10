@@ -1457,6 +1457,63 @@ empty string) return `None` and the scraper falls back to
 `?location=<str>` — a strict improvement over the v0
 100%-broken behavior (no regression for unknown locations).
 
+#### LinkedIn structured location fallback (REQ-STR-LOC-001)
+
+For cities NOT in the 34-entry `_CANONICAL_MAPPING` (no captured
+`geoId`), the v0 path falls back to `?location=<raw_string>` —
+which LinkedIn silently ignores, returning globally-distributed
+results. The user captured a real LinkedIn URL showing a third
+supported format: `?location=<city>,<province>,<country>`. The
+scraper consults a second method on the resolver
+(`resolve_structured()`) and uses the structured triplet when
+the city has a mapping. **The HTTP contract is unchanged**: the
+frontend sigue enviando `location=<raw>`; el resolver convierte
+internamente.
+
+##### Priority order
+
+```
+1. geo_id is not None    → ?keywords=...&geoId=<n>&start=...    (LinkedIn-preferred)
+2. structured is not None → ?keywords=...&location=quote(city,province,country)&start=...  (NEW)
+3. both None             → ?keywords=...&location=<raw>&start=...  (legacy fallback)
+```
+
+##### The 10-city `_STRUCTURED_MAPPING` (v1)
+
+| City | Province | Country | Status |
+|------|----------|---------|--------|
+| `antequera` | Andalucía | Spain | **VERIFIED** (LIVE test gated `LLM_LIVE_TESTS=1`) |
+| `fuengirola` | Málaga | Spain | SPECULATIVE (pending LIVE test) |
+| `marbella` | Málaga | Spain | SPECULATIVE |
+| `toledo` | Castilla-La Mancha | Spain | SPECULATIVE |
+| `salamanca` | Castilla y León | Spain | SPECULATIVE |
+| `cadiz` | Cádiz / Andalucía | Spain | SPECULATIVE |
+| `granada` | Andalucía | Spain | SPECULATIVE |
+| `gijon` | Asturias | Spain | SPECULATIVE |
+| `leon` | Castilla y León | Spain | SPECULATIVE |
+| `vigo` | Galicia | Spain | SPECULATIVE |
+
+**Important**: `Madrid` is in `_CANONICAL_MAPPING` (geoId) and
+is intentionally EXCLUDED from `_STRUCTURED_MAPPING` — the
+geoId is LinkedIn's preferred form and always wins
+(`geoId > structured > raw`).
+
+##### Live test gate
+
+The structured format is validated by a gated LIVE test in
+`tests/integration/test_linkedin_live.py`. The test is SKIPPED
+in CI per AGENTS.md rule #1 ("no live scraping in tests").
+To run the LIVE probe manually:
+
+```bash
+LLM_LIVE_TESTS=1 uv run pytest tests/integration/test_linkedin_live.py -v
+```
+
+If a SPECULATIVE city fails the LIVE test, remove it from
+`_STRUCTURED_MAPPING` (1-line change, 0 LOC). The scraper
+falls back to the legacy `?location=<raw>` path — no code
+changes required.
+
 #### Curl smoke test
 
 After `uv run uvicorn jobs_finder.main:app --port 8000` is running,
