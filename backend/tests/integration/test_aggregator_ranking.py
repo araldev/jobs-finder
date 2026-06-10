@@ -118,6 +118,8 @@ def _build_app_with_strategy(
     indeed_port: FakeJobSearchPort,
     infojobs_port: FakeJobSearchPort,
     ranking_strategy: str,
+    *,
+    enable_keyword_scoring: bool = False,
 ) -> FastAPI:
     """Build a `FastAPI` with a custom `ranking_strategy` on the aggregator.
 
@@ -126,6 +128,20 @@ def _build_app_with_strategy(
     `ranking_strategy` (the default `priority_map` is used). This
     bypasses `app_factory.build_app`'s default aggregator branch
     so the test can pin a specific strategy.
+
+    The `enable_keyword_scoring` kwarg forces the ctor field to the
+    requested value. Tests that pin a `ranking_strategy` (this one
+    covers `none`, `priority`, and the env-var override) MUST pass
+    `enable_keyword_scoring=False` because the route reads the flag
+    from `app.state.settings` (NOT from the aggregator's ctor field).
+    With `ENABLE_KEYWORD_SCORING=true` in the operator's `.env`, the
+    route's per-request kwarg overrides the ctor's `False` default
+    and the `keyword_score` sort wins over the requested `ranking_
+    strategy`. The bug is pre-existing (T-004 of `backend-scraper-
+    query-tuning` shipped `enable_keyword_scoring` as a per-request
+    toggle, not a per-aggregator one) and is tracked as a follow-up
+    — see the regression test `test_keyword_scoring_overrides_
+    strategy_when_both_enabled`.
     """
     linkedin_use_case = _build_cached_linkedin_use_case(port=linkedin_port)
     indeed_use_case = _build_cached_indeed_use_case(port=indeed_port)
@@ -135,6 +151,7 @@ def _build_app_with_strategy(
         indeed_use_case=indeed_use_case,
         infojobs_use_case=infojobs_use_case,
         ranking_strategy=ranking_strategy,  # type: ignore[arg-type]
+        enable_keyword_scoring=enable_keyword_scoring,
     )
     return build_app(
         use_case=linkedin_use_case,
@@ -142,6 +159,20 @@ def _build_app_with_strategy(
         infojobs_use_case=infojobs_use_case,
         aggregator_use_case=aggregator_use_case,
     )
+
+
+def _force_keyword_scoring_off(app: FastAPI) -> None:
+    """Disable the route's `enable_keyword_scoring` toggle for the current test.
+
+    The route reads the flag from `app.state.settings.enable_keyword_
+    scoring` per-request (T-004 contract). When the operator's `.env`
+    has `ENABLE_KEYWORD_SCORING=true`, the toggle is globally ON and
+    the `keyword_score` sort wins over the aggregator's `ranking_
+    strategy`. Tests that pin a `ranking_strategy` need the toggle
+    OFF so the strategy sort is the only signal. This helper patches
+    the settings object on the app's state in place.
+    """
+    app.state.settings.enable_keyword_scoring = False
 
 
 # ---------------------------------------------------------------------------
@@ -162,10 +193,17 @@ async def test_default_strategy_orders_jobs_by_posted_at_desc(
     InfoJobs-May-2, Indeed-May-1, InfoJobs-May-1]. LinkedIn is
     empty (no jobs in the conftest fixture).
 
+    The query is `?q=title` (a token that overlaps BOTH the
+    Indeed sample titles AND the InfoJobs sample titles) so the
+    `filter_infojobs_results` defense-in-depth filter (wired at
+    the composition root since `backend-scraper-query-tuning`
+    T-004) keeps both sources' results. Pre-fix the filter was
+    a noop; the test was written for that era.
+
     REQ-AR-002: default ranking is `posted_at` DESC.
     """
     response = await client.get(
-        "/jobs?q=python&location=madrid&limit=20&sources=linkedin,indeed,infojobs"
+        "/jobs?q=title&location=madrid&limit=20&sources=linkedin,indeed,infojobs"
     )
 
     assert response.status_code == 200
@@ -201,11 +239,12 @@ async def test_strategy_none_returns_jobs_in_existing_order(
     """
     linkedin_port = FakeJobSearchPort()
     app = _build_app_with_strategy(linkedin_port, fake_indeed_port, fake_infojobs_port, "none")
+    _force_keyword_scoring_off(app)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         response = await ac.get(
-            "/jobs?q=python&location=madrid&limit=20&sources=linkedin,indeed,infojobs"
+            "/jobs?q=title&location=madrid&limit=20&sources=linkedin,indeed,infojobs"
         )
 
     assert response.status_code == 200
@@ -235,11 +274,12 @@ async def test_strategy_priority_orders_by_source_priority(
     """
     linkedin_port = FakeJobSearchPort()
     app = _build_app_with_strategy(linkedin_port, fake_indeed_port, fake_infojobs_port, "priority")
+    _force_keyword_scoring_off(app)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         response = await ac.get(
-            "/jobs?q=python&location=madrid&limit=20&sources=linkedin,indeed,infojobs"
+            "/jobs?q=title&location=madrid&limit=20&sources=linkedin,indeed,infojobs"
         )
 
     assert response.status_code == 200
@@ -283,14 +323,15 @@ async def test_env_var_override_changes_ranking(
         indeed_use_case=_build_cached_indeed_use_case(port=indeed_port),
         infojobs_use_case=_build_cached_infojobs_use_case(port=infojobs_port),
     )
+    _force_keyword_scoring_off(app)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         first = await ac.get(
-            "/jobs?q=python&location=madrid&limit=20&sources=linkedin,indeed,infojobs"
+            "/jobs?q=title&location=madrid&limit=20&sources=linkedin,indeed,infojobs"
         )
         second = await ac.get(
-            "/jobs?q=python&location=madrid&limit=20&sources=linkedin,indeed,infojobs"
+            "/jobs?q=title&location=madrid&limit=20&sources=linkedin,indeed,infojobs"
         )
 
     assert first.status_code == 200
@@ -356,7 +397,7 @@ async def test_limit_cap_preserves_three_times_limit() -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         response = await ac.get(
-            "/jobs?q=python&location=madrid&limit=2&sources=linkedin,indeed,infojobs"
+            "/jobs?q=title&location=madrid&limit=2&sources=linkedin,indeed,infojobs"
         )
 
     assert response.status_code == 200
@@ -376,6 +417,70 @@ async def test_limit_cap_preserves_three_times_limit() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 6. KNOWN ISSUE: `enable_keyword_scoring=True` overrides the aggregator's
+# `ranking_strategy` setting (pre-existing bug surfaced by the T-005 wiring
+# fix of `backend-scraper-query-tuning`).
+# ---------------------------------------------------------------------------
+
+
+async def test_keyword_scoring_overrides_strategy_when_both_enabled(
+    client: httpx.AsyncClient,
+) -> None:
+    """`enable_keyword_scoring=True` (default per `ENABLE_KEYWORD_SCORING=true`)
+
+    forces the `keyword_score desc, posted_at desc` sort regardless of
+    the aggregator's `ranking_strategy` setting (`posted_at` is the
+    default per `AGGREGATOR_RANKING_STRATEGY=posted_at`).
+
+    **The bug**: the route reads the `enable_keyword_scoring` flag from
+    `app.state.settings` (per-request), and the use case's
+    `effective_enable_keyword_scoring` kwarg wins over the ctor's
+    `_enable_keyword_scoring` field. The ctor is configured with
+    `ranking_strategy=posted_at` but the route passes
+    `enable_keyword_scoring=True` (per the env var), and the
+    `if effective_enable_keyword_scoring:` branch in
+    `aggregator.py:487` IGNORES the strategy.
+
+    **The fix** (tracked as a follow-up): make
+    `enable_keyword_scoring` a per-aggregator ctor field (not a
+    per-request kwarg) so the strategy sort and the keyword sort
+    can be composed, OR change the operator contract so the two
+    are mutually exclusive (a single env var `RANKING_MODE=score|
+    strategy`).
+
+    This test pins the CURRENT bug so a future regression
+    (the bug being silently re-introduced or fixed by accident) is
+    caught. The assertion below documents the current behavior —
+    flip the expected value when the bug is fixed.
+    """
+    response = await client.get(
+        "/jobs?q=title&location=madrid&limit=20&sources=linkedin,indeed,infojobs"
+    )
+    assert response.status_code == 200
+    body = response.json()
+    sources_order = [job["sources"] for job in body["jobs"]]
+    # Expected bug behavior: the `keyword_score` sort orders by score
+    # desc then posted_at desc, which interleaves Indeed + InfoJobs
+    # by date (not the `posted_at`-only group-by-source that the
+    # strategy would produce). The pattern is alternating
+    # [Indeed, InfoJobs, Indeed, InfoJobs, ...] because all 6 sample
+    # jobs share the same `keyword_score` (they all match `title`)
+    # and the secondary `posted_at desc` orders by date.
+    assert sources_order == [
+        ["indeed"],
+        ["infojobs"],
+        ["indeed"],
+        ["infojobs"],
+        ["indeed"],
+        ["infojobs"],
+    ], (
+        "BUG: enable_keyword_scoring is overriding ranking_strategy. "
+        "When the bug is fixed (strategy wins over keyword_scoring), "
+        "the expected order becomes [Indeed*3, InfoJobs*3]."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -386,7 +491,17 @@ def _custom_job(
     posted_at: datetime,
     source: str,
 ) -> Job:
-    """Build a `Job` with a custom id and `posted_at` for limit-cap tests."""
+    """Build a `Job` with a custom id and `posted_at` for limit-cap tests.
+
+    The title embeds the source name (e.g. `"infojobs title j1"`) AND
+    the keyword `"title"` so the `filter_infojobs_results` defense-
+    in-depth filter (now wired at the composition root since
+    `backend-scraper-query-tuning` T-004) keeps the InfoJobs results
+    for the test queries (`?q=title&...`). Without the `title` token
+    in the title, the test would silently fail when the filter is wired
+    (the v1 `noop` filter let the InfoJobs results through regardless;
+    the v2 real filter requires the title to overlap the query tokens).
+    """
     return Job(
         id=job_id,
         title=f"{source} title {job_id}",

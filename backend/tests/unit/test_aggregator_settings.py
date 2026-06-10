@@ -178,7 +178,13 @@ def test_keyword_scoring_disabled_by_default(
     to the `SearchAllSourcesUseCase` constructor.
     """
     monkeypatch.delenv("ENABLE_KEYWORD_SCORING", raising=False)
-    settings = Settings()
+    # The operator's `.env` may set `ENABLE_KEYWORD_SCORING=true`
+    # locally (T-004 of `backend-scraper-query-tuning` shipped
+    # the env var as opt-in). The test must verify the CODE
+    # default, not the env default — pass `_env_file=None` to
+    # force pydantic-settings to ignore the local `.env` for
+    # this assertion.
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
     assert settings.enable_keyword_scoring is False
 
 
