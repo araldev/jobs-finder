@@ -663,3 +663,39 @@ class LinkedInAuthCookiePort(Protocol):
     """
 
     def cookie(self) -> SecretStr | None: ...
+
+
+class LinkedInAuthCookiesPort(Protocol):
+    """Returns the operator's N LinkedIn cookies (masked), or `None`.
+
+    Spec: REQ-LST-COOKIE-001 (Protocol shape). The single sync
+    method `cookies()` returns a `list[tuple[str, SecretStr]]` of
+    `(cookie_name, masked_value)` pairs in the canonical
+    LinkedIn-session order (`li_at → JSESSIONID → bcookie → li_gc`),
+    or `None` when ALL cookies are unset (REQ-LST-COOKIE-002 — the
+    soft-mode sentinel; preserves v1 zero-config boot). The
+    Protocol is intentionally minimal: no set/refresh/clear, no
+    async — the values are loaded from `Settings` at process
+    start and never mutate.
+
+    Plural successor to the v1 singular `LinkedInAuthCookiePort`
+    (kept for backward compat; the v1 adapter is byte-identical and
+    the 35 v1 tests still construct it directly). The v1 adapter
+    satisfies the singular Protocol but NOT this plural Protocol
+    (it has `cookie()`, not `cookies()`); the production wire in
+    `app_factory.build_app()` now uses the plural
+    `MultiEnvLinkedInAuthCookiesAdapter` (4 fields) and the v1
+    `auth_cookie=None` slot is preserved explicitly so the v1
+    integration tests stay green.
+
+    Mirrors the v1 `LinkedInAuthCookiePort` precedent: a sync,
+    single-method, structural Protocol with no
+    `@runtime_checkable`. The application layer declares the
+    contract; the infrastructure layer
+    (`MultiEnvLinkedInAuthCookiesAdapter`) and the test layer
+    (`FakeLinkedInAuthCookiesPort`) both satisfy it
+    structurally so the scraper can be unit-tested with no
+    `Settings` ctor and no env-var mutation.
+    """
+
+    def cookies(self) -> list[tuple[str, SecretStr]] | None: ...

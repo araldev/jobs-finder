@@ -141,3 +141,40 @@ class TestOperatorDocs:
         assert readme.exists()
         text = readme.read_text(encoding="utf-8")
         assert "### LinkedIn auth cookie (optional)" in text
+
+
+# ---------------------------------------------------------------------------
+# T-001 of `backend-linkedin-stealth` — 3 backward-compat scenarios.
+#
+# The v1 `EnvLinkedInAuthCookieAdapter` (single cookie) is KEPT
+# byte-identical alongside the new `MultiEnvLinkedInAuthCookiesAdapter`
+# (4 cookies). The v1 adapter satisfies the v1 `LinkedInAuthCookiePort`
+# (singular) Protocol but NOT the new `LinkedInAuthCookiesPort` (plural)
+# Protocol — the 2 Protocols are intentionally distinct (one returns
+# 1 cookie, the other returns N). The 35 v1 tests that construct
+# `EnvLinkedInAuthCookieAdapter` directly stay green.
+# ---------------------------------------------------------------------------
+
+
+class TestV1SingleCookieAdapterBackwardCompat:
+    """REQ-LST-COOKIE-001 (backward compat) — the v1
+    `EnvLinkedInAuthCookieAdapter(SecretStr | None)` ctor still
+    works; the v1 class is byte-identical to the v1 cycle.
+    """
+
+    def test_v1_adapter_ctor_accepts_secretstr(self) -> None:
+        """The v1 ctor accepts a `SecretStr` value (the v1 contract)."""
+        adapter = EnvLinkedInAuthCookieAdapter(SecretStr("AQEAAAAQEAAA"))
+        cookie = adapter.cookie()
+        assert cookie is not None
+        assert cookie.get_secret_value() == "AQEAAAAQEAAA"
+
+    def test_v1_adapter_ctor_accepts_none(self) -> None:
+        """The v1 ctor accepts `None` (the v1 zero-config boot path)."""
+        adapter = EnvLinkedInAuthCookieAdapter(None)
+        assert adapter.cookie() is None
+
+    def test_v1_adapter_ctor_normalizes_empty_secretstr(self) -> None:
+        """The v1 ctor normalizes empty `SecretStr` to `None` (v1 defense-in-depth)."""
+        adapter = EnvLinkedInAuthCookieAdapter(SecretStr(""))
+        assert adapter.cookie() is None
