@@ -100,7 +100,7 @@ from jobs_finder.infrastructure.infojobs.scraper import (
 from jobs_finder.infrastructure.infojobs.throttle import InfoJobsAsyncThrottle
 from jobs_finder.infrastructure.keyword_score import keyword_score
 from jobs_finder.infrastructure.linkedin.auth_cookie import (
-    EnvLinkedInAuthCookieAdapter,
+    MultiEnvLinkedInAuthCookiesAdapter,
 )
 from jobs_finder.infrastructure.linkedin.scraper import (
     LinkedInPlaywrightScraper,
@@ -247,30 +247,58 @@ def build_app(  # noqa: PLR0915
         # per-source request timeout).
         llm_http_client = httpx.AsyncClient(timeout=effective_settings.llm_request_timeout_seconds)
 
-    # T-005 of `backend-linkedin-auth` — REQ-LA-SCR-003 startup
-    # WARNING. Emitted ONCE per `build_app()` call (process
-    # start) when the operator has not configured
-    # `LINKEDIN_LI_AT`. The WARNING runs OUTSIDE the
-    # `if use_case is None:` block so it fires even when a
-    # test injects a use case (the integration test asserts
-    # the warning contract end-to-end). The adapter
-    # construction (REQ-LA-SCR-001) stays inside the
-    # `if use_case is None:` block because it only matters
-    # when we're actually building the scraper.
-    if effective_settings.linkedin_li_at is None:
+    # T-005 of `backend-linkedin-stealth` — REQ-LST-COOKIE-001 + REQ-LST-SCR-001
+    # startup WARNING. Emitted ONCE per `build_app()` call (process
+    # start) when the operator has not configured ANY of the 4
+    # `LINKEDIN_*` cookies (`li_at` + `JSESSIONID` + `bcookie` +
+    # `li_gc`). The WARNING runs OUTSIDE the `if use_case is None:`
+    # block so it fires even when a test injects a use case (the
+    # integration test asserts the warning contract end-to-end).
+    # The adapter construction stays inside the `if use_case is
+    # None:` block because it only matters when we're actually
+    # building the scraper.
+    #
+    # The v1 message was the shorter
+    # `"LinkedIn scraper running without auth cookie"` prefix; the
+    # T-005 message is a strict superset that covers all 4 cookies
+    # (the operator may have set any of the 4 in practice; the
+    # WARNING is only suppressed when AT LEAST 1 is set).
+    if (
+        effective_settings.linkedin_li_at is None
+        and effective_settings.linkedin_jsessionid is None
+        and effective_settings.linkedin_bcookie is None
+        and effective_settings.linkedin_li_gc is None
+    ):
         _logger.warning(
-            "LinkedIn scraper running without auth cookie; "
-            "SERP will hit the auth wall and return a reduced list"
+            "LinkedIn scraper running without any auth cookies; "
+            "SERP will hit the Cloudflare / auth wall and return a "
+            "reduced list. Set at least LINKEDIN_LI_AT (or all 4) "
+            "in .env to bypass the wall."
         )
 
     if use_case is None:
-        # T-005 of `backend-linkedin-auth` — REQ-LA-SCR-001 plumb.
-        # Build the `EnvLinkedInAuthCookieAdapter` from the
-        # resolved `Settings.linkedin_li_at` (default None = v1
-        # anonymous). The adapter is constructed ONCE per
-        # `build_app()` call and lives in the
-        # `LinkedInScraperSettings` slot.
-        auth_cookie_port = EnvLinkedInAuthCookieAdapter(effective_settings.linkedin_li_at)
+        # T-005 of `backend-linkedin-stealth` — REQ-LST-COOKIE-001
+        # + REQ-LST-SCR-001. Build the
+        # `MultiEnvLinkedInAuthCookiesAdapter` from the 4
+        # resolved `Settings.linkedin_*` cookie fields. The
+        # adapter is constructed ONCE per `build_app()` call
+        # and lives in the `LinkedInScraperSettings.auth_cookies`
+        # slot. The v1 `auth_cookie` slot is `None` in the
+        # production wire (the v1 adapter is preserved for
+        # backward compat with the 35 v1 tests that construct
+        # `EnvLinkedInAuthCookieAdapter` directly).
+        auth_cookies_port = MultiEnvLinkedInAuthCookiesAdapter(
+            li_at=effective_settings.linkedin_li_at,
+            jsessionid=effective_settings.linkedin_jsessionid,
+            bcookie=effective_settings.linkedin_bcookie,
+            li_gc=effective_settings.linkedin_li_gc,
+        )
+        # `Stealth()` is constructed at the composition root
+        # (mirrors the Indeed+InfoJobs wires below at L340 and
+        # L396). The instance lives in the
+        # `LinkedInScraperSettings.stealth` slot; `search()`
+        # calls `await self._stealth.apply_stealth_async(ctx)`
+        # AFTER `new_context()` BEFORE `add_cookies` (REQ-LST-SCR-001).
         scraper = LinkedInPlaywrightScraper(
             throttle=AsyncThrottle(min_interval_seconds=effective_settings.throttle_seconds),
             # REQ-L-008: `LinkedInScraperSettings` was renamed from the
@@ -283,13 +311,20 @@ def build_app(  # noqa: PLR0915
             # call (the pre-`backend-scraper-query-tuning`
             # build had no resolver; the URL builder always
             # fell back to `?location=<str>`).
+            # T-004: 2 NEW slots (`auth_cookies` + `stealth`)
+            # coexist with the v1 `auth_cookie` slot. The v1
+            # slot is `None` in the production wire; the v1
+            # adapter is preserved for the 35 v1 tests that
+            # construct it directly.
             settings=LinkedInScraperSettings(
                 user_agent=effective_settings.user_agent,
                 timeout_ms=effective_settings.request_timeout_ms,
                 max_pages=effective_settings.linkedin_max_pages,
                 inter_page_delay_seconds=effective_settings.linkedin_inter_page_delay_seconds,
                 location_resolver=location_resolver,
-                auth_cookie=auth_cookie_port,
+                auth_cookie=None,  # v1 slot kept (None in production wire)
+                auth_cookies=auth_cookies_port,  # NEW (multi-cookie)
+                stealth=Stealth(),  # NEW
             ),
         )
         raw_use_case = RawLinkedInJobsUseCase(port=scraper)
