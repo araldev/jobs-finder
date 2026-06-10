@@ -245,9 +245,32 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         `geoId` URL parameter. The resolver is called AT MOST
         once per `search()` (not per page); the result is
         captured in the closure.
+
+        `structured` resolution (REQ-STR-LOC-001, T-002 of
+        `backend-linkedin-location-fallback`): when the
+        resolver returns `None` for `resolve()` (the city is
+        NOT in the geoId dict) AND the scraper has a
+        `location_resolver` configured, the scraper ALSO
+        calls `resolve_structured(location)` ONCE per
+        `search()` and uses the returned `(city, province,
+        country)` triplet as the `?location=<city>,<province>,
+        <country>` URL parameter. The resolver is called AT
+        MOST once per `search()` (not per page); the result
+        is captured in the closure. The URL builder's
+        priority is `geoId > structured > raw` — `geo_id`
+        always wins when both are available.
         """
-        if geo_id is None and self._settings.location_resolver is not None:
-            geo_id = self._settings.location_resolver.resolve(location)
+        if self._settings.location_resolver is not None:
+            if geo_id is None:
+                geo_id = self._settings.location_resolver.resolve(location)
+            # The structured triplet is captured only when the
+            # resolver is present (legacy wiring with
+            # `location_resolver=None` skips the lookup
+            # entirely — the URL falls back to `?location=<raw>`).
+            resolver = self._settings.location_resolver
+            structured: tuple[str, str, str] | None = resolver.resolve_structured(location)
+        else:
+            structured = None
         ctx = await self._browser.new_context(
             user_agent=self._settings.user_agent,
             viewport=VIEWPORT,
@@ -258,7 +281,9 @@ class LinkedInPlaywrightScraper(JobSearchPort):
                 return await paginated_search(
                     page=page,
                     throttle=self._throttle,
-                    fetch_one_page=self._make_fetch_one_page(keywords, location, geo_id=geo_id),
+                    fetch_one_page=self._make_fetch_one_page(
+                        keywords, location, geo_id=geo_id, structured=structured
+                    ),
                     limit=limit,
                     max_pages=self._settings.max_pages,
                     inter_page_delay_seconds=self._settings.inter_page_delay_seconds,
@@ -274,6 +299,7 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         keywords: str,
         location: str,
         geo_id: int | None = None,
+        structured: tuple[str, str, str] | None = None,
     ) -> Callable[[Any, int, int], Awaitable[list[Job]]]:
         """Build a per-page closure that captures LinkedIn-specific concerns.
 
@@ -292,6 +318,11 @@ class LinkedInPlaywrightScraper(JobSearchPort):
               ~25 jobs per page; page 0 starts at offset 0). When
               `geo_id is not None`, the URL uses `geoId=<n>` (NOT
               `location=`) — the `REQ-LOC-GEO-001` correction.
+              When `geo_id is None` AND `structured is not None`,
+              the URL uses `?location=<city>,<province>,<country>`
+              (URL-encoded) — the `REQ-STR-LOC-001` structured
+              triplet path. The priority is `geoId > structured >
+              raw`.
             - `is_block_page(soup)` check after `wait_for_selector`
               (LinkedIn auth-wall / verification page).
             - `_parse_cards(soup, remaining)` 2-arg shape (no
@@ -303,7 +334,9 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         """
 
         async def fetch_one_page(page: Any, page_index: int, remaining: int) -> list[Job]:
-            url = self._build_url(keywords, location, page_index * 25, geo_id=geo_id)
+            url = self._build_url(
+                keywords, location, page_index * 25, geo_id=geo_id, structured=structured
+            )
             await self._navigate_and_wait(page, url)
             content = await page.content()
             soup = BeautifulSoup(content, "html.parser")
@@ -314,33 +347,52 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         return fetch_one_page
 
     @staticmethod
-    def _build_url(keywords: str, location: str, start: int, geo_id: int | None = None) -> str:
-        """Build the LinkedIn search URL with the corrected `geoId=` formula.
+    def _build_url(
+        keywords: str,
+        location: str,
+        start: int,
+        geo_id: int | None = None,
+        structured: tuple[str, str, str] | None = None,
+    ) -> str:
+        """Build the LinkedIn search URL with the priority `geoId > structured > raw` formula.
 
-        The LinkedIn-correct path (`REQ-LOC-GEO-001`):
-        when `geo_id is not None`, the URL is
-        `?keywords=...&geoId=<n>&start=...` (the resolver
-        consumed the `location` string and the captured
-        `geoId` replaced it). The fallback (`geo_id is None`)
-        emits `?keywords=...&location=<str>&start=...` — the
-        pre-`fix-linkedin-geoid` broken path (LinkedIn
-        silently ignores the `location=` string param, but
-        does not 500). The fallback is a strict improvement
-        over today's 100%-broken behavior: identical
-        behavior for unknown locations, correct behavior
-        for known cities.
+        The 3-branch priority (REQ-STR-LOC-001, T-002 of
+        `backend-linkedin-location-fallback`):
+
+        1. **`geo_id is not None`** → `?keywords=...&geoId=<n>&start=...`
+           (the LinkedIn-correct form, `REQ-LOC-GEO-001`).
+        2. **`structured is not None`** →
+           `?keywords=...&location=quote("<city>,<province>,<country>")&start=...`
+           (URL-encoded structured triplet — LinkedIn's
+           fuzzy match handles this form better than the
+           raw string).
+        3. **Both `None`** → `?keywords=...&location=<str>&start=...`
+           (the pre-`fix-linkedin-geoid` broken-but-doesn't-500
+           fallback for unknown cities).
+
+        The `quote(s)` call (default `safe="/"`) encodes
+        commas as `%2C` (the user-captured URL is
+        `Antequera%2CAndaluc%C3%ADa%2CSpain` — commas ARE
+        encoded, NOT preserved); tildes are encoded as
+        UTF-8 multibyte (`%C3%AD` for `í`, `%C3%A1` for `á`,
+        `%C3%B3` for `ó`) and spaces as `%20`.
 
         Args:
             keywords: The user's `keywords` (URL-quoted via
                 `urllib.parse.quote`).
             location: The user's free-form `location` string.
-                Used only when `geo_id is None` (the fallback
-                path).
+                Used only in the legacy `location=` branch
+                (when both `geo_id` and `structured` are
+                `None`).
             start: The per-page `start=page_index * 25` offset.
             geo_id: The captured LinkedIn `geoId` (e.g.
                 `103374081` for Madrid). When `not None`,
-                the URL uses `geoId=` (NOT `location=`). When
-                `None`, the URL falls back to `location=`.
+                the URL uses `geoId=` (highest priority).
+            structured: The structured `(city, province,
+                country)` triplet returned by
+                `LocationResolverPort.resolve_structured()`.
+                Used when `geo_id is None` but `structured is
+                not None` (medium priority).
 
         Returns:
             The full LinkedIn search URL.
@@ -349,6 +401,13 @@ class LinkedInPlaywrightScraper(JobSearchPort):
             return (
                 "https://www.linkedin.com/jobs/search/"
                 f"?keywords={quote(keywords)}&geoId={geo_id}&start={start}"
+            )
+        if structured is not None:
+            city, province, country = structured
+            triplet_raw = f"{city},{province},{country}"
+            return (
+                "https://www.linkedin.com/jobs/search/"
+                f"?keywords={quote(keywords)}&location={quote(triplet_raw)}&start={start}"
             )
         return (
             "https://www.linkedin.com/jobs/search/"
