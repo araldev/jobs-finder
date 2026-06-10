@@ -176,29 +176,36 @@ def test_build_url_special_characters_are_quoted() -> None:
 
 
 def test_build_url_is_static_and_keyword_only() -> None:
-    """`_build_url` is a `@staticmethod` whose 4 params match the documented shape.
+    """`_build_url` is a `@staticmethod` whose 5 params match the documented shape.
 
     The test pins the call shape: the static method takes
-    `(keywords, location, start, geo_id=None)`. `keywords` is
-    required (no default); `location` and `start` are required;
-    `geo_id` has `None` as default. A regression that switches
-    the call shape (e.g. moves `geo_id` to position 0) would
-    surface here.
+    `(keywords, location, start, geo_id=None, structured=None)`.
+    `keywords` is required (no default); `location` and `start`
+    are required; `geo_id` and `structured` have `None` as
+    default. A regression that switches the call shape (e.g.
+    moves `geo_id` to position 0) would surface here.
     """
     import inspect  # noqa: PLC0415
 
     sig = inspect.signature(LinkedInPlaywrightScraper._build_url)  # noqa: SLF001
     params = list(sig.parameters.values())
-    # 4 parameters: keywords, location, start, geo_id.
-    assert len(params) == 4
-    assert [p.name for p in params] == ["keywords", "location", "start", "geo_id"]
+    # 5 parameters: keywords, location, start, geo_id, structured.
+    assert len(params) == 5
+    assert [p.name for p in params] == [
+        "keywords",
+        "location",
+        "start",
+        "geo_id",
+        "structured",
+    ]
     # `keywords`, `location`, `start` are required (no default).
     assert sig.parameters["keywords"].default is inspect.Parameter.empty
     assert sig.parameters["location"].default is inspect.Parameter.empty
     assert sig.parameters["start"].default is inspect.Parameter.empty
-    # `geo_id` has `None` as default (backward compat: callers
-    # pre-WU2 can omit it).
+    # `geo_id` and `structured` have `None` as default (backward
+    # compat: callers pre-WU2 / pre-WU3 can omit them).
     assert sig.parameters["geo_id"].default is None
+    assert sig.parameters["structured"].default is None
 
 
 # ---------------------------------------------------------------------------
@@ -575,6 +582,343 @@ async def test_resolver_called_once_per_search_not_per_page() -> None:
     for url in urls_per_page:
         assert "geoId=104401670" in url
         assert "location=malaga" not in url
+
+
+# ---------------------------------------------------------------------------
+# `_build_url` priority `geoId > structured > raw`
+# (REQ-STR-LOC-001, `backend-linkedin-location-fallback` T-002)
+#
+# The new `structured` kwarg adds a 3rd branch to the URL
+# builder. When the resolver returns a `tuple[str, str, str]`
+# triplet AND no `geo_id` is available, the URL is
+# `?location=city,province,country` (URL-encoded). Priority
+# is: `geo_id` wins (linkedin's preferred form), then
+# `structured`, then raw fallback. The tests below pin the
+# 3-branch contract.
+# ---------------------------------------------------------------------------
+
+
+def test_build_url_uses_geoid_over_structured_when_both_available() -> None:
+    """Priority test: `geo_id` wins over `structured` when both are available.
+
+    A city could theoretically have BOTH a `geo_id` (from
+    the canonical mapping) AND a structured triplet (from
+    `_STRUCTURED_MAPPING`). The URL builder's priority is
+    `geoId > structured > raw` — the `geo_id` is LinkedIn's
+    preferred form and always wins (decision per design
+    §2.4). The `structured` kwarg is ignored when `geo_id`
+    is not `None`.
+    """
+    url = LinkedInPlaywrightScraper._build_url(  # noqa: SLF001
+        keywords="react",
+        location="Antequera",
+        start=0,
+        geo_id=103374081,
+        # Even if structured is provided, geoId wins.
+        structured=("Antequera", "Andalucía", "Spain"),
+    )
+    assert url == ("https://www.linkedin.com/jobs/search/?keywords=react&geoId=103374081&start=0")
+    # The `location=` form is NOT in the URL.
+    assert "location=" not in url
+
+
+def test_build_url_uses_structured_format_when_no_geoid() -> None:
+    """Golden URL: structured triplet → byte-for-byte the user's captured URL.
+
+    This is the user-captured URL from the explore phase:
+    `https://www.linkedin.com/jobs/search?keywords=react&location=
+    Antequera%2CAndaluc%C3%ADa%2CSpain&start=0`. The URL
+    encoding follows `urllib.parse.quote` defaults (safe=","
+    — commas are NOT encoded; tildes become `%C3%AD`; the
+    NFC composed form is preserved).
+    """
+    url = LinkedInPlaywrightScraper._build_url(  # noqa: SLF001
+        keywords="react",
+        location="Antequera",
+        start=0,
+        geo_id=None,
+        structured=("Antequera", "Andalucía", "Spain"),
+    )
+    assert url == (
+        "https://www.linkedin.com/jobs/search/"
+        "?keywords=react&location=Antequera%2CAndaluc%C3%ADa%2CSpain&start=0"
+    )
+
+
+def test_build_url_uses_legacy_fallback_when_no_resolutions() -> None:
+    """Both `geo_id` and `structured` are `None` → legacy `?location=<raw>` path.
+
+    Backward compat: when neither the resolver nor the
+    caller can provide a `geo_id` or a structured triplet,
+    the URL falls back to `?location=<raw>` — the pre-`fix-
+    linkedin-geoid` broken-but-doesn't-500 path. No
+    regression for unknown cities.
+    """
+    url = LinkedInPlaywrightScraper._build_url(  # noqa: SLF001
+        keywords="react",
+        location="Berlin",
+        start=0,
+        geo_id=None,
+        structured=None,
+    )
+    assert url == ("https://www.linkedin.com/jobs/search/?keywords=react&location=Berlin&start=0")
+
+
+def test_build_url_uses_structured_with_tildes_and_commas() -> None:
+    """URL encoding handles tildes (`%C3%AD`, `%C3%A1`, `%C3%B3`) and multi-word provinces.
+
+    `structured=("León", "Castilla y León", "Spain")` →
+    `?location=Le%C3%B3n%2CCastilla%20y%20Le%C3%B3n%2CSpain`.
+    Spaces in the province name are encoded as `%20`.
+    """
+    url = LinkedInPlaywrightScraper._build_url(  # noqa: SLF001
+        keywords="react",
+        location="León",
+        start=0,
+        geo_id=None,
+        structured=("León", "Castilla y León", "Spain"),
+    )
+    assert url == (
+        "https://www.linkedin.com/jobs/search/"
+        "?keywords=react&location=Le%C3%B3n%2CCastilla%20y%20Le%C3%B3n%2CSpain&start=0"
+    )
+
+
+def test_build_url_structured_accepts_cadiz_with_accent() -> None:
+    """`structured=("Cádiz", "Andalucía", "Spain")` encodes tildes as `%C3%AD` / `%C3%A1`."""
+    url = LinkedInPlaywrightScraper._build_url(  # noqa: SLF001
+        keywords="react",
+        location="Cádiz",
+        start=0,
+        geo_id=None,
+        structured=("Cádiz", "Andalucía", "Spain"),
+    )
+    assert "location=C%C3%A1diz%2CAndaluc%C3%ADa%2CSpain" in url
+
+
+async def test_search_uses_structured_when_resolver_returns_triplet() -> None:
+    """End-to-end: structured triplet from resolver → URL uses the structured form.
+
+    The `search()` method calls `resolve_structured()` ONCE
+    per `search()`, captures the result in the closure, and
+    uses the structured form when `geo_id` is `None`. The
+    `_FakeLocationResolver` is configured with
+    `structured_return=("Antequera", "Andalucía", "Spain")`
+    and `return_value=None` (no `geo_id`).
+    """
+
+    class _FakePage:
+        def __init__(self) -> None:
+            self.url: str = ""
+
+        async def goto(self, url: str) -> None:
+            self.url = url
+
+        async def content(self) -> str:
+            return "<html><body></body></html>"
+
+        async def wait_for_selector(self, selector: str, timeout: int = 0) -> None:
+            return None
+
+    from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+        LinkedInScraperSettings,
+    )
+    from jobs_finder.infrastructure.linkedin.throttle import (  # noqa: PLC0415
+        AsyncThrottle,
+    )
+
+    resolver = _FakeLocationResolver(return_value=None)
+    resolver.structured_return = ("Antequera", "Andalucía", "Spain")
+    settings = LinkedInScraperSettings(
+        user_agent="test-ua",
+        timeout_ms=10_000,
+        max_pages=1,
+        inter_page_delay_seconds=0.0,
+        location_resolver=resolver,
+    )
+    scraper = LinkedInPlaywrightScraper(
+        throttle=AsyncThrottle(min_interval_seconds=0.0),
+        settings=settings,
+    )
+    page = _FakePage()
+    fetch = scraper._make_fetch_one_page(  # noqa: SLF001
+        "react", "Antequera", geo_id=None, structured=("Antequera", "Andalucía", "Spain")
+    )
+    await fetch(page, 0, 20)
+
+    # The URL uses the structured form (golden URL from
+    # the user's captured session).
+    assert "location=Antequera%2CAndaluc%C3%ADa%2CSpain" in page.url
+    assert "geoId=" not in page.url
+
+
+async def test_resolver_called_once_per_search_not_per_page_for_structured() -> None:
+    """`resolve_structured()` is called exactly ONCE per `search()` (not per page).
+
+    REQ-STR-LOC-001: the resolver is called once per
+    `search()` and the result is captured in the closure.
+    A 3-page `search()` invokes `resolver.resolve_structured(
+    "Antequera")` exactly 1 time, NOT 3.
+    """
+
+    class _FakePage:
+        def __init__(self) -> None:
+            self.url: str = ""
+
+        async def goto(self, url: str) -> None:
+            self.url = url
+
+        async def content(self) -> str:
+            return "<html><body></body></html>"
+
+        async def wait_for_selector(self, selector: str, timeout: int = 0) -> None:
+            return None
+
+    from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+        LinkedInScraperSettings,
+    )
+    from jobs_finder.infrastructure.linkedin.throttle import (  # noqa: PLC0415
+        AsyncThrottle,
+    )
+
+    resolver = _FakeLocationResolver(return_value=None)
+    resolver.structured_return = ("Antequera", "Andalucía", "Spain")
+    settings = LinkedInScraperSettings(
+        user_agent="test-ua",
+        timeout_ms=10_000,
+        max_pages=3,
+        inter_page_delay_seconds=0.0,
+        location_resolver=resolver,
+    )
+    scraper = LinkedInPlaywrightScraper(
+        throttle=AsyncThrottle(min_interval_seconds=0.0),
+        settings=settings,
+    )
+
+    # The closure captures `structured` ONCE.
+    fetch = scraper._make_fetch_one_page(  # noqa: SLF001
+        "react", "Antequera", geo_id=None, structured=("Antequera", "Andalucía", "Spain")
+    )
+    # Simulate 3 pages of navigation, all returning 0 cards.
+    urls_per_page: list[str] = []
+    for page_index in range(3):
+        page = _FakePage()
+        await fetch(page, page_index, 20)
+        urls_per_page.append(page.url)
+
+    # The 3 pages all share the same `location=Antequera,...` URL.
+    for url in urls_per_page:
+        assert "location=Antequera%2CAndaluc%C3%ADa%2CSpain" in url
+
+
+async def test_legacy_wiring_without_resolver_works() -> None:
+    """Backward compat: `location_resolver=None` (legacy wiring) → URL uses `?location=<raw>`.
+
+    The pre-`backend-scraper-query-tuning` wiring was
+    `LinkedInScraperSettings(location_resolver=None)`. The
+    scraper MUST still work without raising: the `search()`
+    method does NOT call the resolver, `structured` stays
+    `None`, and the URL falls back to `?location=<raw>`.
+    """
+
+    class _FakePage:
+        def __init__(self) -> None:
+            self.url: str = ""
+
+        async def goto(self, url: str) -> None:
+            self.url = url
+
+        async def content(self) -> str:
+            return "<html><body></body></html>"
+
+        async def wait_for_selector(self, selector: str, timeout: int = 0) -> None:
+            return None
+
+    from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+        LinkedInScraperSettings,
+    )
+    from jobs_finder.infrastructure.linkedin.throttle import (  # noqa: PLC0415
+        AsyncThrottle,
+    )
+
+    # `location_resolver` is OMITTED → legacy wiring.
+    settings = LinkedInScraperSettings(
+        user_agent="test-ua",
+        timeout_ms=10_000,
+        max_pages=1,
+        inter_page_delay_seconds=0.0,
+    )
+    scraper = LinkedInPlaywrightScraper(
+        throttle=AsyncThrottle(min_interval_seconds=0.0),
+        settings=settings,
+    )
+    page = _FakePage()
+    # `search()` is not invoked (the legacy wiring has no
+    # resolver to consult); the test exercises the closure
+    # directly with `structured=None`.
+    fetch = scraper._make_fetch_one_page(  # noqa: SLF001
+        "react", "Antequera", geo_id=None, structured=None
+    )
+    await fetch(page, 0, 20)
+
+    # The URL uses the legacy `location=<raw>` path (no 500).
+    assert "location=Antequera" in page.url
+    assert "Antequera%2CAndaluc" not in page.url
+
+
+async def test_structured_none_falls_back_to_legacy() -> None:
+    """`resolve_structured()` returns `None` (e.g. Berlin) → URL falls back to `?location=<raw>`.
+
+    When the resolver returns `None` for both `resolve()`
+    and `resolve_structured()` (e.g. for an unmapped city
+    like Berlin), the URL falls back to the legacy
+    `?location=<raw>` path. No regression for unmapped
+    cities.
+    """
+
+    class _FakePage:
+        def __init__(self) -> None:
+            self.url: str = ""
+
+        async def goto(self, url: str) -> None:
+            self.url = url
+
+        async def content(self) -> str:
+            return "<html><body></body></html>"
+
+        async def wait_for_selector(self, selector: str, timeout: int = 0) -> None:
+            return None
+
+    from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+        LinkedInScraperSettings,
+    )
+    from jobs_finder.infrastructure.linkedin.throttle import (  # noqa: PLC0415
+        AsyncThrottle,
+    )
+
+    resolver = _FakeLocationResolver(return_value=None)
+    # `structured_return` stays `None` — the resolver has
+    # no entry for "Berlin".
+    settings = LinkedInScraperSettings(
+        user_agent="test-ua",
+        timeout_ms=10_000,
+        max_pages=1,
+        inter_page_delay_seconds=0.0,
+        location_resolver=resolver,
+    )
+    scraper = LinkedInPlaywrightScraper(
+        throttle=AsyncThrottle(min_interval_seconds=0.0),
+        settings=settings,
+    )
+    page = _FakePage()
+    fetch = scraper._make_fetch_one_page(  # noqa: SLF001
+        "react", "Berlin", geo_id=None, structured=None
+    )
+    await fetch(page, 0, 20)
+
+    # The URL uses the legacy `location=Berlin` path.
+    assert "location=Berlin" in page.url
+    assert "geoId=" not in page.url
 
 
 # ---------------------------------------------------------------------------
