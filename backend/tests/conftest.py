@@ -31,6 +31,7 @@ from datetime import UTC, datetime
 
 import pytest
 from fastapi import FastAPI
+from pydantic import SecretStr
 
 from jobs_finder.application.ports import Intent
 from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase
@@ -47,6 +48,32 @@ from jobs_finder.domain.job import Job
 from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCache
 from jobs_finder.infrastructure.config import Settings
 from jobs_finder.presentation.app_factory import build_app
+
+
+class FakeLinkedInAuthCookiePort:
+    """In-memory fake of `LinkedInAuthCookiePort` for tests (T-001 of
+    `backend-linkedin-auth`).
+
+    Mirrors the `EnvLinkedInAuthCookieAdapter` shape: a value-holder
+    with a single `cookie()` method that returns the configured
+    `SecretStr | None`. Default is `None` (the v1 anonymous-scraper
+    path). Tests construct one explicitly when they need the
+    adapter to return a value (e.g. the per-cookie shape assertions
+    in `tests/unit/test_linkedin_scraper.py`).
+
+    The class is defined in `conftest.py` (NOT in a per-test file)
+    so future tests across the suite can import it without
+    duplicating the definition. Cite REQ-LA-COOKIE-001 scenario 3
+    (`test_fake_double_conforms_to_protocol`).
+    """
+
+    __slots__ = ("_cookie",)
+
+    def __init__(self, cookie: SecretStr | None = None) -> None:
+        self._cookie = cookie
+
+    def cookie(self) -> SecretStr | None:
+        return self._cookie
 
 
 def _build_cached_linkedin_use_case(
