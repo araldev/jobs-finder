@@ -956,3 +956,334 @@ def test_linkedin_scraper_does_not_import_presentation() -> None:
             imported.append(node.module)
     joined = " ".join(imported)
     assert "presentation" not in joined, f"{source_path} imports presentation"
+
+
+# ---------------------------------------------------------------------------
+# T-004 of `backend-linkedin-stealth` — stealth + multi-cookie + closure
+# precedence (REQ-LST-SCR-001..004).
+#
+# Mirrors the Indeed `TestStealthIntegration` pattern (obs #83).
+# The tests use a small `_LinkedInFakePage` / `_LinkedInFakeContext` /
+# `_LinkedInFakeBrowser` triple (defined inline to avoid touching the
+# existing v1 test fixtures) so the `search()` method can run
+# end-to-end without launching Chromium. The `stealth=` injection
+# is a `MagicMock` whose `apply_stealth_async` is an `AsyncMock` —
+# the `await_count` and `await_args` are the regression check.
+# ---------------------------------------------------------------------------
+
+
+class _LinkedInFakePage:
+    """Minimal Playwright `Page` stub for T-004 of `backend-linkedin-stealth`."""
+
+    def __init__(self, html: str = "") -> None:
+        self._html = html
+        self.goto_calls: list[str] = []
+        self.wait_calls: list[tuple[str, int]] = []
+        self.closed = False
+
+    async def goto(self, url: str) -> None:
+        self.goto_calls.append(url)
+
+    async def wait_for_selector(self, selector: str, *, timeout: int) -> None:
+        self.wait_calls.append((selector, timeout))
+
+    async def content(self) -> str:
+        return self._html
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _LinkedInFakeContext:
+    """Minimal Playwright `BrowserContext` stub for T-004."""
+
+    def __init__(self, page: _LinkedInFakePage) -> None:
+        self.page = page
+        self.closed = False
+        self.add_cookies_calls: list[list[dict[str, object]]] = []
+
+    async def new_page(self) -> _LinkedInFakePage:
+        return self.page
+
+    async def add_cookies(self, cookies: list[dict[str, object]]) -> None:
+        # Record every `add_cookies` call so the test can assert
+        # the multi-cookie golden shape.
+        self.add_cookies_calls.append(cookies)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _LinkedInFakeBrowser:
+    """Minimal Playwright `Browser` stub for T-004."""
+
+    def __init__(self, page: _LinkedInFakePage) -> None:
+        self.page = page
+        self.closed = False
+        # Records every context created so the test can assert
+        # the cookies injected on it.
+        self.contexts: list[_LinkedInFakeContext] = []
+
+    async def new_context(self, **kwargs: object) -> _LinkedInFakeContext:
+        ctx = _LinkedInFakeContext(self.page)
+        self.contexts.append(ctx)
+        return ctx
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+async def _linkedin_make_scraper_with(
+    page: _LinkedInFakePage,
+) -> tuple[object, _LinkedInFakeBrowser]:
+    """Build a `LinkedInPlaywrightScraper` whose browser is the given fake.
+
+    Mirrors the Indeed `_make_scraper_with` pattern (obs #83) but
+    uses the local LinkedIn fakes. The throttle is configured
+    with `min_interval_seconds=0.0` so the test doesn't actually
+    sleep; the inter-page delay is `0.0` for the same reason.
+    """
+    from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+        LinkedInPlaywrightScraper,
+        LinkedInScraperSettings,
+    )
+    from jobs_finder.infrastructure.linkedin.throttle import (  # noqa: PLC0415
+        AsyncThrottle,
+    )
+
+    fake_browser = _LinkedInFakeBrowser(page)
+    throttle = AsyncThrottle(min_interval_seconds=0.0)
+
+    async def factory() -> _LinkedInFakeBrowser:
+        return fake_browser
+
+    settings = LinkedInScraperSettings(
+        user_agent="test-agent/1.0",
+        timeout_ms=10_000,
+        max_pages=1,
+        inter_page_delay_seconds=0.0,
+    )
+    scraper = LinkedInPlaywrightScraper(
+        throttle=throttle,
+        settings=settings,
+        browser_factory=factory,
+    )
+    return scraper, fake_browser
+
+
+class TestStealthIntegration:
+    """REQ-LST-SCR-001 — `playwright-stealth`'s
+    `Stealth().apply_stealth_async` is wired into `search()` so the
+    live scraper can bypass Cloudflare's bot detection.
+
+    Mirrors `test_indeed_scraper.py::TestStealthIntegration`
+    (obs #83 — the Indeed precedent). The browser_factory injection
+    pattern isolates the integration: the real Playwright Chromium
+    never launches; the mock Stealth records the awaited call.
+    """
+
+    async def test_stealth_is_applied_when_provided(self) -> None:
+        """`stealth.apply_stealth_async` is awaited once with the created context."""
+        from unittest.mock import AsyncMock, MagicMock  # noqa: PLC0415
+
+        from tests.fixtures.linkedin_search import SEARCH_PAGE_HTML  # noqa: PLC0415
+
+        page = _LinkedInFakePage(SEARCH_PAGE_HTML)
+        scraper, _ = await _linkedin_make_scraper_with(page)
+        stealth = MagicMock()
+        stealth.apply_stealth_async = AsyncMock()
+        # Direct attribute assignment (Indeed pattern — the helper
+        # does not expose a `stealth=` kwarg; we assign `_stealth`
+        # directly so the test stays focused on the integration
+        # in `search()`).
+        scraper._stealth = stealth  # type: ignore[attr-defined]
+        async with scraper:  # type: ignore[attr-defined]
+            await scraper.search(  # type: ignore[attr-defined]
+                "react", "Madrid", limit=5
+            )
+        # Exactly one call, exactly one positional argument, the
+        # context the scraper just created.
+        assert stealth.apply_stealth_async.await_count == 1
+        assert stealth.apply_stealth_async.await_args is not None
+        args, _ = stealth.apply_stealth_async.await_args
+        assert len(args) == 1
+        # The single argument is the fake context the fake
+        # browser produced.
+        assert isinstance(args[0], _LinkedInFakeContext)
+
+    async def test_stealth_is_skipped_when_none(self) -> None:
+        """No `apply_stealth_async` call when `stealth=None` (the default)."""
+        from tests.fixtures.linkedin_search import SEARCH_PAGE_HTML  # noqa: PLC0415
+
+        page = _LinkedInFakePage(SEARCH_PAGE_HTML)
+        scraper, _ = await _linkedin_make_scraper_with(page)
+        # `stealth` defaults to None; assert the attribute exists
+        # and is None.
+        assert scraper._stealth is None  # type: ignore[attr-defined]
+        async with scraper:  # type: ignore[attr-defined]
+            await scraper.search(  # type: ignore[attr-defined]
+                "react", "Madrid", limit=5
+            )
+        # The test passes if `search()` returns without raising —
+        # the absence of `_stealth` would have raised
+        # `AttributeError` in the pre-T-004 state.
+
+    async def test_multi_cookie_injection_golden(self) -> None:
+        """When `auth_cookies` is set, `add_cookies` is called with all 4.
+
+        REQ-LST-SCR-002 — the multi-cookie path injects each
+        `(name, value)` pair from `port.cookies()` via
+        `ctx.add_cookies([{...}, ...])` with the LinkedIn-shape
+        dict (`domain=".linkedin.com"`, `path="/"`,
+        `httpOnly=True`, `secure=True`).
+        """
+        from pydantic import SecretStr  # noqa: PLC0415
+
+        from jobs_finder.infrastructure.linkedin.auth_cookie import (  # noqa: PLC0415
+            MultiEnvLinkedInAuthCookiesAdapter,
+        )
+        from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+            LinkedInPlaywrightScraper,
+            LinkedInScraperSettings,
+        )
+        from jobs_finder.infrastructure.linkedin.throttle import (  # noqa: PLC0415
+            AsyncThrottle,
+        )
+        from tests.fixtures.linkedin_search import SEARCH_PAGE_HTML  # noqa: PLC0415
+
+        page = _LinkedInFakePage(SEARCH_PAGE_HTML)
+        fake_browser = _LinkedInFakeBrowser(page)
+        throttle = AsyncThrottle(min_interval_seconds=0.0)
+
+        async def factory() -> _LinkedInFakeBrowser:
+            return fake_browser
+
+        auth_cookies = MultiEnvLinkedInAuthCookiesAdapter(
+            li_at=SecretStr("AQEAAAAQEAAA"),
+            jsessionid=SecretStr("ajax:12345"),
+            bcookie=SecretStr("v2_xyz"),
+            li_gc=SecretStr("gc_abc"),
+        )
+        settings = LinkedInScraperSettings(
+            user_agent="test-agent/1.0",
+            timeout_ms=10_000,
+            max_pages=1,
+            inter_page_delay_seconds=0.0,
+            auth_cookie=None,  # v1 slot kept (None in production wire)
+            auth_cookies=auth_cookies,
+        )
+        scraper = LinkedInPlaywrightScraper(
+            throttle=throttle,
+            settings=settings,
+            browser_factory=factory,
+        )
+        async with scraper:
+            await scraper.search("react", "Madrid", limit=5)
+        # The fake browser recorded every context. The
+        # production wire should call `add_cookies` exactly once
+        # on the single context (4 entries, one per cookie).
+        assert len(fake_browser.contexts) == 1
+        ctx = fake_browser.contexts[0]
+        assert len(ctx.add_cookies_calls) == 1
+        cookies = ctx.add_cookies_calls[0]
+        assert len(cookies) == 4
+        # Each cookie has the LinkedIn-shape dict.
+        names = [c["name"] for c in cookies]
+        assert names == ["li_at", "JSESSIONID", "bcookie", "li_gc"]
+        for cookie in cookies:
+            assert cookie["domain"] == ".linkedin.com"
+            assert cookie["path"] == "/"
+            assert cookie["httpOnly"] is True
+            assert cookie["secure"] is True
+        # The synthetic test values are NOT in the recorded call
+        # shape (the values are present but the test asserts the
+        # SHAPE — domain/path/httpOnly/secure — which is the
+        # public contract; the values themselves are operator
+        # cookies in production).
+        assert scraper._settings.auth_cookies is not None
+
+    async def test_closure_warns_on_cloudflare_challenge(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """REQ-LST-SCR-003 — `is_cloudflare_challenge` triggers a soft WARNING.
+
+        The closure emits a WARNING with the prefix
+        "LinkedIn Cloudflare challenge detected" and the 3
+        missing cookie names; returns `_parse_cards(soup, remaining)`
+        (the soft path — NO raise, the route returns a degraded
+        empty list).
+        """
+        import logging  # noqa: PLC0415
+
+        from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+            LinkedInPlaywrightScraper,
+            LinkedInScraperSettings,
+        )
+        from jobs_finder.infrastructure.linkedin.throttle import (  # noqa: PLC0415
+            AsyncThrottle,
+        )
+        from tests.fixtures.linkedin_search import (  # noqa: PLC0415
+            CLOUDFLARE_CHALLENGE_HTML,
+        )
+
+        page = _LinkedInFakePage(CLOUDFLARE_CHALLENGE_HTML)
+        fake_browser = _LinkedInFakeBrowser(page)
+        throttle = AsyncThrottle(min_interval_seconds=0.0)
+
+        async def factory() -> _LinkedInFakeBrowser:
+            return fake_browser
+
+        # Drive the closure directly — we do not need the full
+        # `search()` lifecycle; the closure is the unit under test.
+        from pydantic import SecretStr  # noqa: PLC0415
+
+        from jobs_finder.infrastructure.linkedin.auth_cookie import (  # noqa: PLC0415
+            MultiEnvLinkedInAuthCookiesAdapter,
+        )
+
+        auth_cookies = MultiEnvLinkedInAuthCookiesAdapter(
+            li_at=SecretStr("AQEAAAAQEAAA"),
+            jsessionid=SecretStr("ajax:12345"),
+            bcookie=SecretStr("v2_xyz"),
+            li_gc=SecretStr("gc_abc"),
+        )
+        settings = LinkedInScraperSettings(
+            user_agent="test-agent/1.0",
+            timeout_ms=10_000,
+            max_pages=1,
+            inter_page_delay_seconds=0.0,
+            auth_cookie=None,
+            auth_cookies=auth_cookies,
+        )
+        scraper = LinkedInPlaywrightScraper(
+            throttle=throttle,
+            settings=settings,
+            browser_factory=factory,
+        )
+        # Reach the closure directly; drive it with the
+        # `_LinkedInFakePage` (which returns the Cloudflare
+        # challenge HTML on `content()`).
+        fetch = scraper._make_fetch_one_page(  # noqa: SLF001
+            "react", "Madrid", geo_id=None, structured=None
+        )
+        with caplog.at_level(logging.WARNING):
+            jobs = await fetch(page, 0, 20)
+        # The soft path returns the parsed cards (0 cards on the
+        # Cloudflare challenge fixture — the cards-win rule
+        # already excluded them, and there are no other cards to
+        # parse on the fixture).
+        assert jobs == []
+        # The WARNING has the expected prefix and mentions the 3
+        # missing cookie env-var names. The prefix matches
+        # REQ-LST-SCR-003.
+        matching = [
+            r for r in caplog.records if "LinkedIn Cloudflare challenge detected" in r.getMessage()
+        ]
+        assert len(matching) == 1, f"expected exactly 1 Cloudflare WARNING, got {len(matching)}"
+        # The cookie names are the 3 missing env vars (since
+        # the operator's full cookie set is 19+ and we ship 4
+        # — the WARNING guides them to add more).
+        msg = matching[0].getMessage()
+        assert "LINKEDIN_JSESSIONID" in msg
+        assert "LINKEDIN_BCOOKIE" in msg
+        assert "LINKEDIN_LI_GC" in msg

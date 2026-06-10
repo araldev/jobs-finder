@@ -69,6 +69,7 @@ from playwright.async_api import (
 from jobs_finder.application.ports import (
     JobSearchPort,
     LinkedInAuthCookiePort,
+    LinkedInAuthCookiesPort,
     LocationResolverPort,
 )
 from jobs_finder.domain.job import Job
@@ -78,6 +79,7 @@ from .exceptions import LinkedInBlockedError, LinkedInParseError, LinkedInTimeou
 from .parsers import (
     is_auth_wall,
     is_block_page,
+    is_cloudflare_challenge,
     parse_company,
     parse_description,
     parse_job_id,
@@ -126,13 +128,27 @@ class LinkedInScraperSettings:
     `max_pages` and `inter_page_delay_seconds` were added by the
     `linkedin-pagination` change (REQ-L-007 + REQ-L-008) to bring the
     LinkedIn scraper to parity with the Indeed and InfoJobs scrapers.
+
+    T-004 of `backend-linkedin-stealth` adds 2 NEW slots:
+    - `auth_cookies`: the plural `LinkedInAuthCookiesPort` (4
+      cookies: `li_at` + `JSESSIONID` + `bcookie` + `li_gc`). The
+      v1 `auth_cookie` slot is KEPT for backward compat with the
+      35 v1 `backend-linkedin-auth` tests that construct the v1
+      `EnvLinkedInAuthCookieAdapter` directly.
+    - `stealth`: the `playwright_stealth.Stealth` instance
+      (mirrors `IndeedScraperSettings.stealth` precedent, per
+      obs #83). The default is `None` (preserves v1 behavior;
+      tests pass `stealth=None` and the live wire passes
+      `Stealth()`).
     """
 
     __slots__ = (
         "auth_cookie",
+        "auth_cookies",
         "inter_page_delay_seconds",
         "location_resolver",
         "max_pages",
+        "stealth",
         "timeout_ms",
         "user_agent",
     )
@@ -146,6 +162,8 @@ class LinkedInScraperSettings:
         inter_page_delay_seconds: float = 1.0,
         location_resolver: LocationResolverPort | None = None,
         auth_cookie: LinkedInAuthCookiePort | None = None,
+        auth_cookies: LinkedInAuthCookiesPort | None = None,
+        stealth: Any | None = None,
     ) -> None:
         self.user_agent = user_agent
         self.timeout_ms = timeout_ms
@@ -159,27 +177,51 @@ class LinkedInScraperSettings:
         # scraper calls `resolve(location)` ONCE per `search()`
         # and uses the returned `geoId` in the URL formula.
         self.location_resolver = location_resolver
-        # Optional `LinkedInAuthCookiePort` (added in
-        # `backend-linkedin-auth`, REQ-LA-COOKIE-001..004).
-        # When `None` (the default), the scraper runs
-        # anonymously — the v1 behavior (auth wall modal hidden
-        # in HTML, ~3-5 results per query). When set, the
+        # v1 `LinkedInAuthCookiePort` (singular) — KEPT for
+        # backward compat with the 35 v1 tests. When set, the
         # scraper calls `auth_cookie.cookie()` ONCE per
         # `search()` and injects the result via
         # `ctx.add_cookies([...])` between `new_context()` and
         # `paginated_search()` (REQ-LA-SCR-001..006). The
-        # `__repr__` masks the value as `<set>` / `<unset>` so
-        # the cookie never appears in logs.
+        # production wire passes `auth_cookie=None` (the v1
+        # slot is empty; the v1 `EnvLinkedInAuthCookieAdapter`
+        # is preserved but unused in the production wire).
+        # The `__repr__` masks the value as `<set>` / `<unset>`
+        # so the cookie never appears in logs.
         self.auth_cookie = auth_cookie
+        # T-004 of `backend-linkedin-stealth` —
+        # REQ-LST-COOKIE-001..005 + REQ-LST-SCR-001..004.
+        # When set, the scraper calls
+        # `auth_cookies.cookies()` ONCE per `search()` and
+        # injects the multi-cookie list via
+        # `ctx.add_cookies([{...} for (n, v) in cookies])`.
+        # The slot is opt-in (default `None`); the closure
+        # precedence is conditional on `auth_cookies is not
+        # None and auth_cookies.cookies() is not None`.
+        # The `__repr__` masks the value as `<set>` /
+        # `<unset>` (REQ-LST-COOKIE-005).
+        self.auth_cookies = auth_cookies
+        # T-004 of `backend-linkedin-stealth` —
+        # REQ-LST-SCR-001. The `playwright_stealth.Stealth`
+        # instance. When set, `search()` calls
+        # `await self._stealth.apply_stealth_async(ctx)` AFTER
+        # `new_context()` BEFORE `add_cookies` (mirrors the
+        # Indeed+InfoJobs precedent byte-identically). The
+        # default is `None` (preserves v1 behavior).
+        self.stealth = stealth
 
     def __repr__(self) -> str:
         auth_cookie_repr = "<set>" if self.auth_cookie is not None else "<unset>"
+        auth_cookies_repr = "<set>" if self.auth_cookies is not None else "<unset>"
+        stealth_repr = "<set>" if self.stealth is not None else "<unset>"
         return (
             f"LinkedInScraperSettings(user_agent={self.user_agent!r}, "
             f"timeout_ms={self.timeout_ms}, max_pages={self.max_pages}, "
             f"inter_page_delay_seconds={self.inter_page_delay_seconds}, "
             f"location_resolver={self.location_resolver!r}, "
-            f"auth_cookie={auth_cookie_repr})"
+            f"auth_cookie={auth_cookie_repr}, "
+            f"auth_cookies={auth_cookies_repr}, "
+            f"stealth={stealth_repr})"
         )
 
     def __eq__(self, other: object) -> bool:
@@ -192,6 +234,8 @@ class LinkedInScraperSettings:
             and self.inter_page_delay_seconds == other.inter_page_delay_seconds
             and self.location_resolver == other.location_resolver
             and self.auth_cookie == other.auth_cookie
+            and self.auth_cookies == other.auth_cookies
+            and self.stealth == other.stealth
         )
 
     def __hash__(self) -> int:
@@ -203,6 +247,8 @@ class LinkedInScraperSettings:
                 self.inter_page_delay_seconds,
                 self.location_resolver,
                 self.auth_cookie,
+                self.auth_cookies,
+                self.stealth,
             )
         )
 
@@ -223,6 +269,16 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         self._owns_browser: bool = browser_factory is None
         self._browser: Any = None
         self._playwright: Any = None
+        # T-004 of `backend-linkedin-stealth` — REQ-LST-SCR-001.
+        # The `playwright_stealth.Stealth` instance. When set,
+        # `search()` calls
+        # `await self._stealth.apply_stealth_async(ctx)` AFTER
+        # `new_context()` BEFORE `add_cookies` (mirrors the
+        # Indeed+InfoJobs precedent byte-identically at
+        # `indeed/scraper.py:246-247` and
+        # `infojobs/scraper.py:326-327`). The default is
+        # `None` (preserves v1 behavior).
+        self._stealth: Any | None = settings.stealth
 
     async def __aenter__(self) -> Self:
         if self._browser_factory is not None:
@@ -306,25 +362,70 @@ class LinkedInPlaywrightScraper(JobSearchPort):
             user_agent=self._settings.user_agent,
             viewport=VIEWPORT,
         )
-        # T-004 of `backend-linkedin-auth` — REQ-LA-SCR-001..006 plumb.
-        # Inject the operator's `li_at` cookie ONCE per `search()`
-        # (per-context, not per-page). The cookie travels with
-        # every page request in the pagination loop because
-        # Playwright's `BrowserContext` shares the cookie store
-        # with all pages in the context. When the port is `None`
-        # (the v1 anonymous path), the call is skipped — the
-        # scraper proceeds with the v1 auth-wall behavior and
-        # `app_factory.build_app()` has already emitted the
-        # single startup WARNING at process start.
-        cookie = (
+        # T-004 of `backend-linkedin-stealth` — REQ-LST-SCR-001.
+        # Stealth injection. The `playwright_stealth.Stealth`
+        # instance is held in `self._stealth` (set from
+        # `settings.stealth` at ctor time). When set, the
+        # call is `await self._stealth.apply_stealth_async(ctx)` —
+        # the per-context pattern (mirrors Indeed at
+        # `indeed/scraper.py:246-247` and InfoJobs at
+        # `infojobs/scraper.py:326-327` byte-identically).
+        # When `None` (the v1 default; tests), the call is
+        # skipped (no `if`-fallthrough side-effects).
+        if self._stealth is not None:
+            await self._stealth.apply_stealth_async(ctx)
+        # T-004 of `backend-linkedin-stealth` — REQ-LST-SCR-002.
+        # Multi-cookie injection. The v1 single-cookie
+        # `auth_cookie` slot is KEPT (the 35 v1 tests construct
+        # the v1 `EnvLinkedInAuthCookieAdapter` directly and
+        # pass it through `LinkedInScraperSettings.auth_cookie`).
+        # The new `auth_cookies` slot (plural
+        # `LinkedInAuthCookiesPort`) is the production wire
+        # (REQ-LST-COOKIE-001). When set, the scraper calls
+        # `auth_cookies.cookies()` ONCE per `search()` and
+        # injects the multi-cookie list via
+        # `ctx.add_cookies([{...} for (n, v) in cookies])` with
+        # the LinkedIn-shape dict (`domain=".linkedin.com"`,
+        # `path="/"`, `httpOnly=True`, `secure=True`). The
+        # `count=%d` DEBUG line uses the count ONLY (no
+        # value leak).
+        auth_cookies_port = self._settings.auth_cookies
+        if auth_cookies_port is not None:
+            cookies = auth_cookies_port.cookies()
+            if cookies is not None:
+                await ctx.add_cookies(
+                    [
+                        {
+                            "name": name,
+                            "value": value.get_secret_value(),
+                            "domain": ".linkedin.com",
+                            "path": "/",
+                            "httpOnly": True,
+                            "secure": True,
+                        }
+                        for (name, value) in cookies
+                    ]
+                )
+                _logger.debug("LinkedIn auth cookies injected (count=%d)", len(cookies))
+        # v1 single-cookie path (KEPT byte-identical to the v1
+        # `backend-linkedin-auth` cycle). When the v1 `auth_cookie`
+        # slot is set (the 35 v1 tests construct
+        # `EnvLinkedInAuthCookieAdapter` directly), the
+        # `cookie()` call is awaited and the single cookie
+        # is injected. The v1 `length=%d` DEBUG line uses the
+        # length ONLY (no value leak). When the production
+        # wire passes `auth_cookie=None` (it does — the
+        # production wire uses `auth_cookies=` instead), this
+        # block is skipped.
+        v1_cookie = (
             self._settings.auth_cookie.cookie() if self._settings.auth_cookie is not None else None
         )
-        if cookie is not None:
+        if v1_cookie is not None:
             await ctx.add_cookies(
                 [
                     {
                         "name": "li_at",
-                        "value": cookie.get_secret_value(),
+                        "value": v1_cookie.get_secret_value(),
                         "domain": ".linkedin.com",
                         "path": "/",
                         "httpOnly": True,
@@ -333,8 +434,8 @@ class LinkedInPlaywrightScraper(JobSearchPort):
                 ]
             )
             _logger.debug(
-                "LinkedIn auth cookie injected (length=%d)",
-                len(cookie.get_secret_value()),
+                "LinkedIn v1 auth cookie injected (length=%d)",
+                len(v1_cookie.get_secret_value()),
             )
         try:
             page = await ctx.new_page()
@@ -401,35 +502,58 @@ class LinkedInPlaywrightScraper(JobSearchPort):
             await self._navigate_and_wait(page, url)
             content = await page.content()
             soup = BeautifulSoup(content, "html.parser")
-            # T-004 of `backend-linkedin-auth` — REQ-LA-AWALL-005
-            # closure integration. The semantic split with
-            # `is_block_page`:
-            # - `is_auth_wall` is the SOFT path: the cookie was
-            #   injected but the SERP rendered an auth-wall
-            #   variant (cookie may be expired). The closure
-            #   emits a WARNING and returns `[]` — NO raise
-            #   (REQ-LA-AWALL-006: "the soft path is graceful").
-            # - `is_block_page` is the HARD path: a true 502
-            #   (no auth-wall class but a sign-in form or
-            #   sign-in title). The closure raises
-            #   `LinkedInBlockedError`.
-            # The two functions overlap on the
-            # `body.auth-wall` + 0 cards case. When the
-            # operator has injected a cookie, the auth-wall
-            # check runs FIRST and short-circuits the hard
-            # raise (the auth-wall signal is the
-            # "operator's cookie expired" indicator). When
-            # the operator has NOT injected a cookie (the
-            # v1 anonymous path), the closure preserves the
-            # v1 hard-raise behavior — the auth-wall is
-            # indistinguishable from a true LinkedIn 502.
-            if self._settings.auth_cookie is not None and is_auth_wall(soup):
-                _logger.warning(
-                    "LinkedIn SERP appears auth-walled despite cookie "
-                    "injection; cookie may be expired. Returning 0 "
-                    "jobs from this page (degraded)."
-                )
+            # T-004 of `backend-linkedin-stealth` — REQ-LST-SCR-003.
+            # The closure precedence is conditional on the
+            # cookie-injection path:
+            #
+            # - **Cookie path** (when `auth_cookies is not None and
+            #   auth_cookies.cookies() is not None`, OR the v1
+            #   `auth_cookie is not None`): the soft filters run
+            #   FIRST (Cloudflare 302-loop is network-layer,
+            #   softer than the cookie-injected auth wall), then
+            #   the hard raise. Order:
+            #   1. `is_cloudflare_challenge` (NEW, soft
+            #      WARNING + return `_parse_cards`).
+            #   2. `is_auth_wall` (v1, soft WARNING + return
+            #      `_parse_cards`).
+            #   3. `is_block_page` (v1, HARD raise).
+            #
+            # - **Anonymous path** (NEITHER `auth_cookies` nor
+            #   `auth_cookie` is set, the v1 default): the
+            #   closure checks `is_block_page` ONLY — the v1
+            #   hard-raise behavior is preserved byte-identically
+            #   (the v1 `test_search_raises_blocked_on_auth_wall`
+            #   is the regression check). No soft filter runs
+            #   because the operator has not opted in to the
+            #   soft path.
+            has_cookies = (
+                self._settings.auth_cookies is not None
+                and self._settings.auth_cookies.cookies() is not None
+            ) or self._settings.auth_cookie is not None
+            if has_cookies:
+                # Cookie path: softest filter first
+                # (Cloudflare 302-loop is network-layer,
+                # softer than the cookie-injected auth wall).
+                if is_cloudflare_challenge(soup):
+                    _logger.warning(
+                        "LinkedIn Cloudflare challenge detected; stealth "
+                        "may be insufficient. Consider setting "
+                        "LINKEDIN_JSESSIONID, LINKEDIN_BCOOKIE, "
+                        "LINKEDIN_LI_GC in .env, or upgrading to a "
+                        "residential proxy."
+                    )
+                    return _parse_cards(soup, remaining)
+                if is_auth_wall(soup):
+                    _logger.warning(
+                        "LinkedIn SERP appears auth-walled despite cookie "
+                        "injection; cookie may be expired. Returning 0 "
+                        "jobs from this page (degraded)."
+                    )
+                    return _parse_cards(soup, remaining)
+                if is_block_page(soup):
+                    raise LinkedInBlockedError("LinkedIn returned an auth-wall / verification page")
                 return _parse_cards(soup, remaining)
+            # Anonymous path — v1 byte-identical.
             if is_block_page(soup):
                 raise LinkedInBlockedError("LinkedIn returned an auth-wall / verification page")
             return _parse_cards(soup, remaining)
