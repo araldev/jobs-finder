@@ -32,6 +32,7 @@ from collections.abc import Mapping
 
 from jobs_finder.application.ports import LocationResolverPort
 
+from ._infojobs_mapping import _INFOJOBS_MAPPING
 from ._mapping import _ALIASES, _CANONICAL_MAPPING
 from ._structured_mapping import _STRUCTURED_MAPPING
 
@@ -47,12 +48,30 @@ class HardcodedLocationResolver(LocationResolverPort):
     `@runtime_checkable`; this is the same pattern used by
     `JobSearchPort`, `LLMClientPort`, `IntentExtractorPort`, etc.
 
-    The ctor accepts an optional `mapping` kwarg so tests can
-    inject a minimal dict (and a future `HybridLocationResolver`
-    can compose this class with a geocoding API fallback). The
-    default mapping is the 34-entry `_CANONICAL_MAPPING` from
-    `_mapping.py`; passing a custom `mapping` REPLACES the
-    default (does NOT merge).
+    The class implements TWO methods on the Protocol:
+        - `resolve(location) -> int | None`: the v1 LinkedIn
+          path. Returns the LinkedIn geoId for a free-form
+          `location` string.
+        - `resolve_infojobs(location) -> tuple[int | None, int | None]`:
+          the v1 InfoJobs path. Returns a `(province_id,
+          country_id)` tuple that the InfoJobs scraper
+          consumes to build `?provinceIds=<id>&countryIds=<id>`
+          query params.
+
+    The two methods read from INDEPENDENT dicts
+    (`_CANONICAL_MAPPING` for LinkedIn; `_INFOJOBS_MAPPING` for
+    InfoJobs) because the two ID namespaces have distinct
+    sources of truth. The composition root wires ONE
+    `HardcodedLocationResolver` instance into BOTH
+    `LinkedInScraperSettings` and `InfoJobsScraperSettings`
+    (per the `app_factory.build_app()` wire-up).
+
+    The ctor accepts an optional `mapping` kwarg (LinkedIn) and
+    an optional `infojobs_mapping` kwarg (InfoJobs) so tests
+    can inject minimal dicts. The default mappings are the
+    34-entry `_CANONICAL_MAPPING` (LinkedIn) and the 9-entry
+    `_INFOJOBS_MAPPING` (InfoJobs). Passing a custom mapping
+    REPLACES the default (does NOT merge).
     """
 
     def __init__(
@@ -60,18 +79,27 @@ class HardcodedLocationResolver(LocationResolverPort):
         *,
         mapping: Mapping[str, int] | None = None,
         aliases: Mapping[str, str] | None = None,
+        infojobs_mapping: Mapping[str, tuple[int | None, int]] | None = None,
         structured_mapping: Mapping[str, tuple[str, str, str]] | None = None,
     ) -> None:
         """Build a resolver over the given `mapping` (default: 34-entry dict).
 
         Args:
-            mapping: The canonical mapping (NORMALIZED form →
-                geoId). When `None` (the default), the 34-entry
-                `_CANONICAL_MAPPING` is used. The custom mapping
-                REPLACES the default (does NOT merge).
+            mapping: The canonical LinkedIn mapping (NORMALIZED
+                form → geoId). When `None` (the default), the
+                34-entry `_CANONICAL_MAPPING` is used. The
+                custom mapping REPLACES the default (does NOT
+                merge).
             aliases: The alias mapping (NORMALIZED form →
                 canonical key). When `None` (the default), the
                 5-entry `_ALIASES` is used.
+            infojobs_mapping: The canonical InfoJobs mapping
+                (NORMALIZED form → `(province_id, country_id)`).
+                When `None` (the default), the 9-entry
+                `_INFOJOBS_MAPPING` is used. The custom mapping
+                REPLACES the default (does NOT merge) — same
+                override semantics as `mapping`. Added in
+                `backend-infojobs-provinces` (REQ-PROV-001).
             structured_mapping: The structured triplet mapping
                 (NORMALIZED form → `(city, province, country)`
                 tuple in Title Case with tildes NFC). When
@@ -83,6 +111,9 @@ class HardcodedLocationResolver(LocationResolverPort):
         """
         self._mapping: Mapping[str, int] = mapping if mapping is not None else _CANONICAL_MAPPING
         self._aliases: Mapping[str, str] = aliases if aliases is not None else _ALIASES
+        self._infojobs_mapping: Mapping[str, tuple[int | None, int]] = (
+            infojobs_mapping if infojobs_mapping is not None else _INFOJOBS_MAPPING
+        )
         self._structured_mapping: Mapping[str, tuple[str, str, str]] = (
             structured_mapping if structured_mapping is not None else _STRUCTURED_MAPPING
         )
@@ -141,6 +172,62 @@ class HardcodedLocationResolver(LocationResolverPort):
             location,
         )
         return None
+
+    def resolve_infojobs(self, location: str) -> tuple[int | None, int | None]:
+        """Translate `location` (a free-form string) into an InfoJobs `(province_id, country_id)`.
+
+        The alias normalization chain is the same 4-step
+        chain that `resolve()` uses (NFC + casefold + strip +
+        NFD-drop Mn). The dict is the 9-entry
+        `_INFOJOBS_MAPPING` from `_infojobs_mapping.py`.
+
+        Args:
+            location: The free-form location string (e.g.
+                `"Málaga"`, `"Madrid"`, `"Remote"`,
+                `"teletrabajo"`). May be empty (the
+                aggregator passes `""`); an empty string
+                short-circuits to `(None, None)` WITHOUT
+                a warning log (the canonical "no location
+                specified" sentinel).
+
+        Returns:
+            A `(province_id, country_id)` tuple. The
+            `(None, None)` sentinel means "unmapped" —
+            the InfoJobs scraper then falls back to the
+            v1 `?l=<str>` path. The 4 documented cases
+            (`(int, int)`, `(None, int)`, `(int, None)`,
+            `(None, None)`) are all returned by this
+            method; the v1 dict only ever populates the
+            first two. A WARNING is logged on every
+            `(None, None)` miss EXCEPT the empty-string
+            path (same convention as `resolve()`).
+        """
+        # Short-circuit: empty string is the canonical
+        # "no location" sentinel (same as `resolve()`).
+        # We do NOT log a WARNING here — an empty string
+        # is a legitimate input, not an "unknown city"
+        # signal.
+        if not location:
+            return (None, None)
+
+        normalized = self._normalize(location)
+
+        if normalized in self._infojobs_mapping:
+            return self._infojobs_mapping[normalized]
+
+        # Unknown / unmapped city. Log a WARNING with
+        # the input string so ops can spot stale
+        # geographic intent and re-run the capture
+        # script (or add a new entry to the dict).
+        # The InfoJobs scraper falls back to the v1
+        # `?l=<str>` URL formula (graceful degradation,
+        # no 500).
+        _logger.warning(
+            "HardcodedLocationResolver: could not resolve location %r to an InfoJobs "
+            "(province_id, country_id). Falling back to ?l=<str> (graceful, no 500).",
+            location,
+        )
+        return (None, None)
 
     def resolve_structured(self, location: str) -> tuple[str, str, str] | None:
         """Translate `location` into a structured `(city, province, country)` triplet.

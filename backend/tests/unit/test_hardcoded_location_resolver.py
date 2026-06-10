@@ -48,6 +48,7 @@ import logging
 
 import pytest
 
+from jobs_finder.infrastructure.location._infojobs_mapping import _INFOJOBS_MAPPING
 from jobs_finder.infrastructure.location.hardcoded_resolver import (
     HardcodedLocationResolver,
 )
@@ -702,3 +703,160 @@ def test_readme_documents_verified_speculative_and_live_gate() -> None:
     assert "VERIFIED" in readme
     assert "SPECULATIVE" in readme
     assert "LLM_LIVE_TESTS" in readme
+
+
+# Section 6: `resolve_infojobs` — InfoJobs province/country mapping.
+#
+# The InfoJobs scraper consumes the same `LocationResolverPort` Protocol
+# but with a different return type: `tuple[int | None, int | None]`
+# (province_id, country_id). The protocol has TWO methods; the
+# `HardcodedLocationResolver` implements BOTH. The InfoJobs dict lives
+# in `_infojobs_mapping.py` (a sibling of `_mapping.py`) — the dicts
+# are independent because the ID namespaces (LinkedIn geoId vs
+# InfoJobs provinceId) are different sources of truth.
+#
+# Mapping shape:
+#     5 user-verified entries: malaga=(34,17), espana=(None,17),
+#                                spain=(None,17), remote=(None,17),
+#                                teletrabajo=(None,17)
+#     4 speculative entries:    madrid=(28,17), barcelona=(8,17),
+#                                valencia=(46,17), sevilla=(41,17)
+#     Total: 9 entries.
+#
+# The 4 speculative IDs are gated by the LIVE test
+# `LLM_LIVE_TESTS=1`; if any fails, the team removes the entry
+# and the scraper falls back to `?l=<str>` (graceful degradation,
+# no 500).
+#
+# Spec: REQ-PROV-001 (the 12 scenarios in the spec).
+# ---------------------------------------------------------------------------
+
+
+# Parametrized happy-path for the 9 entries of the InfoJobs mapping.
+# Each row is a 1:1 mirror of the 9 entries in `_infojobs_mapping.py`.
+# The 5 verified entries (no trailing comment) are pinned by the
+# user's smoke test + InfoJobs docs; the 4 speculative entries
+# (trailing `# speculative` comment) are pinned by INE codes
+# pending LIVE test validation.
+@pytest.mark.parametrize(
+    ("input_location", "expected_province", "expected_country"),
+    [
+        # === Spanish provinces (province_id, country_id=17) — 5 verified ===
+        ("malaga", 34, 17),
+        ("espana", None, 17),  # country-only sentinel
+        ("spain", None, 17),  # English synonym
+        ("remote", None, 17),  # country-only "Remote" case
+        ("teletrabajo", None, 17),  # Spanish synonym for remote
+        # === Spanish provinces (province_id, country_id=17) — 4 speculative ===
+        # (Pending LIVE test validation; INE codes are best-effort.)
+        ("madrid", 28, 17),  # speculative
+        ("barcelona", 8, 17),  # speculative
+        ("valencia", 46, 17),  # speculative
+        ("sevilla", 41, 17),  # speculative
+    ],
+)
+def test_resolve_infojobs_canonical_lookup_returns_pinned_province_country(
+    input_location: str,
+    expected_province: int | None,
+    expected_country: int | None,
+) -> None:
+    """The 9 entries of the InfoJobs mapping each resolve to their pinned tuple.
+
+    The first 5 entries are USER-VERIFIED (Málaga=34 is the user's smoke
+    test capture; the 4 country-only entries are the canonical "country
+    without province" sentinels). The remaining 4 entries are
+    SPECULATIVE — pinned to the official INE codes for the Spanish
+    provinces, pending LIVE test validation against real InfoJobs.
+
+    A regression that flips a value (e.g. 34 → 33) would silently
+    mis-route ALL InfoJobs queries for that city, returning the wrong
+    region. The pinned test guards against that regression.
+    """
+    resolver = HardcodedLocationResolver()
+    assert resolver.resolve_infojobs(input_location) == (
+        expected_province,
+        expected_country,
+    )
+
+
+def test_resolve_infojobs_malaga_accent_insensitive() -> None:
+    """`"Málaga"` (with `á` U+00E1) resolves to the same tuple as `"malaga"`.
+
+    The accent-stripping chain is the same 4-step chain that
+    `resolve()` uses (NFC + casefold + strip + NFD-drop Mn).
+    """
+    resolver = HardcodedLocationResolver()
+    assert resolver.resolve_infojobs("Málaga") == (34, 17)
+    assert resolver.resolve_infojobs("MALAGA") == (34, 17)
+    assert resolver.resolve_infojobs("  Malaga  ") == (34, 17)
+
+
+def test_resolve_infojobs_unknown_city_returns_none_none_with_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unmapped city (`"Berlin"`) returns `(None, None)` and emits a WARNING.
+
+    The InfoJobs scraper then falls back to the v1 `?l=<str>` URL
+    (graceful degradation). The WARNING is observable for ops.
+    """
+    resolver = HardcodedLocationResolver()
+    with caplog.at_level(logging.WARNING, logger=_RESOLVER_LOGGER):
+        assert resolver.resolve_infojobs("Berlin") == (None, None)
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "Berlin" in warnings[0].getMessage()
+
+
+def test_resolve_infojobs_empty_string_returns_none_none_silently() -> None:
+    """`""` (empty) returns `(None, None)` WITHOUT a WARNING (sentinel).
+
+    The v1 path passes `""` to the aggregator; the empty string
+    is the canonical "no location specified" sentinel, not an
+    "unknown city" signal.
+    """
+    resolver = HardcodedLocationResolver()
+    # Silent — no caplog needed; an empty string is a legitimate input.
+    assert resolver.resolve_infojobs("") == (None, None)
+
+
+def test_resolve_infojobs_ctor_custom_infojobs_mapping_overrides_default() -> None:
+    """`HardcodedLocationResolver(infojobs_mapping={"foo": (99, 17)})` overrides.
+
+    The custom `infojobs_mapping` REPLACES the default 9-entry dict
+    (does NOT merge). The LinkedIn `mapping` is NOT affected by the
+    `infojobs_mapping` kwarg — the two dicts are independent
+    code paths in the same class.
+    """
+    resolver = HardcodedLocationResolver(infojobs_mapping={"foo": (99, 17)})
+    assert resolver.resolve_infojobs("foo") == (99, 17)
+    # The default InfoJobs entries are NOT visible (override semantics).
+    assert resolver.resolve_infojobs("malaga") == (None, None)
+    # The default LinkedIn entries are still visible (independent dicts).
+    assert resolver.resolve("malaga") == 104401670
+
+
+def test_resolve_infojobs_default_mapping_has_nine_entries() -> None:
+    """The default 9-entry InfoJobs mapping is the source of truth (locks the count).
+
+    A regression that adds or removes an entry (without updating this
+    test) is a silent spec drift; the count pin guards against it.
+    """
+    assert len(_INFOJOBS_MAPPING) == 9
+
+
+def test_resolve_infojobs_protocol_conformance_mypy_satisfaction() -> None:
+    """`HardcodedLocationResolver` satisfies the `LocationResolverPort` Protocol structurally.
+
+    mypy --strict enforces this at type-check time; the runtime
+    check confirms the class has BOTH `resolve` and `resolve_infojobs`
+    as callable instance methods. The Protocol is NOT
+    `@runtime_checkable` so we do not use `isinstance`; we use
+    `hasattr` + `callable` for the explicit, type-safe pattern.
+    """
+    resolver = HardcodedLocationResolver()
+    # `resolve` is the v1 (LinkedIn) method.
+    assert hasattr(resolver, "resolve")
+    assert callable(resolver.resolve)
+    # `resolve_infojobs` is the new (InfoJobs) method.
+    assert hasattr(resolver, "resolve_infojobs")
+    assert callable(resolver.resolve_infojobs)
