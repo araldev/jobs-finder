@@ -71,3 +71,108 @@ class EnvLinkedInAuthCookieAdapter:
 
     def __hash__(self) -> int:
         return hash(self._cookie)
+
+
+class MultiEnvLinkedInAuthCookiesAdapter:
+    """Reads 4 LinkedIn cookies from `Settings.linkedin_*` (no I/O at runtime).
+
+    `cookies()` returns `None` when ALL 4 are `None` (the v1
+    anonymous sentinel); otherwise returns the filtered list in
+    the canonical order `li_at → JSESSIONID → bcookie → li_gc`
+    (REQ-LST-COOKIE-004). The 4 cookies are independent `SecretStr
+    | None` slots; each is checked at the `Settings` boundary by
+    the shared `mode="before"` validator that normalizes empty
+    values to `None`.
+
+    Spec: REQ-LST-COOKIE-001..005. The ctor takes the 4 values
+    DIRECTLY (not the `Settings` instance). The composition root
+    is the only site that reads `Settings.linkedin_*`; the adapter
+    stays a pure value-holder. The class uses `__slots__` for
+    memory efficiency and to document the no-state invariant at
+    the type level (matches the `EnvLinkedInAuthCookieAdapter`
+    style above and the `NoOpRateLimiter` style at
+    `application/ports.py`).
+    """
+
+    __slots__ = ("_li_at", "_jsessionid", "_bcookie", "_li_gc")
+
+    # Canonical LinkedIn-session cookie order. The order is
+    # load-bearing: a future refactor that re-orders these 4 names
+    # MUST also update the order in `__init__` AND in `cookies()`
+    # (they're both indexed by position in the ctor's `__init__`
+    # kwargs). The test
+    # `test_cookies_returns_deterministic_order` pins the order
+    # so a re-order breaks the test loudly.
+    _COOKIE_NAMES = ("li_at", "JSESSIONID", "bcookie", "li_gc")
+
+    def __init__(
+        self,
+        li_at: SecretStr | None,
+        jsessionid: SecretStr | None,
+        bcookie: SecretStr | None,
+        li_gc: SecretStr | None,
+    ) -> None:
+        self._li_at = li_at
+        self._jsessionid = jsessionid
+        self._bcookie = bcookie
+        self._li_gc = li_gc
+
+    def cookies(self) -> list[tuple[str, SecretStr]] | None:
+        """Return the filtered cookie list, or `None` when all 4 are `None`.
+
+        REQ-LST-COOKIE-002: when ALL 4 cookies are `None` (the
+        v1 anonymous path), returns `None` so the caller can
+        short-circuit (the scraper skips `add_cookies` entirely).
+
+        REQ-LST-COOKIE-003: when ≥1 cookie is non-`None`, returns
+        the filtered list with `None` entries removed.
+
+        REQ-LST-COOKIE-004: the order is ALWAYS
+        `li_at → JSESSIONID → bcookie → li_gc` (the canonical
+        LinkedIn-session order), NOT the order the constructor
+        was called with.
+        """
+        pairs: list[tuple[str, SecretStr]] = []
+        for name, value in zip(
+            self._COOKIE_NAMES,
+            (self._li_at, self._jsessionid, self._bcookie, self._li_gc),
+            strict=True,
+        ):
+            if value is not None:
+                pairs.append((name, value))
+        return pairs if pairs else None
+
+    def __repr__(self) -> str:
+        """Mask the cookie set as `<set: N cookies>` or `<unset>` (no values).
+
+        REQ-LST-COOKIE-005: the repr shows the COUNT (an
+        acceptable 1-bit side-channel: the operator's own
+        `ls -la .env` is richer) but NEVER any cookie value. The
+        repr contains the synthetic test value (`"AQEAAAAQEAAA"`,
+        etc.) ONLY when the caller has the repr as a string in
+        test code; production code never logs the repr of a
+        cookie adapter unless it intentionally wants the count
+        channel.
+        """
+        count = sum(
+            v is not None for v in (self._li_at, self._jsessionid, self._bcookie, self._li_gc)
+        )
+        if count == 0:
+            return "MultiEnvLinkedInAuthCookiesAdapter(<unset>)"
+        return f"MultiEnvLinkedInAuthCookiesAdapter(<set: {count} cookies>)"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, MultiEnvLinkedInAuthCookiesAdapter):
+            return NotImplemented
+        # `SecretStr.__eq__` does NOT unwrap the secret — two
+        # `SecretStr("AQEAAAAQEAAA")` instances ARE equal, which
+        # is exactly what we want for settings comparison.
+        return (
+            self._li_at == other._li_at
+            and self._jsessionid == other._jsessionid
+            and self._bcookie == other._bcookie
+            and self._li_gc == other._li_gc
+        )
+
+    def __hash__(self) -> int:
+        return hash((self._li_at, self._jsessionid, self._bcookie, self._li_gc))

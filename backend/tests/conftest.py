@@ -76,6 +76,44 @@ class FakeLinkedInAuthCookiePort:
         return self._cookie
 
 
+class FakeLinkedInAuthCookiesPort:
+    """In-memory fake of `LinkedInAuthCookiesPort` (plural) for tests
+    (T-001 of `backend-linkedin-stealth`).
+
+    Mirrors the `MultiEnvLinkedInAuthCookiesAdapter` shape: a
+    value-holder with a single `cookies()` method that returns
+    the configured `list[tuple[str, SecretStr]] | None`. Default
+    is `None` (the v1 anonymous-scraper path — `cookies()` returns
+    `None` so the scraper skips `add_cookies` entirely). Tests
+    construct one explicitly when they need the adapter to
+    return a value (e.g. the per-cookie shape assertions in
+    `tests/unit/test_linkedin_stealth.py`).
+
+    The class is defined in `conftest.py` (NOT in a per-test
+    file) so future tests across the suite can import it
+    without duplicating the definition. Cite REQ-LST-COOKIE-001
+    scenario 3 (`test_fake_double_conforms_to_protocol`).
+
+    The v1 `FakeLinkedInAuthCookiePort` is byte-identical and
+    satisfies the v1 `LinkedInAuthCookiePort` (singular) only;
+    it does NOT satisfy the new `LinkedInAuthCookiesPort`
+    (plural) — the test in
+    `test_linkedin_stealth.py::TestFakeLinkedInAuthCookiesPort::test_fake_conforms_to_protocol_typecheck`
+    pins the structural conformance of the new fake only.
+    """
+
+    __slots__ = ("_cookies",)
+
+    def __init__(
+        self,
+        cookies: list[tuple[str, SecretStr]] | None = None,
+    ) -> None:
+        self._cookies = cookies
+
+    def cookies(self) -> list[tuple[str, SecretStr]] | None:
+        return self._cookies
+
+
 def _build_cached_linkedin_use_case(
     port: FakeJobSearchPort,
 ) -> CachedJobSearchUseCase:
