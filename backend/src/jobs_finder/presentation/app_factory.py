@@ -338,6 +338,16 @@ def build_app(  # noqa: PLR0915
                 # REQ-J-003: inter-page pacing is part of v1 (unlike
                 # the Indeed v1 which added it later).
                 inter_page_delay_seconds=effective_settings.infojobs_inter_page_delay_seconds,
+                # REQ-PROV-004: wire the SAME `HardcodedLocationResolver`
+                # instance (L185) into `InfoJobsScraperSettings` so the
+                # scraper's `search()` can call
+                # `resolve_infojobs(location)` once per call. The
+                # resolver is the SAME instance the LinkedIn scraper
+                # receives — one resolver, two methods, one in-process
+                # dict. The `is` invariant is pinned by
+                # `test_resolver_shared_between_linkedin_and_infojobs`
+                # in `tests/integration/test_composition.py`.
+                location_resolver=location_resolver,
             ),
             # REQ-J-002: production wires `Stealth()` from T-007
             # onward (unlike the Indeed v1 which deferred stealth to
@@ -590,10 +600,10 @@ def build_app(  # noqa: PLR0915
                 parser=parse_intent_response,
                 max_retries=effective_settings.intent_extraction_retry,
             )
-        # T-004 (`fix-linkedin-geoid`): construct a
-        # `HardcodedLocationResolver` and inject it into the
-        # chat-filter use case. The use case calls the
-        # resolver in the 2-stage path to translate
+        # T-004 (`fix-linkedin-geoid`): inject the SAME
+        # `HardcodedLocationResolver` (constructed at L185
+        # above) into the chat-filter use case. The use case
+        # calls the resolver in the 2-stage path to translate
         # `intent.location` (a free-form string) into a
         # LinkedIn `geoId` (a `int`). The resolver is a
         # in-process dict lookup (no I/O); the
@@ -602,9 +612,23 @@ def build_app(  # noqa: PLR0915
         # environment variable can disable the resolver
         # without code changes; the v1 default is always-on).
         # The resolver is constructed once at composition-
-        # root time and shared across all chat requests (the
-        # dict is read-only after construction).
-        location_resolver = HardcodedLocationResolver()
+        # root time and shared across the LinkedIn scraper,
+        # the InfoJobs scraper, the chat filter, AND the
+        # `app.state.location_resolver` (REQ-PROV-004).
+        #
+        # T-003 (`backend-infojobs-provinces`): the previous
+        # code path had a SHADOWING BUG at this exact line
+        # — `location_resolver = HardcodedLocationResolver()`
+        # built a SECOND `HardcodedLocationResolver` instance
+        # here, shadowing the L185 var. The chat filter then
+        # received a different resolver instance than the
+        # LinkedIn + InfoJobs scrapers, breaking the
+        # `app.state.location_resolver is settings.location_resolver`
+        # identity invariant. The bug is now FIXED: this
+        # block reuses the L185 instance (the variable is
+        # NOT reassigned). The fix is pinned by
+        # `test_resolver_shared_between_linkedin_and_infojobs`
+        # in `tests/integration/test_composition.py`.
         chat_use_case = FilterJobsByIntentUseCase(
             aggregator=aggregator_use_case,
             llm=llm_client,
