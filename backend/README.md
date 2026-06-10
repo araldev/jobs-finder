@@ -736,6 +736,112 @@ parameter from the `GET /jobs` route; an empty `query_tokens`
 `"Málaga"` matches `"Ingeniero Málaga"` (U+00E1) but does
 NOT match `"Ingeniero Malaga"` (no accent).
 
+**Defense-in-depth role** (REQ-PROV-005): the filter is
+KEPT as a safety net for the InfoJobs source. The PRIMARY
+narrowing happens at the URL level via the
+`provinceIds` + `countryIds` query params (see the
+"InfoJobs province/country resolution" section below).
+The filter's role is the secondary safety net: it catches
+zero-overlap jobs that slip through when the URL plumb
+returns the wrong region (unmapped locations, future
+province ID drift, transient InfoJobs SERP changes). The
+filter is O(n) pure (~10µs for 20 jobs); the cost of
+removing it is trivial but the cost of needing it again
+(a re-deploy + a hotfix) is higher. The 6 tests in
+`test_aggregator_filters.py` pin the keep-as-defense-
+in-depth contract.
+
+### InfoJobs province/country resolution (REQ-PROV-001..004)
+
+The InfoJobs SERP accepts `?provinceIds=<id>&countryIds=<id>`
+to narrow the result set to a specific region. The v1
+scraper emitted only `?q=<kw>&l=<loc>&page=<p>`, which
+InfoJobs's keyword match ignored — a query for
+`?q=react&l=Málaga` returned results from all of Spain
+(the user's smoke-test capture, 2026-06-10). The v3
+plumb (this change) resolves the `location` string into
+the `(province_id, country_id)` tuple and appends the
+two query params to the URL when the tuple is non-`None`.
+
+**Priority chain** (`raw location` → `resolve_infojobs` →
+`URL params`):
+
+1. The aggregator's route passes the raw `location` string
+   from the `?location=<str>` query param to the InfoJobs
+   scraper. NO schema change — the HTTP shape is preserved.
+2. The InfoJobs scraper's `search()` calls
+   `self._settings.location_resolver.resolve_infojobs(location)`
+   ONCE per call (NOT once per page — REQ-PROV-002 scenario
+   5). The tuple is captured by the `_make_fetch_one_page`
+   closure and reused on every page.
+3. The scraper's `_build_url` appends `&provinceIds=<id>`
+   AND/OR `&countryIds=<id>` to the v1 URL when the tuple
+   has at least one non-`None` entry. Concrete example for
+   a `?q=react&location=malaga` request:
+
+   ```
+   v1 (legacy):   ?q=react&l=malaga&page=1
+   v3 (narrowed): ?q=react&l=malaga&page=1&provinceIds=34&countryIds=17
+   ```
+
+   The tuple shape:
+   - `(int, int)` → `&provinceIds=<p>&countryIds=<c>`
+     (canonical "specific city" case).
+   - `(None, int)` → `&countryIds=<c>` only (the
+     "Remote" / "España" / "teletrabajo" country-only
+     sentinel).
+   - `(None, None)` → v1 URL shape (the unmapped
+     fallback; graceful degradation, no 500).
+
+**The 9-entry mapping** (the canonical dict in
+`infrastructure/location/_infojobs_mapping.py`):
+
+| Key (NORMALIZED) | Province ID | Country ID | Source |
+| --- | --- | --- | --- |
+| `malaga` | 34 | 17 | **USER-VERIFIED** (smoke test 2026-06-10) |
+| `espana` | None | 17 | **USER-VERIFIED** (same URL) |
+| `spain` | None | 17 | **USER-VERIFIED** (English synonym) |
+| `remote` | None | 17 | **USER-VERIFIED** (canonical "Remote") |
+| `teletrabajo` | None | 17 | **USER-VERIFIED** (Spanish "remote") |
+| `madrid` | 28 | 17 | SPECULATIVE (INE code; LIVE test pending) |
+| `barcelona` | 8 | 17 | SPECULATIVE (INE code; LIVE test pending) |
+| `valencia` | 46 | 17 | SPECULATIVE (INE code; LIVE test pending) |
+| `sevilla` | 41 | 17 | SPECULATIVE (INE code; LIVE test pending) |
+
+The 5 user-verified entries are pinned by the user's
+2026-06-10 smoke-test capture. The 4 speculative IDs
+(Madrid=28, Barcelona=8, Valencia=46, Sevilla=41) are the
+official INE codes for the Spanish provinces — InfoJobs
+may use a different internal namespace. If a speculative
+ID is wrong, the scraper returns 0 results from that
+region (the URL still works; the region filter excludes
+all matching jobs). The fallback is graceful: remove the
+entry from the dict (a 1-line change), the scraper falls
+back to the v1 `?l=<str>` path automatically.
+
+**LIVE test gate** (`LLM_LIVE_TESTS=1`): the 4 speculative
+IDs are validated against the real InfoJobs SERP by
+`tests/integration/test_infojobs_live.py`. The test is
+gated by `LLM_LIVE_TESTS=1` and is **NEVER run in CI**
+(per `AGENTS.md` rule #1). When the env var is unset, the
+test is skipped silently. Operators run the test
+manually with:
+
+```bash
+cd backend && LLM_LIVE_TESTS=1 uv run pytest tests/integration/test_infojobs_live.py -v
+```
+
+A failing ID can be removed from the dict without
+affecting the rest of the change (graceful degradation).
+
+**Backward compat for unmapped locations** (e.g.
+`"Berlin"`, `"Tokyo"`, `"Buenos Aires"`): the resolver
+returns `(None, None)`, the scraper falls back to the v1
+`?l=<str>` URL (byte-identical to the pre-change
+behavior). The `filter_infojobs_results` post-scrape
+safety net catches the 0-token overlap case. **No
+regression vs. today's behavior for unknown cities.**
+
 ### Defensive partial results (REQ-DEFENSIVE-001)
 
 The aggregator's per-source error isolation extends the

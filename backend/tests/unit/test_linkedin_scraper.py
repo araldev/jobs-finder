@@ -308,6 +308,21 @@ class _FakeLocationResolver:
             return self.return_value
         return None
 
+    def resolve_infojobs(self, location: str) -> tuple[int | None, int | None]:
+        """Default: return `(None, None)` (unmapped sentinel).
+
+        Spec: REQ-PROV-004 — the pre-change test doubles
+        (e.g. `_FakeLocationResolver` in this file) grow the
+        second Protocol method with a default `(None, None)`
+        return so the existing LinkedIn scraper tests stay
+        GREEN without modification. The LinkedIn scraper
+        consumes the v1 `resolve()` method; the InfoJobs
+        plumb uses `resolve_infojobs()` which this default
+        never reaches. The InfoJobs plumb tests live in
+        `test_infojobs_scraper.py`.
+        """
+        return (None, None)
+
     def resolve_structured(self, location: str) -> tuple[str, str, str] | None:
         """Record the call, return the canned structured triplet (default `None`).
 

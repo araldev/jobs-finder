@@ -32,6 +32,7 @@ constructs a `FakeBrowser` and wires it into the scraper via
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -49,6 +50,9 @@ from jobs_finder.infrastructure.infojobs.scraper import (
     InfoJobsScraperSettings,
 )
 from jobs_finder.infrastructure.infojobs.throttle import InfoJobsAsyncThrottle
+from jobs_finder.infrastructure.location.hardcoded_resolver import (
+    HardcodedLocationResolver,
+)
 from tests.fixtures.infojobs_search import BLOCKED_PAGE_HTML, SEARCH_PAGE_HTML
 
 # Type alias for the per-call selector-timeout hook used by `FakePage`.
@@ -710,3 +714,458 @@ class TestStealthIntegration:
         # The test passes if `search()` returns without raising. The
         # RED state for this test is `AttributeError` on
         # `scraper._stealth` before the constructor parameter lands.
+
+
+# ---------------------------------------------------------------------------
+# `InfoJobsScraperSettings.location_resolver` field (REQ-PROV-003)
+#
+# The settings gain an optional `location_resolver: LocationResolverPort | None`
+# kwarg. The default is `None` (backward-compat). The `HardcodedLocationResolver`
+# (or any other Protocol-conforming resolver) can be injected to plumb
+# province/country resolution into the scraper URL.
+# ---------------------------------------------------------------------------
+
+
+def test_infojobs_scraper_settings_default_resolver_is_none() -> None:
+    """`InfoJobsScraperSettings()` (no `location_resolver` kwarg) defaults to `None`.
+
+    Backward-compat invariant: pre-change code paths constructed
+    the settings without the resolver; the v1 default is `None`,
+    which makes the scraper fall back to the v1 `?l=<str>` URL
+    formula (no `provinceIds/countryIds`).
+    """
+    settings = InfoJobsScraperSettings(
+        user_agent="test-agent/1.0",
+        timeout_ms=10_000,
+    )
+    assert settings.location_resolver is None
+
+
+def test_infojobs_scraper_settings_accept_resolver() -> None:
+    """`InfoJobsScraperSettings(location_resolver=...)` accepts a resolver.
+
+    The kwarg is keyword-only; the resolver is stored on the
+    settings and read by the scraper's `search()` method.
+    """
+    resolver = HardcodedLocationResolver()
+    settings = InfoJobsScraperSettings(
+        user_agent="test-agent/1.0",
+        timeout_ms=10_000,
+        location_resolver=resolver,
+    )
+    assert settings.location_resolver is resolver  # `is`, not `==`
+
+
+def test_infojobs_scraper_settings_with_resolver_are_equal_and_hashable() -> None:
+    """Two settings instances with the same resolver are `==` and share a `hash`.
+
+    The slots-based + manual `__eq__` / `__hash__` discipline
+    (REQ-LOC-002 invariant) carries over to the new field: two
+    settings that differ ONLY in the resolver reference are
+    `==` when the resolvers are the SAME object (identity
+    comparison per the spec's "shared instance" invariant), and
+    hashable so they can be used as dict keys.
+    """
+    resolver = HardcodedLocationResolver()
+    a = InfoJobsScraperSettings(
+        user_agent="ua",
+        timeout_ms=10_000,
+        location_resolver=resolver,
+    )
+    b = InfoJobsScraperSettings(
+        user_agent="ua",
+        timeout_ms=10_000,
+        location_resolver=resolver,
+    )
+    assert a == b
+    assert hash(a) == hash(b)
+    # Sanity: the field is part of the hash (mismatched resolvers
+    # yield different hashes).
+    other = InfoJobsScraperSettings(
+        user_agent="ua",
+        timeout_ms=10_000,
+        location_resolver=HardcodedLocationResolver(),
+    )
+    assert a != other
+
+
+# ---------------------------------------------------------------------------
+# `_build_url(..., infojobs_geo=...)` extension (REQ-PROV-002)
+#
+# The URL formula gains an `infojobs_geo` keyword-only arg. When the
+# tuple is `(province_id, country_id)` (mapped location), the URL
+# includes `&provinceIds=<id>&countryIds=<id>`. When the tuple is
+# `(None, country_id)` (country-only), the URL includes
+# `&countryIds=<id>` only. When the tuple is `(None, None)`
+# (unmapped / empty / no resolver), the URL is byte-identical to
+# the v1 `?q=<kw>&l=<loc>&page=<p>` (no extra params).
+# ---------------------------------------------------------------------------
+
+
+def test_infojobs_build_url_includes_province_and_country_ids_when_mapped() -> None:
+    """`infojobs_geo=(34, 17)` (Málaga) → URL has `&provinceIds=34&countryIds=17`.
+
+    The v3 URL formula appends the two query params AFTER the
+    v1 `?q=<kw>&l=<loc>&page=<p>` triple, in this order:
+    `provinceIds` first, then `countryIds`. The 1-indexed
+    `page` param stays where it is (between `l=` and
+    `provinceIds=`) so the URL is readable and the v1 shape
+    is preserved at the start.
+    """
+    # `_build_url` is a pure function — it does not need the
+    # browser or throttle. We build a minimal scraper
+    # instance to access the method.
+    settings = InfoJobsScraperSettings(
+        user_agent="test-agent/1.0",
+        timeout_ms=10_000,
+    )
+    scraper = InfoJobsPlaywrightScraper(
+        throttle=InfoJobsAsyncThrottle(min_interval_seconds=0.0),
+        settings=settings,
+    )
+    url = scraper._build_url(  # noqa: SLF001
+        "python",
+        "malaga",
+        1,
+        infojobs_geo=(34, 17),
+    )
+    assert (
+        url
+        == "https://www.infojobs.net/ofertas-trabajo?q=python&l=malaga&page=1&provinceIds=34&countryIds=17"
+    )
+
+
+def test_infojobs_build_url_country_only_when_province_is_none() -> None:
+    """`infojobs_geo=(None, 17)` (Remote) → URL has `&countryIds=17` only (no `provinceIds`).
+
+    The country-only case is the canonical "Remote" / "España" /
+    "teletrabajo" sentinel. The URL omits `provinceIds` (not
+    emit it as `provinceIds=None`) so InfoJobs does not reject
+    the param as malformed.
+    """
+    settings = InfoJobsScraperSettings(
+        user_agent="test-agent/1.0",
+        timeout_ms=10_000,
+    )
+    scraper = InfoJobsPlaywrightScraper(
+        throttle=InfoJobsAsyncThrottle(min_interval_seconds=0.0),
+        settings=settings,
+    )
+    url = scraper._build_url(  # noqa: SLF001
+        "python",
+        "remote",
+        1,
+        infojobs_geo=(None, 17),
+    )
+    assert url == "https://www.infojobs.net/ofertas-trabajo?q=python&l=remote&page=1&countryIds=17"
+    assert "provinceIds" not in url
+
+
+def test_infojobs_build_url_falls_back_when_infojobs_geo_is_none() -> None:
+    """`infojobs_geo=None` → URL is byte-identical to v1 (no `provinceIds/countryIds`).
+
+    The v1 backward-compat path: when the resolver is not
+    configured (legacy wiring) OR returns `(None, None)`
+    (unmapped), the URL omits BOTH params. The `l=<loc>` param
+    is preserved (the v1 scraper relied on it as the primary
+    signal; v3 narrows but does not replace it).
+    """
+    settings = InfoJobsScraperSettings(
+        user_agent="test-agent/1.0",
+        timeout_ms=10_000,
+    )
+    scraper = InfoJobsPlaywrightScraper(
+        throttle=InfoJobsAsyncThrottle(min_interval_seconds=0.0),
+        settings=settings,
+    )
+    url = scraper._build_url(  # noqa: SLF001
+        "python",
+        "Berlin",
+        1,
+        infojobs_geo=None,
+    )
+    assert url == "https://www.infojobs.net/ofertas-trabajo?q=python&l=Berlin&page=1"
+
+
+def test_infojobs_build_url_falls_back_when_both_ids_are_none() -> None:
+    """`infojobs_geo=(None, None)` (resolver miss) → URL omits BOTH params.
+
+    The unmapped sentinel triggers the same fallback path as
+    `infojobs_geo=None` — the scraper cannot narrow the
+    region, so the URL is the v1 shape.
+    """
+    settings = InfoJobsScraperSettings(
+        user_agent="test-agent/1.0",
+        timeout_ms=10_000,
+    )
+    scraper = InfoJobsPlaywrightScraper(
+        throttle=InfoJobsAsyncThrottle(min_interval_seconds=0.0),
+        settings=settings,
+    )
+    url = scraper._build_url(  # noqa: SLF001
+        "python",
+        "Tokyo",
+        1,
+        infojobs_geo=(None, None),
+    )
+    assert url == "https://www.infojobs.net/ofertas-trabajo?q=python&l=Tokyo&page=1"
+
+
+# ---------------------------------------------------------------------------
+# `_make_fetch_one_page(keywords, location, infojobs_geo=...)` plumb
+# ---------------------------------------------------------------------------
+
+
+async def test_infojobs_make_fetch_one_page_captures_infojobs_geo() -> None:
+    """The closure captures the `infojobs_geo` tuple and forwards it to `_build_url` on every page.
+
+    A 2-page search with `infojobs_geo=(34, 17)` produces two
+    URLs, each with `&provinceIds=34&countryIds=17`. The tuple
+    is captured ONCE in the closure (per REQ-PROV-002 scenario
+    5: the resolver is called once per `search()`, not per
+    page).
+    """
+    second_page = _build_n_cards_html(5, id_prefix="xyz")
+    page = FakePage(
+        html=lambda url: SEARCH_PAGE_HTML if "page=1" in url else second_page,
+    )
+    scraper, _ = await _make_scraper_with(page)
+    closure = scraper._make_fetch_one_page(  # noqa: SLF001
+        "python",
+        "malaga",
+        infojobs_geo=(34, 17),
+    )
+    # Call the closure twice (simulating two pages) and assert
+    # both URLs carry the province/country params.
+    fake_page_obj = AsyncMock()
+    fake_page_obj.goto = AsyncMock()
+    fake_page_obj.wait_for_selector = AsyncMock()
+    fake_page_obj.content = AsyncMock(return_value=SEARCH_PAGE_HTML)
+    # The closure awaits `self._navigate_and_wait(page, url)`
+    # which awaits `page.goto(url)`. The URL we assert is the
+    # `page.goto` argument.
+    await closure(fake_page_obj, 0, 20)
+    await closure(fake_page_obj, 1, 20)
+    goto_urls = [call.args[0] for call in fake_page_obj.goto.await_args_list]
+    assert goto_urls == [
+        "https://www.infojobs.net/ofertas-trabajo?q=python&l=malaga&page=1&provinceIds=34&countryIds=17",
+        "https://www.infojobs.net/ofertas-trabajo?q=python&l=malaga&page=2&provinceIds=34&countryIds=17",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# `search()` end-to-end: resolver called once, URL includes province/country
+# ---------------------------------------------------------------------------
+
+
+class _CountingResolver:
+    """Minimal `LocationResolverPort` test double that counts `resolve_infojobs` calls.
+
+    The composition-root invariant (REQ-PROV-002 scenario 5) is
+    "the resolver is called EXACTLY once per `search()` call, not
+    per page". The test double counts calls so the test can
+    pin the call count.
+    """
+
+    def __init__(self, return_value: tuple[int | None, int | None]) -> None:
+        self._return = return_value
+        self.call_count = 0
+        self.last_input: str | None = None
+
+    def resolve(self, location: str) -> int | None:  # noqa: ARG002 — Protocol conformance
+        return None  # LinkedIn path unused; satisfy Protocol.
+
+    def resolve_infojobs(self, location: str) -> tuple[int | None, int | None]:
+        self.call_count += 1
+        self.last_input = location
+        return self._return
+
+    def resolve_structured(self, location: str) -> tuple[str, str, str] | None:  # noqa: ARG002
+        # Protocol conformance (REQ-STR-LOC-001); the InfoJobs
+        # scraper never calls this path, so the default `None`
+        # return is correct.
+        return None
+
+
+async def test_infojobs_search_calls_resolver_exactly_once() -> None:
+    """`search()` calls `resolve_infojobs(location)` exactly once (not per page).
+
+    A 3-page paginated search yields `call_count == 1`. The
+    tuple is captured in the closure and reused on every
+    page. The resolver is read from `_settings.location_resolver`.
+    """
+    second_page = _build_n_cards_html(15, id_prefix="xyz")
+    page = FakePage(
+        html=lambda url: SEARCH_PAGE_HTML if "page=1" in url else second_page,
+    )
+    resolver = _CountingResolver(return_value=(34, 17))
+    fake_browser = FakeBrowser(page)
+    throttle = InfoJobsAsyncThrottle(min_interval_seconds=0.0)
+
+    async def factory() -> FakeBrowser:
+        return fake_browser
+
+    scraper = InfoJobsPlaywrightScraper(
+        throttle=throttle,
+        settings=InfoJobsScraperSettings(
+            user_agent="test-agent/1.0",
+            timeout_ms=10_000,
+            max_pages=3,
+            inter_page_delay_seconds=0.0,
+            location_resolver=resolver,
+        ),
+        browser_factory=factory,
+    )
+    async with scraper:
+        # `limit=40` forces 3 page requests (5 + 15 + ... >= 40).
+        await scraper.search("python", "malaga", limit=40)
+
+    assert resolver.call_count == 1
+    assert resolver.last_input == "malaga"
+
+
+async def test_infojobs_search_emits_province_country_in_url() -> None:
+    """End-to-end: resolver returns `(34, 17)` → URL has `&provinceIds=34&countryIds=17`.
+
+    A single-page search with the v1 `SEARCH_PAGE_HTML` fixture
+    asserts the URL is the v3 narrowed shape. The test pins
+    BOTH the URL contract AND that the resolver input is the
+    raw `location` string the caller passed (NOT a
+    pre-normalized form — the resolver normalizes internally).
+    """
+    page = FakePage(SEARCH_PAGE_HTML)
+    resolver = _CountingResolver(return_value=(34, 17))
+    fake_browser = FakeBrowser(page)
+    throttle = InfoJobsAsyncThrottle(min_interval_seconds=0.0)
+
+    async def factory() -> FakeBrowser:
+        return fake_browser
+
+    scraper = InfoJobsPlaywrightScraper(
+        throttle=throttle,
+        settings=InfoJobsScraperSettings(
+            user_agent="test-agent/1.0",
+            timeout_ms=10_000,
+            max_pages=10,
+            inter_page_delay_seconds=0.0,
+            location_resolver=resolver,
+        ),
+        browser_factory=factory,
+    )
+    async with scraper:
+        await scraper.search("python", "malaga", limit=5)
+
+    assert page.goto_calls == [
+        "https://www.infojobs.net/ofertas-trabajo?q=python&l=malaga&page=1&provinceIds=34&countryIds=17",
+    ]
+
+
+async def test_infojobs_search_emits_country_only_when_province_is_none() -> None:
+    """`?l=remote` + resolver returns `(None, 17)` → URL has `&countryIds=17` only.
+
+    The "Remote" / "teletrabajo" / "España" case: country is
+    set, province is `None`. The URL builder omits
+    `provinceIds` (NOT emit it as `provinceIds=None`) so
+    InfoJobs does not reject the param.
+    """
+    page = FakePage(SEARCH_PAGE_HTML)
+    resolver = _CountingResolver(return_value=(None, 17))
+    fake_browser = FakeBrowser(page)
+    throttle = InfoJobsAsyncThrottle(min_interval_seconds=0.0)
+
+    async def factory() -> FakeBrowser:
+        return fake_browser
+
+    scraper = InfoJobsPlaywrightScraper(
+        throttle=throttle,
+        settings=InfoJobsScraperSettings(
+            user_agent="test-agent/1.0",
+            timeout_ms=10_000,
+            location_resolver=resolver,
+        ),
+        browser_factory=factory,
+    )
+    async with scraper:
+        await scraper.search("python", "remote", limit=5)
+
+    assert page.goto_calls == [
+        "https://www.infojobs.net/ofertas-trabajo?q=python&l=remote&page=1&countryIds=17",
+    ]
+
+
+async def test_infojobs_search_falls_back_when_resolver_returns_none_none() -> None:
+    """Resolver returns `(None, None)` (unmapped) → URL is v1 (no `provinceIds/countryIds`).
+
+    The unmapped sentinel triggers the same fallback as
+    `location_resolver=None` (the legacy wiring). The
+    `l=<loc>` param is preserved so the v1 contract is
+    not regressed for unmapped cities.
+    """
+    page = FakePage(SEARCH_PAGE_HTML)
+    resolver = _CountingResolver(return_value=(None, None))
+    fake_browser = FakeBrowser(page)
+    throttle = InfoJobsAsyncThrottle(min_interval_seconds=0.0)
+
+    async def factory() -> FakeBrowser:
+        return fake_browser
+
+    scraper = InfoJobsPlaywrightScraper(
+        throttle=throttle,
+        settings=InfoJobsScraperSettings(
+            user_agent="test-agent/1.0",
+            timeout_ms=10_000,
+            location_resolver=resolver,
+        ),
+        browser_factory=factory,
+    )
+    async with scraper:
+        await scraper.search("python", "Berlin", limit=5)
+
+    assert page.goto_calls == [
+        "https://www.infojobs.net/ofertas-trabajo?q=python&l=Berlin&page=1",
+    ]
+
+
+async def test_infojobs_search_falls_back_when_no_resolver_configured() -> None:
+    """`location_resolver=None` (legacy wiring) → URL is v1, no WARNING is logged in this path.
+
+    The v1 backward-compat path: the scraper was constructed
+    without a resolver (the pre-change wiring). The URL is
+    byte-identical to the pre-change behavior. The DeprecationWarning
+    is logged ONCE per process (the test asserts the URL
+    shape, not the warning — the warning is a separate test
+    in the next section).
+    """
+    page = FakePage(SEARCH_PAGE_HTML)
+    # `_make_scraper_with` does not pass `location_resolver`, so
+    # the settings default to `None` (the legacy wiring).
+    scraper, _ = await _make_scraper_with(page)
+    async with scraper:
+        await scraper.search("python", "madrid", limit=5)
+
+    assert page.goto_calls == [
+        "https://www.infojobs.net/ofertas-trabajo?q=python&l=madrid&page=1",
+    ]
+
+
+async def test_infojobs_search_logs_warning_when_no_resolver_configured(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Legacy wiring (`location_resolver=None`) logs a DeprecationWarning once.
+
+    The warning guides operators to wire the resolver (the v3
+    recommended path). The warning is INFO-level (not WARNING)
+    so it does not pollute the WARNING-strict logs that ops
+    use to spot unmapped cities.
+    """
+    page = FakePage(SEARCH_PAGE_HTML)
+    scraper, _ = await _make_scraper_with(page)
+    async with scraper:
+        with caplog.at_level(logging.INFO, logger="jobs_finder.infrastructure.infojobs.scraper"):
+            await scraper.search("python", "madrid", limit=5)
+    # At least one INFO record was emitted with the "no resolver"
+    # hint. The exact text is part of the impl; the test pins
+    # the BEHAVIOR (a log is emitted) without coupling to the
+    # exact wording.
+    info_records = [r for r in caplog.records if r.levelno == logging.INFO]
+    assert any("resolver" in r.getMessage().lower() for r in info_records)

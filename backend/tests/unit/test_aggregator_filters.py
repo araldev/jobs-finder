@@ -38,6 +38,7 @@ This file is the RED → GREEN → REFACTOR anchor for T-003.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 from jobs_finder.domain.job import Job
 from jobs_finder.infrastructure.aggregator_filters import (
@@ -163,3 +164,79 @@ def test_tokenize_unicode_preserves_accents() -> None:
     result = filter_infojobs_results(jobs, query_tokens={"málaga"})
     assert len(result) == 1
     assert result[0].title == "Ingeniero Málaga"
+
+
+# ---------------------------------------------------------------------------
+# Docstring + README grep tests (REQ-PROV-005)
+#
+# These are NOT behavioral tests (they don't call the function
+# with different inputs and assert different outputs). They are
+# DOCUMENTATION tests: they assert that the docstring + README
+# contain the canonical keywords the design pinned (REQ-PROV-005
+# scenario 5: "README documents 'defense-in-depth' / 'safety net'
+# role"). The grep assertions catch regressions where a future
+# refactor removes the documentation hint without removing the
+# code (or vice-versa).
+# ---------------------------------------------------------------------------
+
+
+def test_filter_infojobs_results_docstring_marks_defense_in_depth() -> None:
+    """`filter_infojobs_results` docstring contains the phrase "defense-in-depth".
+
+    REQ-PROV-005 pins the docstring MUST call itself a
+    "defense-in-depth safety net" so future readers
+    understand the function is intentionally kept alive
+    (not removed, not no-op'd).     A regression that strips
+    the phrase (e.g. a docstring rewrite during a
+    refactor) is a silent spec drift; the test catches it.
+    """
+    docstring = filter_infojobs_results.__doc__ or ""
+    assert "defense-in-depth" in docstring.lower()
+    # The docstring also points readers to the README
+    # section that explains the role in detail.
+    assert "province" in docstring.lower()
+    assert "countryIds" in docstring or "country" in docstring.lower()
+
+
+def test_backend_readme_documents_infojobs_province_country_resolution() -> None:
+    """`backend/README.md` contains a "InfoJobs province/country resolution" section
+    that documents:
+        - The 9-entry mapping table
+        - The 4 speculative IDs (Madrid/Barcelona/Valencia/Sevilla)
+        - The LIVE test gate (`LLM_LIVE_TESTS=1`)
+        - The unmapped-location fallback (graceful degradation)
+    """
+    readme_path = Path(__file__).resolve().parent.parent.parent / "README.md"
+    readme_text = readme_path.read_text(encoding="utf-8")
+
+    # The new section exists with the canonical title.
+    assert "InfoJobs province/country resolution" in readme_text
+    # The 4 speculative IDs are documented.
+    assert "SPECULATIVE" in readme_text or "speculative" in readme_text
+    # The LIVE test gate env var is documented.
+    assert "LLM_LIVE_TESTS" in readme_text
+    # The unmapped-location fallback is documented.
+    assert "unmapped" in readme_text.lower() or "graceful" in readme_text.lower()
+    # The defense-in-depth role of the filter is documented.
+    assert "defense-in-depth" in readme_text.lower() or "defense in depth" in readme_text.lower()
+
+
+def test_backend_readme_documents_url_formula_with_province_country_ids() -> None:
+    """`backend/README.md` documents the `provinceIds` + `countryIds` URL params.
+
+    The URL formula is the user-facing contract: an
+    operator reading the README should know that a query
+    for `?location=Málaga` is narrowed to
+    `&provinceIds=34&countryIds=17` in the URL the
+    InfoJobs scraper visits. The grep assertion catches
+    regressions where the docs lose the URL example.
+    """
+    readme_path = Path(__file__).resolve().parent.parent.parent / "README.md"
+    readme_text = readme_path.read_text(encoding="utf-8")
+
+    # The query params are spelled out (the canonical names).
+    assert "provinceIds" in readme_text
+    assert "countryIds" in readme_text
+    # At least one example URL is shown.
+    assert "provinceIds=34" in readme_text  # the canonical Málaga example
+    assert "countryIds=17" in readme_text  # the canonical España example

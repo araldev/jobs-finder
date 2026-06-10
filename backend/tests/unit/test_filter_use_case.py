@@ -989,6 +989,21 @@ class FakeLocationResolver:
             raise self._error
         return self._canned
 
+    def resolve_infojobs(self, location: str) -> tuple[int | None, int | None]:
+        """Default: return `(None, None)` (unmapped sentinel).
+
+        Spec: REQ-PROV-004 — the pre-change test doubles
+        (e.g. `FakeLocationResolver` in this file) grow the
+        second Protocol method with a default `(None, None)`
+        return so the existing chat-wiring tests stay GREEN
+        without modification. The InfoJobs plumb tests inject
+        a real `HardcodedLocationResolver` and assert the
+        InfoJobs path; the chat-wiring tests continue to
+        exercise the v1 LinkedIn path (which only calls
+        `resolve()`, not `resolve_infojobs()`).
+        """
+        return (None, None)
+
     def resolve_structured(self, location: str) -> tuple[str, str, str] | None:
         """Record the call, return the canned structured triplet (default `None`)."""
         self.structured_calls.append(location)
