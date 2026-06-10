@@ -161,13 +161,20 @@ async def aggregate_jobs(
     #   `app.state.location_resolver`; a `None` return value
     #   (unknown location) is forwarded as `None` and the
     #   LinkedIn scraper falls back to `?location=<str>`.
-    # - `enable_keyword_scoring`: the opt-in toggle from
-    #   `Settings.enable_keyword_scoring`. The route reads
-    #   the setting from `app.state` (exposed by
-    #   `build_app`).
+    #
+    # The `enable_keyword_scoring` toggle is PER-AGGREGATOR
+    # (set at composition time from `Settings.enable_keyword_
+    # scoring`); the route intentionally does NOT forward it as
+    # a per-request kwarg. Pre-fix the route read the flag from
+    # `app.state.settings` and passed it per-request, which
+    # silently overrode the aggregator's ctor field and made
+    # `ranking_strategy=none|priority|posted_at` a no-op when
+    # `ENABLE_KEYWORD_SCORING=true`. The post-fix contract: the
+    # operator decides the toggle at deploy time (via the env
+    # var), and the aggregator's `ranking_strategy` setting
+    # is honored when the toggle is `False`.
     query_tokens = frozenset(tokenize(query.q))
     linkedin_geo_id = request.app.state.location_resolver.resolve(query.location)
-    enable_keyword_scoring = request.app.state.settings.enable_keyword_scoring
 
     result = await use_case.search(
         keywords=query.q,
@@ -176,7 +183,6 @@ async def aggregate_jobs(
         sources=source_list,
         query_tokens=query_tokens,
         linkedin_geo_id=linkedin_geo_id,
-        enable_keyword_scoring=enable_keyword_scoring,
     )
 
     # T-003 (REQ-A-006): per-source observability headers. The route
