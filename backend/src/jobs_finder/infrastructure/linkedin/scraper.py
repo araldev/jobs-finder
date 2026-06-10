@@ -49,6 +49,7 @@ Errors:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Self
@@ -75,6 +76,7 @@ from jobs_finder.infrastructure.pagination import paginated_search
 
 from .exceptions import LinkedInBlockedError, LinkedInParseError, LinkedInTimeoutError
 from .parsers import (
+    is_auth_wall,
     is_block_page,
     parse_company,
     parse_description,
@@ -99,6 +101,13 @@ DEFAULT_TIMEOUT_MS = 10_000
 RESULTS_SELECTOR = "div[data-entity-urn]"
 
 VIEWPORT: dict[str, int] = {"width": 1280, "height": 800}
+
+# Module-level logger for the scraper. Used by the cookie
+# injection (T-004, REQ-LA-SCR-005 — DEBUG line logs the cookie
+# LENGTH, NEVER the value) and the auth-wall WARNING
+# (REQ-LA-AWALL-005 — WARNING line emitted inside
+# `_make_fetch_one_page` when `is_auth_wall(soup)` is True).
+_logger = logging.getLogger(__name__)
 
 # `browser_factory` returns the live `Browser` to drive in `__aenter__`.
 # In production this is `None` and the scraper launches Chromium itself.
@@ -297,6 +306,36 @@ class LinkedInPlaywrightScraper(JobSearchPort):
             user_agent=self._settings.user_agent,
             viewport=VIEWPORT,
         )
+        # T-004 of `backend-linkedin-auth` — REQ-LA-SCR-001..006 plumb.
+        # Inject the operator's `li_at` cookie ONCE per `search()`
+        # (per-context, not per-page). The cookie travels with
+        # every page request in the pagination loop because
+        # Playwright's `BrowserContext` shares the cookie store
+        # with all pages in the context. When the port is `None`
+        # (the v1 anonymous path), the call is skipped — the
+        # scraper proceeds with the v1 auth-wall behavior and
+        # `app_factory.build_app()` has already emitted the
+        # single startup WARNING at process start.
+        cookie = (
+            self._settings.auth_cookie.cookie() if self._settings.auth_cookie is not None else None
+        )
+        if cookie is not None:
+            await ctx.add_cookies(
+                [
+                    {
+                        "name": "li_at",
+                        "value": cookie.get_secret_value(),
+                        "domain": ".linkedin.com",
+                        "path": "/",
+                        "httpOnly": True,
+                        "secure": True,
+                    }
+                ]
+            )
+            _logger.debug(
+                "LinkedIn auth cookie injected (length=%d)",
+                len(cookie.get_secret_value()),
+            )
         try:
             page = await ctx.new_page()
             try:
@@ -362,6 +401,35 @@ class LinkedInPlaywrightScraper(JobSearchPort):
             await self._navigate_and_wait(page, url)
             content = await page.content()
             soup = BeautifulSoup(content, "html.parser")
+            # T-004 of `backend-linkedin-auth` — REQ-LA-AWALL-005
+            # closure integration. The semantic split with
+            # `is_block_page`:
+            # - `is_auth_wall` is the SOFT path: the cookie was
+            #   injected but the SERP rendered an auth-wall
+            #   variant (cookie may be expired). The closure
+            #   emits a WARNING and returns `[]` — NO raise
+            #   (REQ-LA-AWALL-006: "the soft path is graceful").
+            # - `is_block_page` is the HARD path: a true 502
+            #   (no auth-wall class but a sign-in form or
+            #   sign-in title). The closure raises
+            #   `LinkedInBlockedError`.
+            # The two functions overlap on the
+            # `body.auth-wall` + 0 cards case. When the
+            # operator has injected a cookie, the auth-wall
+            # check runs FIRST and short-circuits the hard
+            # raise (the auth-wall signal is the
+            # "operator's cookie expired" indicator). When
+            # the operator has NOT injected a cookie (the
+            # v1 anonymous path), the closure preserves the
+            # v1 hard-raise behavior — the auth-wall is
+            # indistinguishable from a true LinkedIn 502.
+            if self._settings.auth_cookie is not None and is_auth_wall(soup):
+                _logger.warning(
+                    "LinkedIn SERP appears auth-walled despite cookie "
+                    "injection; cookie may be expired. Returning 0 "
+                    "jobs from this page (degraded)."
+                )
+                return _parse_cards(soup, remaining)
             if is_block_page(soup):
                 raise LinkedInBlockedError("LinkedIn returned an auth-wall / verification page")
             return _parse_cards(soup, remaining)
