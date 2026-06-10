@@ -51,6 +51,7 @@ source does not affect the other sources' lifespan behavior.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from types import MappingProxyType
@@ -98,6 +99,9 @@ from jobs_finder.infrastructure.infojobs.scraper import (
 )
 from jobs_finder.infrastructure.infojobs.throttle import InfoJobsAsyncThrottle
 from jobs_finder.infrastructure.keyword_score import keyword_score
+from jobs_finder.infrastructure.linkedin.auth_cookie import (
+    EnvLinkedInAuthCookieAdapter,
+)
 from jobs_finder.infrastructure.linkedin.scraper import (
     LinkedInPlaywrightScraper,
     LinkedInScraperSettings,
@@ -126,6 +130,13 @@ from jobs_finder.presentation.routes import health as health_routes
 from jobs_finder.presentation.routes import indeed as indeed_routes
 from jobs_finder.presentation.routes import infojobs as infojobs_routes
 from jobs_finder.presentation.routes import linkedin as linkedin_routes
+
+# Module-level logger for the composition root. Used by the
+# LinkedIn auth-cookie startup WARNING (T-005 of
+# `backend-linkedin-auth`, REQ-LA-SCR-003 — emitted ONCE at
+# process start when the operator has not configured
+# `LINKEDIN_LI_AT`).
+_logger = logging.getLogger(__name__)
 
 
 def build_app(  # noqa: PLR0915
@@ -236,7 +247,30 @@ def build_app(  # noqa: PLR0915
         # per-source request timeout).
         llm_http_client = httpx.AsyncClient(timeout=effective_settings.llm_request_timeout_seconds)
 
+    # T-005 of `backend-linkedin-auth` — REQ-LA-SCR-003 startup
+    # WARNING. Emitted ONCE per `build_app()` call (process
+    # start) when the operator has not configured
+    # `LINKEDIN_LI_AT`. The WARNING runs OUTSIDE the
+    # `if use_case is None:` block so it fires even when a
+    # test injects a use case (the integration test asserts
+    # the warning contract end-to-end). The adapter
+    # construction (REQ-LA-SCR-001) stays inside the
+    # `if use_case is None:` block because it only matters
+    # when we're actually building the scraper.
+    if effective_settings.linkedin_li_at is None:
+        _logger.warning(
+            "LinkedIn scraper running without auth cookie; "
+            "SERP will hit the auth wall and return a reduced list"
+        )
+
     if use_case is None:
+        # T-005 of `backend-linkedin-auth` — REQ-LA-SCR-001 plumb.
+        # Build the `EnvLinkedInAuthCookieAdapter` from the
+        # resolved `Settings.linkedin_li_at` (default None = v1
+        # anonymous). The adapter is constructed ONCE per
+        # `build_app()` call and lives in the
+        # `LinkedInScraperSettings` slot.
+        auth_cookie_port = EnvLinkedInAuthCookieAdapter(effective_settings.linkedin_li_at)
         scraper = LinkedInPlaywrightScraper(
             throttle=AsyncThrottle(min_interval_seconds=effective_settings.throttle_seconds),
             # REQ-L-008: `LinkedInScraperSettings` was renamed from the
@@ -255,6 +289,7 @@ def build_app(  # noqa: PLR0915
                 max_pages=effective_settings.linkedin_max_pages,
                 inter_page_delay_seconds=effective_settings.linkedin_inter_page_delay_seconds,
                 location_resolver=location_resolver,
+                auth_cookie=auth_cookie_port,
             ),
         )
         raw_use_case = RawLinkedInJobsUseCase(port=scraper)
