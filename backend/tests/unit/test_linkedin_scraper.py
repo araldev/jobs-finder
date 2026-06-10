@@ -286,6 +286,8 @@ class _FakeLocationResolver:
     def __init__(self, return_value: int | str | None) -> None:
         self.return_value = return_value
         self.calls: list[str] = []
+        self.structured_calls: list[str] = []
+        self.structured_return: tuple[str, str, str] | None = None
 
     def resolve(self, location: str) -> int | None:
         self.calls.append(location)
@@ -298,6 +300,19 @@ class _FakeLocationResolver:
         if isinstance(self.return_value, int):
             return self.return_value
         return None
+
+    def resolve_structured(self, location: str) -> tuple[str, str, str] | None:
+        """Record the call, return the canned structured triplet (default `None`).
+
+        Added for Protocol conformance (REQ-STR-LOC-001). The
+        default `None` keeps the existing tests in this file
+        unchanged — they exercise the geoId / raw paths, not
+        the structured path. The T-002 tests in this file
+        override `structured_return` to exercise the
+        structured branch.
+        """
+        self.structured_calls.append(location)
+        return self.structured_return
 
 
 async def test_search_uses_geo_id_when_resolver_returns_int() -> None:

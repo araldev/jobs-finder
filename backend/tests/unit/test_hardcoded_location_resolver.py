@@ -381,3 +381,274 @@ def test_ctor_custom_mapping_overrides_default() -> None:
     # The default entries are NOT visible (the custom mapping
     # replaces the default).
     assert resolver.resolve("madrid") is None
+
+
+# ---------------------------------------------------------------------------
+# Section 6: `resolve_structured` — triplet `(city, province, country)`.
+#
+# Added in `backend-linkedin-location-fallback` (REQ-STR-LOC-001). The
+# v1 LinkedIn scraper falls back to `?location=<str>` for cities
+# without a captured `geoId`; the new method returns a triplet
+# `(city, province, country)` in Title Case (with tildes NFC) for
+# cities that have a structured mapping. The LinkedIn scraper uses
+# the triplet in `?location=city,province,country` (URL-encoded) —
+# LinkedIn's fuzzy match handles the structured form better than
+# the raw string. Country-level inputs (e.g. "España") and CCAA-
+# level inputs (e.g. "Andalucía") return `None` (the dict is city-
+# level; country / CCAA is a different category and the spec author
+# decided to return `None` rather than heuristically map).
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_structured_antequera_returns_verified_triplet() -> None:
+    """`"Antequera"` returns `("Antequera", "Andalucía", "Spain")` — the VERIFIED case.
+
+    Antequera is the only VERIFIED entry in `_STRUCTURED_MAPPING`
+    (per the spec author's `LLM_LIVE_TESTS=1` gated test). The
+    triplet preserves Title Case + tildes in the value.
+    """
+    resolver = HardcodedLocationResolver()
+    assert resolver.resolve_structured("Antequera") == (
+        "Antequera",
+        "Andalucía",
+        "Spain",
+    )
+
+
+@pytest.mark.parametrize(
+    ("input_location", "expected_triplet"),
+    [
+        # === VERIFIED (1) ===
+        ("antequera", ("Antequera", "Andalucía", "Spain")),
+        # === SPECULATIVE (9) ===
+        ("fuengirola", ("Fuengirola", "Málaga", "Spain")),
+        ("marbella", ("Marbella", "Málaga", "Spain")),
+        ("toledo", ("Toledo", "Castilla-La Mancha", "Spain")),
+        ("salamanca", ("Salamanca", "Castilla y León", "Spain")),
+        ("cadiz", ("Cádiz", "Andalucía", "Spain")),
+        ("granada", ("Granada", "Andalucía", "Spain")),
+        ("gijon", ("Gijón", "Asturias", "Spain")),
+        ("leon", ("León", "Castilla y León", "Spain")),
+        ("vigo", ("Vigo", "Galicia", "Spain")),
+    ],
+)
+def test_resolve_structured_all_10_cities(
+    input_location: str, expected_triplet: tuple[str, str, str]
+) -> None:
+    """All 10 entries in `_STRUCTURED_MAPPING` return the expected triplet.
+
+    One parametrized test pins the 10-city dict shape. The lookup
+    is done on the NORMALIZED form (lowercase + accentless); the
+    output preserves Title Case + tildes. The 9 SPECULATIVE
+    entries will be validated by the `LLM_LIVE_TESTS=1` gated
+    test in `tests/integration/test_linkedin_live.py`.
+    """
+    resolver = HardcodedLocationResolver()
+    assert resolver.resolve_structured(input_location) == expected_triplet
+
+
+def test_resolve_structured_lowercase_input_matches_canonical() -> None:
+    """`"antequera"` (lowercase) returns the Title Case triplet.
+
+    The 4-step normalization chain (`NFC + casefold + strip +
+    remove accents`) collapses the input to the dict lookup key;
+    the output is the Title Case value (with tildes).
+    """
+    resolver = HardcodedLocationResolver()
+    assert resolver.resolve_structured("antequera") == (
+        "Antequera",
+        "Andalucía",
+        "Spain",
+    )
+
+
+def test_resolve_structured_uppercase_input_normalizes() -> None:
+    """`"ANTEQUERA"` (uppercase) returns the Title Case triplet.
+
+    `casefold()` collapses `"ANTEQUERA"` → `"antequera"` and the
+    dict lookup matches.
+    """
+    resolver = HardcodedLocationResolver()
+    assert resolver.resolve_structured("ANTEQUERA") == (
+        "Antequera",
+        "Andalucía",
+        "Spain",
+    )
+
+
+def test_resolve_structured_strip_whitespace() -> None:
+    """Leading + trailing whitespace is stripped before lookup.
+
+    The resolver is defensive about re-normalizing even when the
+    caller (e.g. a CLI) does not pre-normalize.
+    """
+    resolver = HardcodedLocationResolver()
+    assert resolver.resolve_structured("  Antequera  ") == (
+        "Antequera",
+        "Andalucía",
+        "Spain",
+    )
+
+
+def test_resolve_structured_nfd_decomposed_input() -> None:
+    """`"Antequera"` (NFD-decomposed) matches the NFC entry.
+
+    The 4-step chain NFC-composes the input; NFD input
+    (e.g. `A` + combining acute) normalizes to the same key.
+    """
+    resolver = HardcodedLocationResolver()
+    # NFD decomposed: "Ante\u0301quera" (combining acute accent).
+    assert resolver.resolve_structured("Ante\u0301quera") == (
+        "Antequera",
+        "Andalucía",
+        "Spain",
+    )
+
+
+def test_resolve_structured_accentless_input_returns_titled_value() -> None:
+    """`"Cadiz"` (ASCII, no tilde) returns `("Cádiz", "Andalucía", "Spain")`.
+
+    The dict's lookup key is accentless (`"cadiz"`); the value
+    preserves the tilde. The 4-step chain NFD-decomposes +
+    drops `Mn` marks so the input `"Cadiz"` matches the key.
+    """
+    resolver = HardcodedLocationResolver()
+    assert resolver.resolve_structured("Cadiz") == (
+        "Cádiz",
+        "Andalucía",
+        "Spain",
+    )
+
+
+def test_resolve_structured_unmapped_returns_none() -> None:
+    """`"Berlin"` (unknown city) returns `None`.
+
+    The dict has no entry for Berlin; the resolver returns
+    `None` (no WARNING log, per the `resolve_structured`
+    contract — it's a different semantic from `resolve()`).
+    The LinkedIn scraper falls back to the legacy
+    `?location=Berlin` path.
+    """
+    resolver = HardcodedLocationResolver()
+    assert resolver.resolve_structured("Berlin") is None
+
+
+def test_resolve_structured_empty_string_returns_none() -> None:
+    """`""` (empty string) short-circuits to `None`.
+
+    Mirrors `resolve()`'s empty-string semantic: an empty
+    string is the canonical "no location specified" sentinel
+    and returns `None` without any lookup.
+    """
+    resolver = HardcodedLocationResolver()
+    assert resolver.resolve_structured("") is None
+
+
+@pytest.mark.parametrize(
+    "country_input",
+    ["España", "Spain", "Espana"],
+)
+def test_resolve_structured_country_level_returns_none(country_input: str) -> None:
+    """Country-level inputs return `None` (dict is city-level).
+
+    The spec author decided that country-level inputs do NOT
+    return a triplet — the dict is city-level; a country is
+    a different category. Returning `None` lets the LinkedIn
+    scraper fall back to the legacy `?location=<raw>` path,
+    which is the same behavior as the v1 broken path (no
+    regression).
+    """
+    resolver = HardcodedLocationResolver()
+    assert resolver.resolve_structured(country_input) is None
+
+
+def test_resolve_structured_ccaa_level_returns_none() -> None:
+    """`"Andalucía"` (CCAA-level) returns `None` (dict is city-level).
+
+    CCAA-level inputs are also out of scope for
+    `_STRUCTURED_MAPPING` (the dict is city-level; the CCAA
+    level belongs to a different concept). Returning `None`
+    lets the scraper fall back to the legacy path.
+    """
+    resolver = HardcodedLocationResolver()
+    assert resolver.resolve_structured("Andalucía") is None
+
+
+def test_resolve_structured_alias_recurse() -> None:
+    """A custom alias (e.g. `"ante" → "antequera"`) recurses correctly.
+
+    The `_ALIASES` mapping is shared between `resolve()` and
+    `resolve_structured()` (decision per design §2.9). A custom
+    alias `"ante" → "antequera"` expands to the structured
+    triplet for Antequera.
+    """
+    resolver = HardcodedLocationResolver(aliases={"ante": "antequera"})
+    assert resolver.resolve_structured("ante") == (
+        "Antequera",
+        "Andalucía",
+        "Spain",
+    )
+
+
+def test_resolve_structured_ctor_default_mapping_has_10_entries() -> None:
+    """`HardcodedLocationResolver()` (no args) uses the default 10-entry dict.
+
+    Pinned contract: the default `_STRUCTURED_MAPPING` has
+    exactly 10 entries. A regression that grows or shrinks
+    the default dict breaks this test.
+    """
+    resolver = HardcodedLocationResolver()
+    assert len(resolver._structured_mapping) == 10  # noqa: SLF001
+
+
+def test_resolve_structured_ctor_custom_mapping_overrides_default() -> None:
+    """`HardcodedLocationResolver(structured_mapping=...)` uses the custom dict.
+
+    The custom mapping is a pure OVERRIDE (the default is
+    replaced, not merged) — same contract as the
+    `mapping=` kwarg on `resolve()`. The default entries are
+    NOT visible after the override.
+    """
+    custom: dict[str, tuple[str, str, str]] = {
+        "foo": ("Foo", "Bar", "Baz"),
+    }
+    resolver = HardcodedLocationResolver(structured_mapping=custom)
+    assert resolver._structured_mapping is custom  # noqa: SLF001
+    assert resolver.resolve_structured("foo") == ("Foo", "Bar", "Baz")
+    # Default entries are NOT visible.
+    assert resolver.resolve_structured("antequera") is None
+
+
+def test_resolve_structured_madrid_returns_none_geoid_only() -> None:
+    """`"Madrid"` is in `_CANONICAL_MAPPING` (geoId) but NOT in `_STRUCTURED_MAPPING`.
+
+    Per design decision #10 (geoId is the preferred format
+    and always wins), Madrid uses the `geoId=103374081` path
+    and is intentionally EXCLUDED from `_STRUCTURED_MAPPING`.
+    `resolve_structured("Madrid")` returns `None` — the
+    scraper uses the geoId path.
+    """
+    resolver = HardcodedLocationResolver()
+    assert resolver.resolve_structured("Madrid") is None
+    # The geoId path still works.
+    assert resolver.resolve("Madrid") == 103374081
+
+
+def test_resolve_structured_independence_from_resolve() -> None:
+    """`resolve()` and `resolve_structured()` are independent methods.
+
+    For `"Antequera"`, `resolve()` returns `None` (Antequera
+    is not in the geoId dict) but `resolve_structured()`
+    returns the triplet. The two methods serve different
+    purposes (one for geoId, one for the structured triplet)
+    and MUST NOT shadow each other.
+    """
+    resolver = HardcodedLocationResolver()
+    # `resolve()` returns None for Antequera (no geoId).
+    assert resolver.resolve("Antequera") is None
+    # `resolve_structured()` returns the triplet.
+    assert resolver.resolve_structured("Antequera") == (
+        "Antequera",
+        "Andalucía",
+        "Spain",
+    )

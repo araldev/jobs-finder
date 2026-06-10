@@ -33,6 +33,7 @@ from collections.abc import Mapping
 from jobs_finder.application.ports import LocationResolverPort
 
 from ._mapping import _ALIASES, _CANONICAL_MAPPING
+from ._structured_mapping import _STRUCTURED_MAPPING
 
 _logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class HardcodedLocationResolver(LocationResolverPort):
         *,
         mapping: Mapping[str, int] | None = None,
         aliases: Mapping[str, str] | None = None,
+        structured_mapping: Mapping[str, tuple[str, str, str]] | None = None,
     ) -> None:
         """Build a resolver over the given `mapping` (default: 34-entry dict).
 
@@ -70,9 +72,20 @@ class HardcodedLocationResolver(LocationResolverPort):
             aliases: The alias mapping (NORMALIZED form →
                 canonical key). When `None` (the default), the
                 5-entry `_ALIASES` is used.
+            structured_mapping: The structured triplet mapping
+                (NORMALIZED form → `(city, province, country)`
+                tuple in Title Case with tildes NFC). When
+                `None` (the default), the 10-entry
+                `_STRUCTURED_MAPPING` is used. Added in
+                `backend-linkedin-location-fallback`
+                (REQ-STR-LOC-001). The custom mapping
+                REPLACES the default (does NOT merge).
         """
         self._mapping: Mapping[str, int] = mapping if mapping is not None else _CANONICAL_MAPPING
         self._aliases: Mapping[str, str] = aliases if aliases is not None else _ALIASES
+        self._structured_mapping: Mapping[str, tuple[str, str, str]] = (
+            structured_mapping if structured_mapping is not None else _STRUCTURED_MAPPING
+        )
 
     def resolve(self, location: str) -> int | None:
         """Translate `location` (a free-form string) into a LinkedIn `geoId`.
@@ -128,6 +141,66 @@ class HardcodedLocationResolver(LocationResolverPort):
             location,
         )
         return None
+
+    def resolve_structured(self, location: str) -> tuple[str, str, str] | None:
+        """Translate `location` into a structured `(city, province, country)` triplet.
+
+        Spec: `backend-linkedin-location-fallback`
+        REQ-STR-LOC-001. The structured counterpart to
+        `resolve()`: for cities with an entry in
+        `_STRUCTURED_MAPPING`, return the triplet. For
+        everything else (unknown / country-level / CCAA-
+        level / empty), return `None`.
+
+        The same 4-step normalization chain as `resolve()`
+        is used (NFC + casefold + strip + remove accents).
+        The same `_ALIASES` mapping is shared — a custom
+        alias like `"ante" → "antequera"` recurses through
+        `_structured_mapping` the same way it recurses
+        through `_mapping`.
+
+        Country-level inputs (`"España"`, `"Spain"`) and
+        CCAA-level inputs (`"Andalucía"`) return `None` — the
+        dict is city-level; country / CCAA is a different
+        category and the spec author decided to return
+        `None` rather than heuristically map. The LinkedIn
+        scraper falls back to the legacy `?location=<raw>`
+        path (the v1 broken-but-doesn't-500 path).
+
+        Args:
+            location: The free-form location string. May be
+                empty (the v1 chat-filter path passes
+                `location=""`); an empty string short-circuits
+                to `None` (the canonical "no location specified"
+                sentinel — same as `resolve()`).
+
+        Returns:
+            A 3-tuple `(city, province, country)` in Title
+            Case with tildes (NFC) on a successful match, OR
+            `None` on a miss. No WARNING log is emitted
+            (different semantic from `resolve()`: the
+            structured path is an OPT-IN alternative URL
+            shape, not a fallback for the geoId path).
+        """
+        # Short-circuit: empty string is the canonical "no
+        # location" sentinel. Same semantic as `resolve()` —
+        # no log, just a quick return.
+        if not location:
+            return None
+
+        normalized = self._normalize(location)
+
+        # Alias-to-canonical recurse (1 step — aliases point
+        # directly to a canonical key, NOT to another alias).
+        # Same contract as `resolve()`.
+        canonical_key = self._aliases.get(normalized, normalized)
+
+        # Direct dict lookup; miss returns `None` (no log).
+        # The dict is city-level; country / CCAA inputs are
+        # intentionally NOT in the dict per the spec author's
+        # decision — they return `None` and the scraper falls
+        # back to the legacy `?location=<raw>` path.
+        return self._structured_mapping.get(canonical_key)
 
     @staticmethod
     def _normalize(location: str) -> str:
