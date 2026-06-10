@@ -129,19 +129,14 @@ def _build_app_with_strategy(
     bypasses `app_factory.build_app`'s default aggregator branch
     so the test can pin a specific strategy.
 
-    The `enable_keyword_scoring` kwarg forces the ctor field to the
-    requested value. Tests that pin a `ranking_strategy` (this one
-    covers `none`, `priority`, and the env-var override) MUST pass
-    `enable_keyword_scoring=False` because the route reads the flag
-    from `app.state.settings` (NOT from the aggregator's ctor field).
-    With `ENABLE_KEYWORD_SCORING=true` in the operator's `.env`, the
-    route's per-request kwarg overrides the ctor's `False` default
-    and the `keyword_score` sort wins over the requested `ranking_
-    strategy`. The bug is pre-existing (T-004 of `backend-scraper-
-    query-tuning` shipped `enable_keyword_scoring` as a per-request
-    toggle, not a per-aggregator one) and is tracked as a follow-up
-    — see the regression test `test_keyword_scoring_overrides_
-    strategy_when_both_enabled`.
+    The `enable_keyword_scoring` kwarg is forwarded to the aggregator
+    ctor field. Default `False` (the v1 sort contract). When the
+    operator's `.env` has `ENABLE_KEYWORD_SCORING=true`, the
+    `app_factory` reads it and wires the aggregator with
+    `enable_keyword_scoring=True`; tests that pin a `ranking_
+    strategy` need the toggle OFF so the strategy sort is the
+    only signal — pass `enable_keyword_scoring=False` explicitly
+    (the default).
     """
     linkedin_use_case = _build_cached_linkedin_use_case(port=linkedin_port)
     indeed_use_case = _build_cached_indeed_use_case(port=indeed_port)
@@ -159,20 +154,6 @@ def _build_app_with_strategy(
         infojobs_use_case=infojobs_use_case,
         aggregator_use_case=aggregator_use_case,
     )
-
-
-def _force_keyword_scoring_off(app: FastAPI) -> None:
-    """Disable the route's `enable_keyword_scoring` toggle for the current test.
-
-    The route reads the flag from `app.state.settings.enable_keyword_
-    scoring` per-request (T-004 contract). When the operator's `.env`
-    has `ENABLE_KEYWORD_SCORING=true`, the toggle is globally ON and
-    the `keyword_score` sort wins over the aggregator's `ranking_
-    strategy`. Tests that pin a `ranking_strategy` need the toggle
-    OFF so the strategy sort is the only signal. This helper patches
-    the settings object on the app's state in place.
-    """
-    app.state.settings.enable_keyword_scoring = False
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +220,6 @@ async def test_strategy_none_returns_jobs_in_existing_order(
     """
     linkedin_port = FakeJobSearchPort()
     app = _build_app_with_strategy(linkedin_port, fake_indeed_port, fake_infojobs_port, "none")
-    _force_keyword_scoring_off(app)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -274,7 +254,6 @@ async def test_strategy_priority_orders_by_source_priority(
     """
     linkedin_port = FakeJobSearchPort()
     app = _build_app_with_strategy(linkedin_port, fake_indeed_port, fake_infojobs_port, "priority")
-    _force_keyword_scoring_off(app)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -323,7 +302,13 @@ async def test_env_var_override_changes_ranking(
         indeed_use_case=_build_cached_indeed_use_case(port=indeed_port),
         infojobs_use_case=_build_cached_infojobs_use_case(port=infojobs_port),
     )
-    _force_keyword_scoring_off(app)
+    # Force the aggregator's ctor field to `False` so the
+    # `keyword_score` sort does NOT override the requested
+    # `strategy="none"`. The post-fix contract: the toggle is
+    # per-aggregator (set by `app_factory` from `Settings`).
+    # Tests that pin a strategy bypass the env-var-driven
+    # default by setting the ctor field directly.
+    app.state.aggregator_use_case._enable_keyword_scoring = False
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -423,60 +408,77 @@ async def test_limit_cap_preserves_three_times_limit() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_keyword_scoring_overrides_strategy_when_both_enabled(
-    client: httpx.AsyncClient,
+async def test_ranking_strategy_is_honored_when_keyword_scoring_off(
+    app: FastAPI,
 ) -> None:
-    """`enable_keyword_scoring=True` (default per `ENABLE_KEYWORD_SCORING=true`)
+    """When `ENABLE_KEYWORD_SCORING=false` (the v1 default), the
+    aggregator's `ranking_strategy` is the only sort signal.
 
-    forces the `keyword_score desc, posted_at desc` sort regardless of
-    the aggregator's `ranking_strategy` setting (`posted_at` is the
-    default per `AGGREGATOR_RANKING_STRATEGY=posted_at`).
+    **The bug** (documented as regression test, now FIXED in
+    this commit): pre-fix, the route read the `enable_keyword_
+    scoring` flag from `app.state.settings` per-request and
+    passed it as a per-request kwarg to `SearchAllSourcesUseCase
+    .search()`. The kwarg won over the aggregator ctor's
+    `enable_keyword_scoring` field, so the `if effective_enable_
+    keyword_scoring:` branch in `aggregator.py:487` IGNORED the
+    `ranking_strategy` setting whenever the env var was `True`.
+    With the operator's local `.env` set to
+    `ENABLE_KEYWORD_SCORING=true`, the strategies `none`,
+    `priority`, and `posted_at` were all silently no-ops.
 
-    **The bug**: the route reads the `enable_keyword_scoring` flag from
-    `app.state.settings` (per-request), and the use case's
-    `effective_enable_keyword_scoring` kwarg wins over the ctor's
-    `_enable_keyword_scoring` field. The ctor is configured with
-    `ranking_strategy=posted_at` but the route passes
-    `enable_keyword_scoring=True` (per the env var), and the
-    `if effective_enable_keyword_scoring:` branch in
-    `aggregator.py:487` IGNORES the strategy.
+    **The fix** (this commit):
+    1. The route no longer forwards `enable_keyword_scoring` as
+       a per-request kwarg. The aggregator decides solely by
+       its ctor field (set by `app_factory` from `Settings`).
+    2. The `search()` method's `enable_keyword_scoring` kwarg
+       is preserved as an EXPLICIT per-call override for tests
+       + future dynamic per-request use cases (e.g. an admin
+       tool that flips the toggle per user).
 
-    **The fix** (tracked as a follow-up): make
-    `enable_keyword_scoring` a per-aggregator ctor field (not a
-    per-request kwarg) so the strategy sort and the keyword sort
-    can be composed, OR change the operator contract so the two
-    are mutually exclusive (a single env var `RANKING_MODE=score|
-    strategy`).
-
-    This test pins the CURRENT bug so a future regression
-    (the bug being silently re-introduced or fixed by accident) is
-    caught. The assertion below documents the current behavior —
-    flip the expected value when the bug is fixed.
+    This test pins the post-fix contract: with the env var
+    `False` (or the ctor field `False`), the strategy sort
+    is the only signal. With `strategy="posted_at"` (the
+    default per `AGGREGATOR_RANKING_STRATEGY=posted_at`) and
+    the 6 sample jobs' `posted_at` values, the expected order
+    is [Indeed-May-3, InfoJobs-May-3, Indeed-May-2, InfoJobs-May-2,
+    Indeed-May-1, InfoJobs-May-1] — NOT the alternating
+    [Indeed, InfoJobs, Indeed, InfoJobs, ...] that the pre-fix
+    `keyword_score` sort produced (because all 6 jobs share
+    the same `keyword_score` and the secondary `posted_at desc`
+    orders by date within the score).
     """
-    response = await client.get(
-        "/jobs?q=title&location=madrid&limit=20&sources=linkedin,indeed,infojobs"
-    )
+    # The conftest's `app` fixture builds the app with the
+    # operator's `.env` `ENABLE_KEYWORD_SCORING=true` (the env
+    # var is the source of truth in production). For this test
+    # we explicitly set the aggregator's ctor field to `False`
+    # so the strategy sort wins.
+    app.state.aggregator_use_case._enable_keyword_scoring = False
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.get(
+            "/jobs?q=title&location=madrid&limit=20&sources=linkedin,indeed,infojobs"
+        )
     assert response.status_code == 200
     body = response.json()
     sources_order = [job["sources"] for job in body["jobs"]]
-    # Expected bug behavior: the `keyword_score` sort orders by score
-    # desc then posted_at desc, which interleaves Indeed + InfoJobs
-    # by date (not the `posted_at`-only group-by-source that the
-    # strategy would produce). The pattern is alternating
-    # [Indeed, InfoJobs, Indeed, InfoJobs, ...] because all 6 sample
-    # jobs share the same `keyword_score` (they all match `title`)
-    # and the secondary `posted_at desc` orders by date.
+    # `strategy="posted_at"` (default) sorts by `posted_at` desc,
+    # tie-broken by `source-priority` ASC (LinkedIn > Indeed >
+    # InfoJobs), then `job.id` ASC. The 6 sample jobs share
+    # `posted_at` May 1/2/3 across Indeed + InfoJobs (no LinkedIn
+    # jobs), so the order is interleaved by date.
     assert sources_order == [
-        ["indeed"],
-        ["infojobs"],
-        ["indeed"],
-        ["infojobs"],
-        ["indeed"],
-        ["infojobs"],
+        ["indeed"],  # May 3
+        ["infojobs"],  # May 3
+        ["indeed"],  # May 2
+        ["infojobs"],  # May 2
+        ["indeed"],  # May 1
+        ["infojobs"],  # May 1
     ], (
-        "BUG: enable_keyword_scoring is overriding ranking_strategy. "
-        "When the bug is fixed (strategy wins over keyword_scoring), "
-        "the expected order becomes [Indeed*3, InfoJobs*3]."
+        "REGRESSION: enable_keyword_scoring is overriding ranking_strategy. "
+        "If the ctor field is not honored, the order is still "
+        "interleaved but driven by score, not by strategy. "
+        "Use the post-fix contract: the strategy sort wins when "
+        "the ctor field is `False`."
     )
 
 

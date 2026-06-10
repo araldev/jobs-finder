@@ -291,7 +291,7 @@ class SearchAllSourcesUseCase:
         # at composition-root time.
         self._enable_keyword_scoring: bool = enable_keyword_scoring
 
-    async def search(
+    async def search(  # noqa: PLR0915 — method size grown past PLR0915 limit after the T-004 wiring fix
         self,
         keywords: str,
         location: str,
@@ -464,15 +464,18 @@ class SearchAllSourcesUseCase:
             ]
             deduped_list = other_jobs + kept_infojobs
 
-        # Resolve the `enable_keyword_scoring` kwarg: the
-        # caller's per-request value wins; otherwise fall
-        # back to the constructor value (the
-        # `app_factory`-supplied setting).
-        effective_enable_keyword_scoring = (
-            enable_keyword_scoring
-            if enable_keyword_scoring is not None
-            else self._enable_keyword_scoring
-        )
+        # Resolve the `enable_keyword_scoring` flag. The toggle
+        # is PER-AGGREGATOR (ctor field set by `app_factory`
+        # from `Settings.enable_keyword_scoring`): the operator
+        # decides at deploy time whether the keyword sort wins
+        # over the configured `ranking_strategy`. The kwarg
+        # remains as an EXPLICIT per-call override for tests
+        # and future dynamic per-request use cases (e.g. an
+        # admin tool that flips the toggle per user). REQ-SCORE-001.
+        if enable_keyword_scoring is not None:
+            effective_enable_keyword_scoring = enable_keyword_scoring
+        else:
+            effective_enable_keyword_scoring = self._enable_keyword_scoring
 
         # REQ-AR-002 / REQ-AR-003 + REQ-SCORE-001: post-cache
         # ranking step. The `rank_jobs` function is a pure

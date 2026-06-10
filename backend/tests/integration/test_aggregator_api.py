@@ -474,15 +474,22 @@ async def test_aggregator_api_passes_query_tokens_to_use_case(
     assert spy.calls[0]["query_tokens"] == frozenset({"react"})
 
 
-async def test_aggregator_api_passes_enable_keyword_scoring_from_settings(
+async def test_aggregator_api_does_not_forward_enable_keyword_scoring_per_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`ENABLE_KEYWORD_SCORING=true` env var → spy receives `enable_keyword_scoring=True`.
+    """Post-fix: the route does NOT forward `enable_keyword_scoring` per-request.
 
-    The route reads the `Settings.enable_keyword_scoring`
-    setting and forwards it to `use_case.search()`. The test
-    sets the env var, builds the app, and asserts the spy
-    saw the resolved value.
+    Pre-fix the route read `Settings.enable_keyword_scoring` and
+    passed it as a per-request kwarg to `use_case.search()`. That
+    silently overrode the aggregator's ctor field and made
+    `ranking_strategy=none|priority|posted_at` a no-op whenever
+    the env var was `True`. The post-fix contract: the toggle is
+    per-aggregator (ctor field, set by `app_factory` from
+    `Settings`); the route does NOT forward a per-request kwarg.
+
+    This test pins the post-fix contract by asserting the spy
+    does NOT receive `enable_keyword_scoring` in its kwargs (the
+    kwarg is `None` when not forwarded).
     """
     monkeypatch.setenv("ENABLE_KEYWORD_SCORING", "true")
     spy = _SpySearchAllSourcesUseCase()
@@ -494,7 +501,10 @@ async def test_aggregator_api_passes_enable_keyword_scoring_from_settings(
         )
     assert response.status_code == 200
     assert len(spy.calls) == 1
-    assert spy.calls[0]["enable_keyword_scoring"] is True
+    # The post-fix contract: the route does NOT forward the
+    # `enable_keyword_scoring` kwarg. The spy receives the
+    # default value (None) which means "use the ctor field".
+    assert spy.calls[0].get("enable_keyword_scoring") is None
 
 
 async def test_aggregator_api_resolves_linkedin_geo_id_from_resolver() -> None:
