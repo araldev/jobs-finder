@@ -240,3 +240,31 @@ def is_block_page(soup: BeautifulSoup) -> bool:
         return True
     title = soup.title.string.strip().lower() if soup.title and soup.title.string else ""
     return any(token in title for token in ("sign in", "authenticate", "verify"))
+
+
+def is_auth_wall(soup: BeautifulSoup) -> bool:
+    """Return True ONLY when the SERP rendered an auth-wall variant.
+
+    Distinct from `is_block_page` (the 502 path): `is_block_page`
+    fires on a TRUE auth wall with ZERO cards (raises
+    `LinkedInBlockedError`); this function fires on an auth-wall
+    variant with zero cards and emits a WARNING log + returns the
+    empty list (REQ-LA-AWALL-006 — NO raise, NO new exception
+    type). The "cards win" rule (REQ-LA-AWALL-004) suppresses
+    false positives on healthy SERPs that happen to render the
+    `auth-wall` class as defensive markup.
+
+    Spec: REQ-LA-AWALL-001..004. Pure function: no I/O, no
+    `await`, no module-level mutable state, no logging side-
+    effects. The function is the detector; the WARNING emission
+    lives in the scraper's `_make_fetch_one_page` closure
+    (REQ-LA-AWALL-005).
+    """
+    auth_wall_signal = soup.select_one("body.auth-wall, .auth-wall")
+    if auth_wall_signal is None:
+        return False
+    # If cards are present, the auth-wall signal is a false
+    # positive (the SERP has the class as defensive markup but
+    # the user IS authenticated enough to see results). Same
+    # "cards win" rule as `is_block_page:233-234`.
+    return not soup.select("div[data-entity-urn]")
