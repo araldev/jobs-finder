@@ -194,3 +194,31 @@ def test_resolver_built_when_chat_disabled() -> None:
         port._settings.location_resolver,  # noqa: SLF001
         HardcodedLocationResolver,
     )
+
+
+def test_resolver_shared_with_linkedin_scraper_settings() -> None:
+    """`app.state.location_resolver` IS the same instance as `port._settings.location_resolver`.
+
+    The composition root (`app_factory.build_app()`) builds
+    ONE `HardcodedLocationResolver` instance and injects
+    it into BOTH `app.state.location_resolver` (for the
+    `GET /jobs` route at `aggregator.py:169`) and the
+    `LinkedInScraperSettings` (for the
+    `LinkedInPlaywrightScraper.search()` method's geoId
+    and structured lookups). The two references MUST be
+    the SAME object (identity, not equality) — a future
+    change that builds a second resolver per call site
+    would silently double the dict-construction cost and
+    break the per-process caching invariant.
+
+    Spec: `backend-linkedin-location-fallback` T-003
+    (REQ-STR-LOC-001 composition verification).
+    """
+    built_app = build_app()
+    port = getattr(built_app.state, "job_search_port", None)
+    assert port is not None
+    assert isinstance(port, LinkedInPlaywrightScraper)
+    # Identity check: the same `HardcodedLocationResolver`
+    # instance is shared between `app.state` and the
+    # LinkedIn scraper settings.
+    assert built_app.state.location_resolver is port._settings.location_resolver  # noqa: SLF001
