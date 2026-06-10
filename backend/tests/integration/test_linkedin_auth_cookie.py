@@ -55,15 +55,18 @@ def test_startup_warning_when_cookie_absent(
 ) -> None:
     """REQ-LA-SCR-003 — `build_app()` with no `LINKEDIN_LI_AT` env var
     emits exactly one WARNING log line with the message
-    \"LinkedIn scraper running without auth cookie; SERP will hit
-    the auth wall and return a reduced list\"."""
+    \"LinkedIn scraper running without any auth cookies; SERP will
+    hit the Cloudflare / auth wall and return a reduced list\".
+    The message was UPDATED in T-005 of `backend-linkedin-stealth`
+    (from the v1 "without auth cookie" prefix to the new
+    "without any auth cookies" prefix that covers all 4 cookies)."""
     monkeypatch.delenv("LINKEDIN_LI_AT", raising=False)
     with caplog.at_level(logging.WARNING):
         _build_app_with_linkedin_fake()
     matching = [
         r
         for r in caplog.records
-        if "LinkedIn scraper running without auth cookie" in r.getMessage()
+        if "LinkedIn scraper running without any auth cookies" in r.getMessage()
     ]
     assert len(matching) == 1, f"expected exactly 1 startup WARNING, got {len(matching)}"
     assert matching[0].levelno == logging.WARNING
@@ -82,7 +85,7 @@ def test_no_startup_warning_when_cookie_set(
     matching = [
         r
         for r in caplog.records
-        if "LinkedIn scraper running without auth cookie" in r.getMessage()
+        if "LinkedIn scraper running without any auth cookies" in r.getMessage()
     ]
     assert matching == []
 

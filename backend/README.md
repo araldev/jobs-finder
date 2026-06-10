@@ -1777,6 +1777,136 @@ in `tests/unit/test_linkedin_auth_wall.py`. The "cards win"
 rule (REQ-LA-AWALL-004) suppresses false positives on healthy
 SERPs that render the `auth-wall` class as defensive markup.
 
+### LinkedIn anti-bot stealth (multi-cookie + playwright-stealth)
+
+> **Re-read the Legal Notice above before proceeding.** The
+> cookies in this section are personal session tokens issued to
+> YOU by LinkedIn when you sign in. Using them to scrape
+> LinkedIn via Playwright is a gray area: the cookies themselves
+> are yours, but automated access to LinkedIn's SERP violates
+> LinkedIn's User Agreement regardless of authentication state.
+> This feature exists so you can run the scraper with your own
+> session if you have already weighed these tradeoffs. **The
+> default (all 4 `LINKEDIN_*` cookies unset) is the safe path**
+> — the scraper runs anonymously, returns the auth-walled SERP
+> variant, and emits a single startup WARNING.
+
+The just-merged `backend-linkedin-auth` cycle shipped the v1
+single-cookie `LINKEDIN_LI_AT` path. In 2026, LinkedIn+Cloudflare
+escalated to a 50-redirect loop (`ERR_TOO_MANY_REDIRECTS`) that
+the v1 single-cookie path could not bypass: the Cloudflare Bot
+Management decision happens at the TLS/canvas/behavioral layer
+BEFORE checking `li_at`, so the browser never reaches a soup
+parseable. This change ships 3 additional mitigations:
+
+1. **`playwright-stealth`** is injected at the `BrowserContext`
+   level (mirrors the Indeed+InfoJobs precedent at
+   `indeed/scraper.py:246-247` and `infojobs/scraper.py:326-327`).
+   The library patches ~24 JS-level fingerprint signals
+   (`navigator.webdriver`, `chrome.runtime`, etc.). It is
+   already a project dep (`playwright-stealth>=2.0,<3.0`).
+2. **Multi-cookie injection** (4 cookies, not 1): the
+   `LinkedInAuthCookiesPort` (plural) accepts a list of
+   `(name, value)` pairs. The operator's full LinkedIn session
+   uses 19+ cookies; Cloudflare+LinkedIn 2026 require at
+   minimum `li_at` + `JSESSIONID` + `bcookie` + `li_gc` for
+   "real session" consistency.
+3. **`is_cloudflare_challenge(soup)` defensive detector** —
+   the soft path. When the SERP renders Cloudflare's
+   "Just a moment..." challenge page, the scraper emits a
+   WARNING and returns `[]` (NOT a 502). The detector has a
+   "cards win" rule (a healthy SERP with cards never matches).
+
+#### How to set the env vars
+
+**Shell (recommended for local dev):**
+
+```bash
+# 1. Sign in to LinkedIn in your browser, then open DevTools →
+#    Application → Cookies → https://www.linkedin.com.
+# 2. Copy the `Value` of each of the 4 cookies:
+#    `li_at`, `JSESSIONID`, `bcookie`, `li_gc`.
+# 3. Export them in your shell (use direnv + .envrc for a
+#    project-local .env that's gitignored):
+export LINKEDIN_LI_AT='<paste your li_at value here>'
+export LINKEDIN_JSESSIONID='<paste your JSESSIONID value here>'
+export LINKEDIN_BCOOKIE='<paste your bcookie value here>'
+export LINKEDIN_LI_GC='<paste your li_gc value here>'
+
+# 4. Start the backend. The startup log will show NO
+#    "running without any auth cookies" WARNING (at least 1
+#    cookie is set).
+cd backend
+uv run uvicorn jobs_finder.main:app
+```
+
+**`.env` file (alternative):**
+
+```bash
+# backend/.env (gitignored)
+LINKEDIN_LI_AT=<paste your li_at value here>
+LINKEDIN_JSESSIONID=<paste your JSESSIONID value here>
+LINKEDIN_BCOOKIE=<paste your bcookie value here>
+LINKEDIN_LI_GC=<paste your li_gc value here>
+```
+
+The `.env.example` ships with all 4 empty as the default.
+**NEVER commit a real cookie value to the repo** — AGENTS.md
+rule #7 enforces this. The `SecretStr` type in
+`Settings.linkedin_*` masks the value in any log line
+(repr/str show `**********` instead of the raw bytes).
+
+#### curl smoke test
+
+```bash
+# Set all 4 env vars (see above), then:
+curl -s 'http://localhost:8000/jobs/linkedin?q=react&location=Madrid' \
+  | jq '.jobs | length'
+# Expected: ~25 (the full first-page stream, not the auth-walled
+# 3-5 variant).
+```
+
+Compare with the anonymous baseline (all 4 env vars unset):
+
+```bash
+unset LINKEDIN_LI_AT LINKEDIN_JSESSIONID LINKEDIN_BCOOKIE LINKEDIN_LI_GC
+curl -s 'http://localhost:8000/jobs/linkedin?q=react&location=Madrid' \
+  | jq '.jobs | length'
+# Expected: ~3-5 (the auth-walled variant). A WARNING was logged
+# at startup: "LinkedIn scraper running without any auth cookies;
+# SERP will hit the Cloudflare / auth wall and return a reduced
+# list".
+```
+
+#### Cloudflare challenge WARNING
+
+When the SERP renders a Cloudflare challenge page (the
+50-redirect loop that the v1 single-cookie path could not
+bypass), the scraper emits a WARNING and returns `[]` (the
+soft path, no 502):
+
+```
+WARNING jobs_finder.infrastructure.linkedin.scraper: LinkedIn
+Cloudflare challenge detected; stealth may be insufficient.
+Consider setting LINKEDIN_JSESSIONID, LINKEDIN_BCOOKIE,
+LINKEDIN_LI_GC in .env, or upgrading to a residential proxy.
+```
+
+This WARNING is the operator's signal that the 4 minimum
+cookies + stealth is not enough against the current
+Cloudflare variant. The documented fallback is
+`backend-linkedin-residential-proxy` (a follow-up change
+that routes through a residential IP — the right answer for
+the Cloudflare 2024+ Bot Management gate, but out of scope
+for this PR).
+
+The detector is pure (no I/O, no `await`) and is unit-tested
+against the `CLOUDFLARE_CHALLENGE_HTML` fixture in
+`tests/unit/test_linkedin_cloudflare_challenge.py`. The
+"cards win" rule (REQ-LST-CF-003) suppresses false positives
+on healthy SERPs that happen to render Cloudflare-style
+markup.
+
 ## Manual verification — Indeed
 
 > **Re-read the Legal Notice — Indeed above before proceeding.**
