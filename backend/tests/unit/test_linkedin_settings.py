@@ -222,6 +222,16 @@ def test_settings_equality_includes_resolver() -> None:
         def resolve(self, location: str) -> int | None:  # pragma: no cover
             return None
 
+        def resolve_infojobs(  # pragma: no cover
+            self, location: str
+        ) -> tuple[int | None, int | None]:
+            # REQ-PROV-004 backward-compat: pre-change test
+            # doubles grow the second Protocol method with a
+            # default `(None, None)` return. The settings test
+            # never exercises InfoJobs, so the default is
+            # sufficient.
+            return (None, None)
+
         def resolve_structured(  # pragma: no cover
             self, location: str
         ) -> tuple[str, str, str] | None:

@@ -206,6 +206,54 @@ class LocationResolverPort(Protocol):
             script).
         """
 
+    def resolve_infojobs(self, location: str) -> tuple[int | None, int | None]:
+        """Translate a free-form `location` string into an InfoJobs `(province_id, country_id)`.
+
+        Spec: REQ-PROV-001 (the 12 scenarios).
+
+        The InfoJobs scraper consumes the tuple to build the
+        `?provinceIds=<id>&countryIds=<id>` query params that
+        narrow the SERP to the user's region. The tuple
+        semantics:
+
+            - `(province_id, country_id)` — both `int`,
+              both required for the canonical "specific
+              city" case (e.g. Málaga → `(34, 17)`).
+            - `(None, country_id)` — country-only; the
+              scraper emits `?countryIds=17` only
+              (no `provinceIds`). This is the canonical
+              "Remote" / "España" / "teletrabajo" sentinel.
+            - `(province_id, None)` — reserved for
+              future "province without country" cases
+              (not used in v1; the InfoJobs dict always
+              carries the country).
+            - `(None, None)` — the unmapped / empty
+              sentinel; the scraper omits BOTH
+              `provinceIds` AND `countryIds` and falls
+              back to the v1 `?l=<str>` path. A WARNING
+              is logged on the `(None, None)` miss
+              (EXCEPT the empty-string path, which is
+              silent — same as `resolve()`).
+
+        Args:
+            location: The free-form location string (e.g.
+                `"Málaga"`, `"Madrid"`, `"Remote"`,
+                `"teletrabajo"`). May be empty (the
+                aggregator passes `""`); an empty string
+                short-circuits to `(None, None)` WITHOUT
+                a WARNING log (the canonical "no location
+                specified" sentinel).
+
+        Returns:
+            A `(province_id, country_id)` tuple. The
+            4-tuple shape is the full domain; the scraper
+            tests every combination. On a miss (unmapped
+            city, country-level, empty), returns
+            `(None, None)` — the InfoJobs scraper then
+            falls back to the v1 `?l=<str>` URL formula
+            (graceful degradation, no 500).
+        """
+
     def resolve_structured(self, location: str) -> tuple[str, str, str] | None:
         """Translate `location` into a `(city, province, country)` triplet.
 

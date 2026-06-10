@@ -60,6 +60,7 @@ Errors:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Self
@@ -71,7 +72,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth  # type: ignore[import-untyped]
 
-from jobs_finder.application.ports import JobSearchPort
+from jobs_finder.application.ports import JobSearchPort, LocationResolverPort
 from jobs_finder.domain.job import Job
 from jobs_finder.infrastructure.pagination import paginated_search
 
@@ -87,6 +88,13 @@ from .parsers import (
     parse_infojobs_url,
 )
 from .throttle import InfoJobsAsyncThrottle
+
+# Module-level logger for the `InfoJobsPlaywrightScraper`. The
+# `search()` method uses it to emit the one-time INFO hint
+# when the scraper is constructed without a `location_resolver`
+# (the legacy wiring — REQ-PROV-002 backward-compat path).
+_logger = logging.getLogger(__name__)
+
 
 # The CSS selector for a single search-results card on the InfoJobs SERP.
 # Used both as the `wait_for_selector` target AND by the parsers via the
@@ -116,9 +124,24 @@ class InfoJobsScraperSettings:
     `__hash__` keeps it hashable and immutable; the fields are
     keyword-only so the test fixtures read top-to-bottom the way
     `Settings` is structured.
+
+    Spec: REQ-PROV-003 — the `location_resolver` field is the
+    seam for the v3 URL plumb. The default is `None` (the v1
+    backward-compat path: the scraper uses the v1 `?l=<str>`
+    URL formula and never adds `provinceIds/countryIds`).
+    Wired in `app_factory.build_app()` to the SAME
+    `HardcodedLocationResolver` instance that the LinkedIn
+    scraper uses — one resolver, two methods.
     """
 
-    __slots__ = ("domain", "inter_page_delay_seconds", "max_pages", "timeout_ms", "user_agent")
+    __slots__ = (
+        "domain",
+        "inter_page_delay_seconds",
+        "location_resolver",
+        "max_pages",
+        "timeout_ms",
+        "user_agent",
+    )
 
     def __init__(
         self,
@@ -128,19 +151,22 @@ class InfoJobsScraperSettings:
         domain: str = "www.infojobs.net",
         max_pages: int = 10,
         inter_page_delay_seconds: float = 0.0,
+        location_resolver: LocationResolverPort | None = None,
     ) -> None:
         self.user_agent = user_agent
         self.timeout_ms = timeout_ms
         self.domain = domain
         self.max_pages = max_pages
         self.inter_page_delay_seconds = inter_page_delay_seconds
+        self.location_resolver = location_resolver
 
     def __repr__(self) -> str:
         return (
             f"InfoJobsScraperSettings(user_agent={self.user_agent!r}, "
             f"timeout_ms={self.timeout_ms}, domain={self.domain!r}, "
             f"max_pages={self.max_pages}, "
-            f"inter_page_delay_seconds={self.inter_page_delay_seconds})"
+            f"inter_page_delay_seconds={self.inter_page_delay_seconds}, "
+            f"location_resolver={'<set>' if self.location_resolver is not None else 'None'})"
         )
 
     def __eq__(self, other: object) -> bool:
@@ -152,6 +178,7 @@ class InfoJobsScraperSettings:
             and self.domain == other.domain
             and self.max_pages == other.max_pages
             and self.inter_page_delay_seconds == other.inter_page_delay_seconds
+            and self.location_resolver is other.location_resolver
         )
 
     def __hash__(self) -> int:
@@ -162,6 +189,7 @@ class InfoJobsScraperSettings:
                 self.domain,
                 self.max_pages,
                 self.inter_page_delay_seconds,
+                self.location_resolver,
             )
         )
 
@@ -227,7 +255,9 @@ class InfoJobsPlaywrightScraper(JobSearchPort):
         keywords: str,
         location: str,
         limit: int = 20,
-        geo_id: int | None = None,
+        geo_id: int | None = None,  # noqa: ARG002 — JobSearchPort compat; unused for InfoJobs
+        *,
+        infojobs_geo: tuple[int | None, int | None] | None = None,
     ) -> list[Job]:
         """Run a single search; paginate until `limit` is reached or `max_pages` exhausted.
 
@@ -249,7 +279,43 @@ class InfoJobsPlaywrightScraper(JobSearchPort):
         REQ-J-006: a `wait_for_selector` timeout on page > 0
         breaks the loop gracefully and returns the first page's
         results. A timeout on page 0 raises `InfoJobsTimeoutError`.
+
+        Spec: REQ-PROV-002 — the v3 URL plumb. The `infojobs_geo`
+        keyword-only arg is the resolved `(province_id, country_id)`
+        tuple. When `None` (the default), the scraper resolves the
+        tuple ONCE per `search()` by calling
+        `self._settings.location_resolver.resolve_infojobs(location)`
+        IF the resolver is configured. When the resolver is also
+        `None` (the legacy wiring), the scraper logs an INFO
+        message guiding operators to wire the resolver and falls
+        back to the v1 `?l=<str>` URL formula. The `infojobs_geo`
+        tuple is captured by the closure built below and reused
+        on every page (REQ-PROV-002 scenario 5: "resolver called
+        exactly once per `search()`, not per page").
         """
+        # Resolve the (province_id, country_id) tuple ONCE per
+        # `search()` (not per page). The closure captures the
+        # result and reuses it on every page. The resolver is
+        # only called when the caller did NOT pass an explicit
+        # `infojobs_geo` kwarg (tests that bypass the resolver
+        # can inject the tuple directly).
+        if infojobs_geo is None:
+            resolver = self._settings.location_resolver
+            if resolver is not None:
+                infojobs_geo = resolver.resolve_infojobs(location)
+            else:
+                # Legacy wiring: the resolver is not configured.
+                # Log a one-time INFO hint so operators can wire
+                # the resolver (the v3 recommended path). The
+                # URL falls back to the v1 shape (no
+                # `provinceIds/countryIds`).
+                _logger.info(
+                    "InfoJobsPlaywrightScraper: no location_resolver configured; "
+                    "URLs fall back to ?l=<str> (v1). Wire a HardcodedLocationResolver "
+                    "via InfoJobsScraperSettings(location_resolver=...) for the v3 "
+                    "narrowed URL shape.",
+                )
+
         ctx = await self._browser.new_context(user_agent=self._settings.user_agent)
         # Stealth MUST be applied AFTER `new_context` (per
         # `playwright_stealth` docs: "Apply Stealth to Playwright
@@ -265,7 +331,11 @@ class InfoJobsPlaywrightScraper(JobSearchPort):
                 return await paginated_search(
                     page=page,
                     throttle=self._throttle,
-                    fetch_one_page=self._make_fetch_one_page(keywords, location),
+                    fetch_one_page=self._make_fetch_one_page(
+                        keywords,
+                        location,
+                        infojobs_geo=infojobs_geo,
+                    ),
                     limit=limit,
                     max_pages=self._settings.max_pages,
                     inter_page_delay_seconds=self._settings.inter_page_delay_seconds,
@@ -277,7 +347,11 @@ class InfoJobsPlaywrightScraper(JobSearchPort):
             await ctx.close()
 
     def _make_fetch_one_page(
-        self, keywords: str, location: str
+        self,
+        keywords: str,
+        location: str,
+        *,
+        infojobs_geo: tuple[int | None, int | None] | None = None,
     ) -> Callable[[Any, int, int], Awaitable[list[Job]]]:
         """Build a per-page closure that captures InfoJobs-specific concerns.
 
@@ -301,11 +375,16 @@ class InfoJobsPlaywrightScraper(JobSearchPort):
             - `InfoJobsParseError("zero_cards_on_first_page")` on
               page 0 with no cards (LinkedIn silently breaks
               instead).
+            - The `infojobs_geo` tuple is captured in the closure
+              and forwarded to `_build_url` on every page. The
+              tuple is resolved ONCE in `search()` and captured
+              here — the closure does NOT call the resolver
+              (REQ-PROV-002 scenario 5).
         """
         domain = self._settings.domain
 
         async def fetch_one_page(page: Any, page_index: int, remaining: int) -> list[Job]:
-            url = self._build_url(keywords, location, page_index + 1)
+            url = self._build_url(keywords, location, page_index + 1, infojobs_geo=infojobs_geo)
             await self._navigate_and_wait(page, url)
             content = await page.content()
             soup = BeautifulSoup(content, "html.parser")
@@ -324,11 +403,54 @@ class InfoJobsPlaywrightScraper(JobSearchPort):
 
         return fetch_one_page
 
-    def _build_url(self, keywords: str, location: str, page: int) -> str:
-        return (
+    def _build_url(
+        self,
+        keywords: str,
+        location: str,
+        page: int,
+        *,
+        infojobs_geo: tuple[int | None, int | None] | None = None,
+    ) -> str:
+        """Build the InfoJobs search URL, optionally narrowed by province/country.
+
+        The v1 URL formula is `?q=<kw>&l=<loc>&page=<p>`. The
+        v3 formula extends it with `&provinceIds=<id>&countryIds=<id>`
+        when the `infojobs_geo` tuple carries one or both
+        IDs (REQ-PROV-002):
+
+            - `infojobs_geo=(province_id, country_id)` →
+              `&provinceIds=<p>&countryIds=<c>` (canonical
+              "specific city" case).
+            - `infojobs_geo=(None, country_id)` → `&countryIds=<c>`
+              only (the "Remote" / "España" / "teletrabajo"
+              country-only sentinel).
+            - `infojobs_geo=None` OR `(None, None)` → v1 shape
+              (no extra params; the unmapped / legacy fallback).
+
+        The order of appended params is: `provinceIds` first,
+        then `countryIds`, so the URL is stable and
+        human-readable. The 1-indexed `page` param stays
+        between `l=` and `provinceIds=` (the v1 shape at
+        the start of the URL is preserved).
+        """
+        base = (
             f"https://{self._settings.domain}/ofertas-trabajo"
             f"?q={quote(keywords)}&l={quote(location)}&page={page}"
         )
+        # Fallback: no resolver configured OR resolver returned
+        # `(None, None)`. The unmapped sentinel is the
+        # canonical "I cannot narrow this region" signal — the
+        # scraper preserves the v1 `l=<loc>` shape and lets
+        # InfoJobs do whatever it does today.
+        if infojobs_geo is None or (infojobs_geo[0] is None and infojobs_geo[1] is None):
+            return base
+        province_id, country_id = infojobs_geo
+        params: list[str] = []
+        if province_id is not None:
+            params.append(f"provinceIds={province_id}")
+        if country_id is not None:
+            params.append(f"countryIds={country_id}")
+        return base + "&" + "&".join(params)
 
     async def _navigate_and_wait(self, page: Any, url: str) -> None:
         try:
