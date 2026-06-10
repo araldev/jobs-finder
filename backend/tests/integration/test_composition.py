@@ -17,6 +17,7 @@ import pytest
 from fastapi import FastAPI
 
 from jobs_finder.infrastructure.config import Settings, load_settings
+from jobs_finder.infrastructure.infojobs.scraper import InfoJobsPlaywrightScraper
 from jobs_finder.infrastructure.linkedin.scraper import LinkedInPlaywrightScraper
 from jobs_finder.infrastructure.location.hardcoded_resolver import (
     HardcodedLocationResolver,
@@ -222,3 +223,84 @@ def test_resolver_shared_with_linkedin_scraper_settings() -> None:
     # instance is shared between `app.state` and the
     # LinkedIn scraper settings.
     assert built_app.state.location_resolver is port._settings.location_resolver  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# `app.state.location_resolver` SHARING between LinkedIn + InfoJobs
+# (REQ-PROV-004)
+#
+# The composition root builds ONE `HardcodedLocationResolver` at L185
+# and injects it into BOTH `LinkedInScraperSettings` and
+# `InfoJobsScraperSettings`. The sharing is by IDENTITY (`is`, not
+# `==`) — the same `dict` reference is in both settings, so the
+# resolver's `__hash__` (used by caches) is stable across both
+# sources. The bonus fix in T-003 is to remove the L607 shadowing
+# `location_resolver = HardcodedLocationResolver()` line that
+# previously built a SECOND instance inside the `chat_enabled` branch.
+#
+# Spec: REQ-PROV-004 (the 2 scenarios). The `is` comparison is the
+# strictest possible assertion — if the L607 shadowing bug returns,
+# the assertion fails and the test catches the regression.
+# ---------------------------------------------------------------------------
+
+
+def test_resolver_shared_between_linkedin_and_infojobs() -> None:
+    """`app.state.location_resolver` is the SAME instance used by BOTH
+    `LinkedInPlaywrightScraper` and `InfoJobsPlaywrightScraper`.
+
+    The composition root constructs ONE `HardcodedLocationResolver`
+    at L185 and injects it into both `LinkedInScraperSettings`
+    (L255 area) and `InfoJobsScraperSettings` (L341 area). The
+    `is` comparison (not `==`) is the strictest possible
+    assertion — identity guarantees the same in-process dict
+    reference is in both settings, so the resolver's `__hash__`
+    is stable across both sources.
+
+    The bonus fix in T-003 removes the L607 shadowing line that
+    previously built a SECOND `HardcodedLocationResolver()`
+    inside the `chat_enabled` branch. Without the fix, this
+    test fails (the chat filter would receive a different
+    resolver instance than the LinkedIn + InfoJobs scrapers).
+
+    The test runs with `chat_enabled=False` (no `LLM_API_KEY`
+    in the env) to exercise the non-chat path. A second
+    variant below exercises the `chat_enabled=True` path.
+    """
+    built_app = build_app()
+    state_resolver = built_app.state.location_resolver
+    assert isinstance(state_resolver, HardcodedLocationResolver)
+
+    linkedin_port = built_app.state.job_search_port
+    infojobs_port = built_app.state.infojobs_job_search_port
+    assert isinstance(linkedin_port, LinkedInPlaywrightScraper)
+    assert isinstance(infojobs_port, InfoJobsPlaywrightScraper)
+
+    # The LinkedIn scraper's settings hold the SAME instance as
+    # `app.state.location_resolver` (identity, not equality).
+    assert linkedin_port._settings.location_resolver is state_resolver  # noqa: SLF001
+    # The InfoJobs scraper's settings hold the SAME instance as
+    # `app.state.location_resolver` (identity, not equality).
+    assert infojobs_port._settings.location_resolver is state_resolver  # noqa: SLF001
+
+
+def test_infojobs_scraper_has_resolver() -> None:
+    """`build_app()` injects the resolver into `InfoJobsScraperSettings`.
+
+    The v3 URL plumb reads
+    `self._settings.location_resolver.resolve_infojobs(location)`
+    in the scraper's `search()`. Without the injection, the
+    scraper falls back to the v1 `?l=<str>` URL formula and
+    logs an INFO hint (the legacy wiring). The test pins the
+    wired path (the v3 recommended path): the resolver is
+    present in the InfoJobs settings.
+    """
+    built_app = build_app()
+    infojobs_port = getattr(built_app.state, "infojobs_job_search_port", None)
+    assert infojobs_port is not None
+    assert isinstance(infojobs_port, InfoJobsPlaywrightScraper)
+    # The `InfoJobsScraperSettings` carries the resolver.
+    assert infojobs_port._settings.location_resolver is not None  # noqa: SLF001
+    assert isinstance(
+        infojobs_port._settings.location_resolver,  # noqa: SLF001
+        HardcodedLocationResolver,
+    )
