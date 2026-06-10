@@ -268,3 +268,49 @@ def is_auth_wall(soup: BeautifulSoup) -> bool:
     # the user IS authenticated enough to see results). Same
     # "cards win" rule as `is_block_page:233-234`.
     return not soup.select("div[data-entity-urn]")
+
+
+def is_cloudflare_challenge(soup: BeautifulSoup) -> bool:
+    """Return True ONLY when the SERP is a Cloudflare 2026 challenge page.
+
+    Distinct from `is_block_page` (LinkedIn 502 hard raise) and
+    `is_auth_wall` (cookie-injected soft WARNING). This detector
+    identifies the Cloudflare Bot Management "Just a moment..."
+    challenge page (the 2026 marker set): the 3-OR signature is
+    (a) the title contains "Just a moment", AND (b) a
+    `<noscript>` redirect block is present, AND (c) a
+    `div.cf-mitigated` or `[data-cf-challenge]` marker is
+    present.
+
+    The "cards win" rule (REQ-LST-CF-003) suppresses false
+    positives on a healthy SERP that happens to render
+    Cloudflare-style markup: when ≥1 `div[data-entity-urn]`
+    is present, the function returns `False` (a healthy SERP
+    with 25 cards never matches).
+
+    Spec: REQ-LST-CF-001..003. Pure function: no I/O, no
+    `await`, no module-level mutable state, no logging
+    side-effects. The function is the detector; the WARNING
+    emission + return-`[]` path lives in the scraper's
+    `_make_fetch_one_page` closure (REQ-LST-SCR-003 — wired
+    in T-004).
+
+    The `CLOUDFLARE_CHALLENGE_HTML` fixture (in
+    `tests/fixtures/linkedin_search.py`) pins the 2026-06-10
+    capture; when Cloudflare updates the markup, the fix is
+    a 1-line detector update + a 1-line fixture update.
+    """
+    # Cards-win rule: a healthy SERP with cards MUST NOT match
+    # even if it happens to render Cloudflare-style markup (a
+    # LinkedIn A/B test could reuse the "Just a moment..."
+    # string in a rate-limit banner; the cards prove the
+    # Cloudflare challenge was bypassed).
+    if soup.select("div[data-entity-urn]"):
+        return False
+    # 3-OR Cloudflare 2026 signature: title "Just a moment..."
+    # AND `<noscript>` redirect block AND a cf-mitigated /
+    # [data-cf-challenge] marker.
+    has_title = soup.find(string=lambda t: t and "Just a moment" in t) is not None
+    has_noscript = soup.find("noscript") is not None
+    has_cf_marker = soup.select_one("div.cf-mitigated, [data-cf-challenge]") is not None
+    return has_title and has_noscript and has_cf_marker

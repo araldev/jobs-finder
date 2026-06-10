@@ -96,3 +96,41 @@ BLOCK_PAGE_HTML = """
 </body>
 </html>
 """
+
+# A Cloudflare Bot Management challenge page (used by
+# `is_cloudflare_challenge` tests, T-003 of `backend-linkedin-stealth`).
+#
+# The fixture pins the 2026-06-10 capture of the Cloudflare
+# "Just a moment..." challenge page. The 3-OR signature that
+# `is_cloudflare_challenge` checks:
+#   (a) `<title>` contains "Just a moment..." (Cloudflare's
+#       2026 default challenge page title),
+#   (b) a `<noscript>` redirect block (the "please enable
+#       JavaScript" + redirect message Cloudflare renders
+#       when JS is disabled),
+#   (c) a `div.cf-mitigated` or `[data-cf-challenge]` marker
+#       (Cloudflare's JS-driven challenge container).
+# The fixture has ZERO `div[data-entity-urn]` cards (a real
+# challenge page never has cards — the challenge runs before
+# the SERP is rendered).
+#
+# When Cloudflare updates the markup, the fix is a 1-line
+# detector update + a 1-line fixture update (the function
+# + the fixture are the only 2 places that know the 2026
+# Cloudflare signature).
+CLOUDFLARE_CHALLENGE_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Just a moment...</title>
+</head>
+<body>
+  <noscript>
+    <h1>Please enable JavaScript and cookies to continue</h1>
+  </noscript>
+  <div class="cf-mitigated" data-cf-challenge="cloudflare-bot-management">
+    <p>Checking your browser before accessing the site.</p>
+  </div>
+</body>
+</html>
+"""
