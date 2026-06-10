@@ -143,7 +143,7 @@ async def test_aggregator_returns_200_and_deduped_jobs(
     Indeed-May-1, InfoJobs-May-1.
     """
     response = await client.get(
-        "/jobs?q=python&location=madrid&limit=20&sources=linkedin,indeed,infojobs"
+        "/jobs?q=title&location=madrid&limit=20&sources=linkedin,indeed,infojobs"
     )
 
     assert response.status_code == 200
@@ -209,7 +209,7 @@ async def test_aggregator_with_single_source_only_invokes_that_source(
     fake_infojobs_port: FakeJobSearchPort,
 ) -> None:
     """`sources=linkedin` invokes ONLY LinkedIn; Indeed + InfoJobs are not called."""
-    await client.get("/jobs?q=python&location=madrid&sources=linkedin")
+    await client.get("/jobs?q=title&location=madrid&sources=linkedin")
 
     # Indeed + InfoJobs were not called.
     assert fake_indeed_port.calls == []
@@ -225,7 +225,7 @@ async def test_aggregator_with_unknown_source_returns_422(
     client: httpx.AsyncClient,
 ) -> None:
     """An unknown source name in `sources` returns 422."""
-    response = await client.get("/jobs?q=python&location=madrid&sources=linkedin,glassdoor")
+    response = await client.get("/jobs?q=title&location=madrid&sources=linkedin,glassdoor")
     assert response.status_code == 422
 
 
@@ -233,7 +233,7 @@ async def test_aggregator_with_limit_zero_returns_422(
     client: httpx.AsyncClient,
 ) -> None:
     """`limit=0` (below the `ge=1` floor) returns 422."""
-    response = await client.get("/jobs?q=python&location=madrid&limit=0")
+    response = await client.get("/jobs?q=title&location=madrid&limit=0")
     assert response.status_code == 422
 
 
@@ -241,7 +241,7 @@ async def test_aggregator_with_limit_too_high_returns_422(
     client: httpx.AsyncClient,
 ) -> None:
     """`limit=101` (above the `le=100` ceiling) returns 422."""
-    response = await client.get("/jobs?q=python&location=madrid&limit=101")
+    response = await client.get("/jobs?q=title&location=madrid&limit=101")
     assert response.status_code == 422
 
 
@@ -278,7 +278,7 @@ async def test_aggregator_dedupes_same_job_across_2_sources() -> None:
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/jobs?q=python&location=madrid")
+        response = await client.get("/jobs?q=title&location=madrid")
 
     assert response.status_code == 200
     body = response.json()
@@ -311,7 +311,7 @@ async def test_aggregator_with_all_sources_failing_returns_502() -> None:
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/jobs?q=python&location=madrid")
+        response = await client.get("/jobs?q=title&location=madrid")
 
     assert response.status_code == 502
     body = response.json()
@@ -351,7 +351,7 @@ async def test_aggregator_with_non_job_search_error_returns_500() -> None:
     # behavior: a programming bug maps to 500.
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/jobs?q=python&location=madrid")
+        response = await client.get("/jobs?q=title&location=madrid")
 
     # The `JobSearchError` exception handler does NOT match
     # `KeyError`, so FastAPI's default handler maps it to 500.

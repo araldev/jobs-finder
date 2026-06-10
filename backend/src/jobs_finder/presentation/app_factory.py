@@ -84,6 +84,7 @@ from jobs_finder.application.usecases.search_linkedin_jobs import (
     RawLinkedInJobsUseCase,
     SearchLinkedInJobsUseCase,
 )
+from jobs_finder.infrastructure.aggregator_filters import filter_infojobs_results
 from jobs_finder.infrastructure.cache._factory import build_cache
 from jobs_finder.infrastructure.config import Settings
 from jobs_finder.infrastructure.indeed.scraper import (
@@ -96,6 +97,7 @@ from jobs_finder.infrastructure.infojobs.scraper import (
     InfoJobsScraperSettings,
 )
 from jobs_finder.infrastructure.infojobs.throttle import InfoJobsAsyncThrottle
+from jobs_finder.infrastructure.keyword_score import keyword_score
 from jobs_finder.infrastructure.linkedin.scraper import (
     LinkedInPlaywrightScraper,
     LinkedInScraperSettings,
@@ -561,8 +563,17 @@ def build_app(  # noqa: PLR0915
             infojobs_use_case=infojobs_use_case,
             ranking_strategy=effective_settings.aggregator_ranking_strategy,
             priority_map=effective_settings.aggregator_priority_map,
-            # T-008 (`backend-scraper-query-tuning`): forward
-            # the opt-in `enable_keyword_scoring` setting. The
+            # T-008 (`backend-scraper-query-tuning`): wire the
+            # 2 pure-function helpers (filter + scorer) at the
+            # composition root. Without these, the ctor's
+            # default `_noop_keyword_score` and `_identity_filter`
+            # are used — `enable_keyword_scoring=True` would then
+            # sort by `0.0` for every job (the noop), so all
+            # results sort purely by `posted_at desc` regardless
+            # of the query.
+            filter_infojobs_results=filter_infojobs_results,
+            keyword_score=keyword_score,
+            # The opt-in `enable_keyword_scoring` setting. The
             # constructor default is `False` (the v1 sort
             # behavior). The setting flows through to the
             # `SearchAllSourcesUseCase.search()` method as a

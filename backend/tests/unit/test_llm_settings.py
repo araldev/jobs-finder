@@ -91,7 +91,11 @@ def test_llm_filter_enabled_default_is_false() -> None:
     so the route is NOT registered in dev/CI and the operator flips the
     switch in prod via `LLM_FILTER_ENABLED=true` + `LLM_API_KEY=<key>`.
     """
-    settings = Settings()
+    # Pass `_env_file=None` to force pydantic-settings to ignore
+    # the operator's local `.env` (which may have
+    # `LLM_FILTER_ENABLED=true`). The test verifies the CODE
+    # default, not the env default.
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
     assert settings.llm_filter_enabled is False
 
 
