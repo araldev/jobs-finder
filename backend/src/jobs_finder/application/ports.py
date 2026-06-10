@@ -21,7 +21,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Literal, NamedTuple, Protocol, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from jobs_finder.domain.job import Job
 
@@ -640,3 +640,26 @@ class NoOpRateLimiter:
             reset_after=0.0,
             retry_after=0.0,
         )
+
+
+class LinkedInAuthCookiePort(Protocol):
+    """Returns the operator's `li_at` session cookie (masked), or `None`.
+
+    Spec: REQ-LA-COOKIE-001 (Protocol shape). The single sync method
+    `cookie()` returns a `pydantic.SecretStr` for log-masking
+    (REQ-LA-COOKIE-003) or `None` when the operator has not
+    configured a cookie (REQ-LA-COOKIE-002 — soft mode, preserves
+    v1 zero-config boot). The Protocol is intentionally minimal:
+    no set/refresh/clear, no async — the value is loaded from
+    `Settings` at process start and never mutates.
+
+    Mirrors the v1 `LocationResolverPort` precedent: a sync, single-
+    method, structural Protocol with no `@runtime_checkable`. The
+    application layer declares the contract; the infrastructure
+    layer (`EnvLinkedInAuthCookieAdapter`) and the test layer
+    (`FakeLinkedInAuthCookiePort`) both satisfy it structurally
+    so the scraper can be unit-tested with no `Settings` ctor and
+    no env-var mutation.
+    """
+
+    def cookie(self) -> SecretStr | None: ...

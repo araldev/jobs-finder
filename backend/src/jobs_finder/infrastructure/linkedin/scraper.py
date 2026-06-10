@@ -65,7 +65,11 @@ from playwright.async_api import (
     async_playwright,
 )
 
-from jobs_finder.application.ports import JobSearchPort, LocationResolverPort
+from jobs_finder.application.ports import (
+    JobSearchPort,
+    LinkedInAuthCookiePort,
+    LocationResolverPort,
+)
 from jobs_finder.domain.job import Job
 from jobs_finder.infrastructure.pagination import paginated_search
 
@@ -116,6 +120,7 @@ class LinkedInScraperSettings:
     """
 
     __slots__ = (
+        "auth_cookie",
         "inter_page_delay_seconds",
         "location_resolver",
         "max_pages",
@@ -131,6 +136,7 @@ class LinkedInScraperSettings:
         max_pages: int = 10,
         inter_page_delay_seconds: float = 1.0,
         location_resolver: LocationResolverPort | None = None,
+        auth_cookie: LinkedInAuthCookiePort | None = None,
     ) -> None:
         self.user_agent = user_agent
         self.timeout_ms = timeout_ms
@@ -144,13 +150,27 @@ class LinkedInScraperSettings:
         # scraper calls `resolve(location)` ONCE per `search()`
         # and uses the returned `geoId` in the URL formula.
         self.location_resolver = location_resolver
+        # Optional `LinkedInAuthCookiePort` (added in
+        # `backend-linkedin-auth`, REQ-LA-COOKIE-001..004).
+        # When `None` (the default), the scraper runs
+        # anonymously — the v1 behavior (auth wall modal hidden
+        # in HTML, ~3-5 results per query). When set, the
+        # scraper calls `auth_cookie.cookie()` ONCE per
+        # `search()` and injects the result via
+        # `ctx.add_cookies([...])` between `new_context()` and
+        # `paginated_search()` (REQ-LA-SCR-001..006). The
+        # `__repr__` masks the value as `<set>` / `<unset>` so
+        # the cookie never appears in logs.
+        self.auth_cookie = auth_cookie
 
     def __repr__(self) -> str:
+        auth_cookie_repr = "<set>" if self.auth_cookie is not None else "<unset>"
         return (
             f"LinkedInScraperSettings(user_agent={self.user_agent!r}, "
             f"timeout_ms={self.timeout_ms}, max_pages={self.max_pages}, "
             f"inter_page_delay_seconds={self.inter_page_delay_seconds}, "
-            f"location_resolver={self.location_resolver!r})"
+            f"location_resolver={self.location_resolver!r}, "
+            f"auth_cookie={auth_cookie_repr})"
         )
 
     def __eq__(self, other: object) -> bool:
@@ -162,6 +182,7 @@ class LinkedInScraperSettings:
             and self.max_pages == other.max_pages
             and self.inter_page_delay_seconds == other.inter_page_delay_seconds
             and self.location_resolver == other.location_resolver
+            and self.auth_cookie == other.auth_cookie
         )
 
     def __hash__(self) -> int:
@@ -172,6 +193,7 @@ class LinkedInScraperSettings:
                 self.max_pages,
                 self.inter_page_delay_seconds,
                 self.location_resolver,
+                self.auth_cookie,
             )
         )
 
