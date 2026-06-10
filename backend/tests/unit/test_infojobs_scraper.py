@@ -980,6 +980,12 @@ class _CountingResolver:
         self.last_input = location
         return self._return
 
+    def resolve_structured(self, location: str) -> tuple[str, str, str] | None:  # noqa: ARG002
+        # Protocol conformance (REQ-STR-LOC-001); the InfoJobs
+        # scraper never calls this path, so the default `None`
+        # return is correct.
+        return None
+
 
 async def test_infojobs_search_calls_resolver_exactly_once() -> None:
     """`search()` calls `resolve_infojobs(location)` exactly once (not per page).
