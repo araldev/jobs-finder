@@ -17,6 +17,8 @@ the repo by AGENTS.md rule #7.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import SecretStr
 
 from jobs_finder.application.ports import LinkedInAuthCookiePort
@@ -112,3 +114,30 @@ class TestLinkedInScraperSettingsAuthCookie:
         )
         assert a == a_dup
         assert hash(a) == hash(a_dup)
+
+
+class TestOperatorDocs:
+    """T-005 of `backend-linkedin-auth` — operator-facing docs.
+
+    The grep tests pin the presence (NOT the value) of the
+    `LINKEDIN_LI_AT` env var in `.env.example` and the new
+    "LinkedIn auth cookie (optional)" subsection in
+    `README.md`. The tests do NOT assert any cookie value
+    appears in the docs (AGENTS.md rule #7 forbids real
+    `li_at` in the repo).
+    """
+
+    def test_env_example_documents_linkedin_li_at(self) -> None:
+        env_example = Path(__file__).resolve().parents[2] / ".env.example"
+        assert env_example.exists()
+        text = env_example.read_text(encoding="utf-8")
+        # The presence of the var name is enough — the value
+        # is intentionally empty (the line is `LINKEDIN_LI_AT=`
+        # with NO real value).
+        assert "LINKEDIN_LI_AT=" in text
+
+    def test_readme_documents_linkedin_auth_cookie_subsection(self) -> None:
+        readme = Path(__file__).resolve().parents[2] / "README.md"
+        assert readme.exists()
+        text = readme.read_text(encoding="utf-8")
+        assert "### LinkedIn auth cookie (optional)" in text

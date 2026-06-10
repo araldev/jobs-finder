@@ -1669,6 +1669,114 @@ burden is yours from this point on:
 The automated test suite cannot catch a live DOM drift; only this
 manual procedure can.
 
+### LinkedIn auth cookie (optional)
+
+> **Re-read the Legal Notice above before proceeding.** The
+> `li_at` cookie is a personal session token issued to YOU by
+> LinkedIn when you sign in. Using it to scrape LinkedIn via
+> Playwright is a gray area: the cookie itself is yours, but
+> automated access to LinkedIn's SERP violates LinkedIn's User
+> Agreement regardless of authentication state. This feature
+> exists so you can run the scraper with your own session if you
+> have already weighed these tradeoffs and decided the value
+> justifies the risk. **The default (empty `LINKEDIN_LI_AT`) is
+> the safe path** — the scraper runs anonymously, returns the
+> auth-walled SERP variant (~3-5 jobs/query), and emits a single
+> startup WARNING so you know the auth path is off.
+
+By default, the LinkedIn scraper runs **anonymously**: each
+`search()` opens a `BrowserContext` with only `user_agent` +
+`viewport`, and LinkedIn's public SERP responds with a hidden
+sign-in modal in the HTML and a functional cap of ~3-5 jobs per
+query. The rest of the stream sits behind the auth wall and is
+ignored client-side.
+
+To opt in to the authenticated path, set `LINKEDIN_LI_AT` to
+your own personal `li_at` session cookie. The scraper will
+inject the cookie into the Playwright `BrowserContext` before
+the first navigation, restoring the full ~25-jobs-per-page
+stream.
+
+#### How to set the env var
+
+**Shell (recommended for local dev):**
+
+```bash
+# 1. Sign in to LinkedIn in your browser, then open DevTools →
+#    Application → Cookies → https://www.linkedin.com.
+# 2. Copy the `Value` of the `li_at` cookie.
+# 3. Export it in your shell (use direnv + .envrc for a
+#    project-local .env that's gitignored):
+export LINKEDIN_LI_AT='<paste your li_at value here>'
+
+# 4. Start the backend. The startup log will show NO
+#    "running without auth cookie" WARNING (the cookie is set).
+cd backend
+uv run uvicorn jobs_finder.main:app
+```
+
+**`.env` file (alternative):**
+
+```bash
+# backend/.env (gitignored)
+LINKEDIN_LI_AT=<paste your li_at value here>
+```
+
+The `.env.example` ships with `LINKEDIN_LI_AT=` empty as the
+default. **NEVER commit a real `li_at` value to the repo** —
+AGENTS.md rule #7 enforces this. The `SecretStr` type in
+`Settings.linkedin_li_at` masks the value in any log line
+(repr/str show `**********` instead of the raw bytes).
+
+#### curl smoke test
+
+```bash
+# Set the env var (see above), then:
+curl -s 'http://localhost:8000/jobs/linkedin?q=react&location=Madrid' \
+  | jq '.jobs | length'
+# Expected: ~25 (the full first-page stream, not the auth-walled
+# 3-5 variant).
+```
+
+Compare with the anonymous baseline (no env var set):
+
+```bash
+unset LINKEDIN_LI_AT
+curl -s 'http://localhost:8000/jobs/linkedin?q=react&location=Madrid' \
+  | jq '.jobs | length'
+# Expected: ~3-5 (the auth-walled variant). A WARNING was logged
+# at startup: "LinkedIn scraper running without auth cookie;
+# SERP will hit the auth wall and return a reduced list".
+```
+
+#### What if my cookie expires?
+
+LinkedIn's `li_at` cookies expire after ~1 year. When the
+cookie is stale, the scraper degrades gracefully: it injects
+the cookie as usual, but the SERP still renders an auth-wall
+variant (LinkedIn silently downgrades authenticated sessions to
+the anonymous SERP). The scraper detects this case via the
+`is_auth_wall(soup)` defensive detector and emits a WARNING log:
+
+```
+WARNING jobs_finder.infrastructure.linkedin.scraper: LinkedIn SERP
+appears auth-walled despite cookie injection; cookie may be expired.
+Returning 0 jobs from this page (degraded).
+```
+
+When you see this WARNING, your cookie is stale. Rotate it:
+sign in to LinkedIn in your browser, copy the new `li_at`
+value, update your `.env` / shell export, and restart the
+backend. The change is picked up at the next process start
+(there is no runtime cookie refresh — the value is read once
+from `Settings`).
+
+The detector is pure (no I/O, no `await`) and is unit-tested
+against the `BLOCK_PAGE_HTML` and `SEARCH_PAGE_HTML` fixtures
+in `tests/unit/test_linkedin_auth_wall.py`. The "cards win"
+rule (REQ-LA-AWALL-004) suppresses false positives on healthy
+SERPs that render the `auth-wall` class as defensive markup.
+
 ## Manual verification — Indeed
 
 > **Re-read the Legal Notice — Indeed above before proceeding.**
