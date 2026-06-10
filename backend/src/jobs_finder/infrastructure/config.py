@@ -58,6 +58,73 @@ _DEFAULT_USER_AGENT = (
 MIN_LI_AT_LENGTH: int = 8
 
 
+# ---------------------------------------------------------------------------
+# Shared `linkedin_*` cookie validators (T-002 of `backend-linkedin-stealth`,
+# REQ-LST-CFG-001..003).
+#
+# The 4 `linkedin_*` cookie fields (`linkedin_li_at`, `linkedin_jsessionid`,
+# `linkedin_bcookie`, `linkedin_li_gc`) share the same 2 validation
+# concerns:
+#   1. `mode="before"`: normalize empty inputs (`None` / `""` /
+#      `SecretStr("")`) to `None` (the kill-switch contract,
+#      REQ-LST-CFG-001).
+#   2. `mode="after"`: reject short values with a HARD `ValueError`
+#      (REQ-LST-CFG-002 — the operator typo guard).
+#
+# The 2 helpers are module-level functions (NOT methods) so the
+# 4 `field_validator` decorators can delegate to them. The 2nd
+# helper accepts a `field_name: str` kwarg so the error message
+# can name the field (a 3-char `LINKEDIN_JSESSIONID` typo is NOT
+# the same as a 3-char `LINKEDIN_LI_AT` typo — the operator can
+# self-diagnose).
+# ---------------------------------------------------------------------------
+
+
+def _normalize_empty_linkedin_optional_secret(
+    v: SecretStr | str | None,
+) -> SecretStr | None:
+    """Mode='before': None / '' / SecretStr('') -> None (REQ-LST-CFG-001).
+
+    Mirrors the v1 `_normalize_empty_li_at` behavior byte-identically:
+    - `None`          -> `None`
+    - `''` (str)      -> `None`
+    - `SecretStr('')` -> `None`
+    - non-empty `str`      -> `SecretStr(str)` (Pydantic's native wrap)
+    - non-empty `SecretStr` -> as-is (idempotent passthrough)
+    """
+    if v is None:
+        return None
+    if isinstance(v, SecretStr):
+        return v if v.get_secret_value() else None
+    if isinstance(v, str):
+        return SecretStr(v) if v else None
+    return v
+
+
+def _reject_short_linkedin_optional_cookie(
+    v: SecretStr | None,
+    *,
+    field_name: str,
+) -> SecretStr | None:
+    """Mode='after': HARD `len < MIN_LI_AT_LENGTH`, SOFT `None` allowed.
+
+    REQ-LST-CFG-002 — same contract as the v1 `_reject_short_li_at`
+    but with a parameterized `field_name` so the error message
+    names the field. The `field_name` is the env-var name (e.g.
+    `LINKEDIN_JSESSIONID`), not the Python attribute name (`linkedin_jsessionid`),
+    so the operator sees the env-var they have to set in `.env`.
+    """
+    if v is None:
+        return None
+    if len(v.get_secret_value()) < MIN_LI_AT_LENGTH:
+        raise ValueError(
+            f"{field_name} must be at least {MIN_LI_AT_LENGTH} "
+            f"characters (got {len(v.get_secret_value())}); check for "
+            "typos or unset the variable to run the scraper anonymously."
+        )
+    return v
+
+
 class Settings(BaseSettings):
     """Env-overridable runtime configuration.
 
@@ -318,48 +385,102 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("LINKEDIN_LI_AT", "linkedin_li_at"),
     )
+    # T-002 of `backend-linkedin-stealth` — REQ-LST-CFG-001..003.
+    # The 3 new `linkedin_*` cookie fields (the 4 LinkedIn cookies
+    # Cloudflare+LinkedIn 2026 treat as a "real session" signal —
+    # see obs #364). Each is `SecretStr | None` with
+    # `AliasChoices(<UPPER>, <lower>)` (mirrors the v1
+    # `linkedin_li_at` shape exactly). The v1 field stays
+    # unchanged; the 3 new fields are additive. The 2 v1 inline
+    # validators on `linkedin_li_at` are REFACTORED to delegate
+    # to 2 new shared helpers below; the v1 field's behavior is
+    # unchanged (the 10 v1 `test_linkedin_config.py` tests stay
+    # GREEN).
+    linkedin_jsessionid: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("LINKEDIN_JSESSIONID", "linkedin_jsessionid"),
+    )
+    linkedin_bcookie: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("LINKEDIN_BCOOKIE", "linkedin_bcookie"),
+    )
+    linkedin_li_gc: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("LINKEDIN_LI_GC", "linkedin_li_gc"),
+    )
+
+    # ------------------------------------------------------------------
+    # Shared validators (REFACTORED from v1 inline validators — T-002 of
+    # `backend-linkedin-stealth`, REQ-LST-CFG-001..003).
+    #
+    # The 4 `linkedin_*` cookie fields share the same 2 validation
+    # concerns:
+    #   1. Normalize empty inputs (`None` / `""` / `SecretStr("")`)
+    #      → `None` (the kill-switch contract, REQ-LST-CFG-001).
+    #   2. Reject short values (when present) with a HARD
+    #      `ValueError` (REQ-LST-CFG-002 — the operator typo
+    #      guard).
+    #
+    # The 2 helpers are module-level functions (not methods)
+    # so they can be reused across the 4 fields. The 2nd helper
+    # accepts a `field_name: str` kwarg (the env-var name) so
+    # the error message can name the field; a small factory
+    # (`_make_reject_short`) wraps it as a `field_validator`
+    # for each field.
+    #
+    # The v1 inline validators (`_normalize_empty_li_at` and
+    # `_reject_short_li_at`) are REFACTORED to delegate to the
+    # 2 shared helpers — the v1 field's behavior is unchanged
+    # (the 10 v1 `test_linkedin_config.py` tests stay GREEN).
+    # ------------------------------------------------------------------
 
     @field_validator("linkedin_li_at", mode="before")
     @classmethod
     def _normalize_empty_li_at(cls, v: SecretStr | str | None) -> SecretStr | None:
-        # Mirrors the `_normalize_empty_secret` validator at
-        # `config.py:734-743` for `llm_api_key`. Normalizes the
-        # 3 empty inputs to `None` so the kill-switch contract
-        # holds at the adapter boundary (REQ-LA-CFG-003):
-        #   `None`          → `None`
-        #   `""`            → `None`
-        #   `SecretStr("")` → `None`
-        # Non-empty `str` is wrapped in `SecretStr` (Pydantic's
-        # native behavior — the validator runs BEFORE the
-        # field's `SecretStr` coercion, so wrapping here keeps
-        # the contract uniform). Non-empty `SecretStr` is
-        # returned as-is (idempotent passthrough).
-        if v is None:
-            return None
-        if isinstance(v, SecretStr):
-            return v if v.get_secret_value() else None
-        if isinstance(v, str):
-            return SecretStr(v) if v else None
-        return v
+        # REFACTORED in T-002 of `backend-linkedin-stealth` to
+        # delegate to the shared `_normalize_empty_linkedin_optional_secret`.
+        # The v1 behavior is unchanged.
+        return _normalize_empty_linkedin_optional_secret(v)
 
     @field_validator("linkedin_li_at", mode="after")
     @classmethod
     def _reject_short_li_at(cls, v: SecretStr | None) -> SecretStr | None:
-        # Q1 option C: HARD `ValueError` when present + `len < MIN_LI_AT_LENGTH`
-        # (REQ-LA-CFG-002); SOFT `None` is allowed (preserves
-        # v1 zero-config boot). The error message includes the
-        # actual length so the operator can self-diagnose the
-        # typo without re-running with DEBUG logging enabled.
-        if v is None:
-            return None
-        if len(v.get_secret_value()) < MIN_LI_AT_LENGTH:
-            raise ValueError(
-                f"LINKEDIN_LI_AT must be at least {MIN_LI_AT_LENGTH} "
-                f"characters (got {len(v.get_secret_value())}); check for "
-                "typos or unset the variable to run the scraper "
-                "anonymously."
-            )
-        return v
+        # REFACTORED in T-002 of `backend-linkedin-stealth` to
+        # delegate to the shared `_reject_short_linkedin_optional_cookie`
+        # with `field_name="LINKEDIN_LI_AT"`. The v1 behavior
+        # is unchanged (the error message text is byte-identical
+        # to the v1 inline error).
+        return _reject_short_linkedin_optional_cookie(v, field_name="LINKEDIN_LI_AT")
+
+    @field_validator("linkedin_jsessionid", mode="before")
+    @classmethod
+    def _normalize_empty_linkedin_jsessionid(cls, v: SecretStr | str | None) -> SecretStr | None:
+        return _normalize_empty_linkedin_optional_secret(v)
+
+    @field_validator("linkedin_jsessionid", mode="after")
+    @classmethod
+    def _reject_short_linkedin_jsessionid(cls, v: SecretStr | None) -> SecretStr | None:
+        return _reject_short_linkedin_optional_cookie(v, field_name="LINKEDIN_JSESSIONID")
+
+    @field_validator("linkedin_bcookie", mode="before")
+    @classmethod
+    def _normalize_empty_linkedin_bcookie(cls, v: SecretStr | str | None) -> SecretStr | None:
+        return _normalize_empty_linkedin_optional_secret(v)
+
+    @field_validator("linkedin_bcookie", mode="after")
+    @classmethod
+    def _reject_short_linkedin_bcookie(cls, v: SecretStr | None) -> SecretStr | None:
+        return _reject_short_linkedin_optional_cookie(v, field_name="LINKEDIN_BCOOKIE")
+
+    @field_validator("linkedin_li_gc", mode="before")
+    @classmethod
+    def _normalize_empty_linkedin_li_gc(cls, v: SecretStr | str | None) -> SecretStr | None:
+        return _normalize_empty_linkedin_optional_secret(v)
+
+    @field_validator("linkedin_li_gc", mode="after")
+    @classmethod
+    def _reject_short_linkedin_li_gc(cls, v: SecretStr | None) -> SecretStr | None:
+        return _reject_short_linkedin_optional_cookie(v, field_name="LINKEDIN_LI_GC")
 
     # ------------------------------------------------------------------
     # Persistent-cache settings (REQ-PC-004, persistent-cache change)

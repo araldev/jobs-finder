@@ -97,3 +97,79 @@ class TestSettingsReprNoLeak:
         settings = Settings(linkedin_li_at=SecretStr("AQEAAAAQEAAA"))
         text = repr(settings)
         assert "AQEAAAAQEAAA" not in text
+
+
+# ---------------------------------------------------------------------------
+# T-002 of `backend-linkedin-stealth` — 3 new `Settings.linkedin_*`
+# fields + 2 shared validator helpers (REQ-LST-CFG-001..003).
+#
+# The 3 new fields are `linkedin_jsessionid`, `linkedin_bcookie`,
+# `linkedin_li_gc` — each is `SecretStr | None` with
+# `AliasChoices(<UPPER>, <lower>)` (the same shape as the v1
+# `linkedin_li_at`). The 2 v1 inline validators on `linkedin_li_at`
+# are REFACTORED to delegate to 2 new shared helpers (the v1 field
+# behavior is unchanged; the 10 v1 `test_linkedin_config.py` tests
+# stay GREEN).
+# ---------------------------------------------------------------------------
+
+
+class TestLinkedInStealthCookies:
+    """REQ-LST-CFG-001..003 — 3 new `Settings.linkedin_*` cookie
+    fields + 2 shared validator helpers.
+    """
+
+    def test_settings_rejects_short_jsessionid_with_field_name(self) -> None:
+        """`Settings(linkedin_jsessionid=SecretStr('abc'))` raises with the field name.
+
+        Pins REQ-LST-CFG-002: the error message names the field so the
+        operator can self-diagnose (a 3-char `LINKEDIN_JSESSIONID` typo is
+        not the same as a 3-char `LINKEDIN_LI_AT` typo). Mirrors the v1
+        `test_settings_rejects_short_li_at_3_chars` pattern with a
+        different field + a different env-var name in the error.
+        """
+        with pytest.raises(ValidationError) as exc_info:
+            Settings(linkedin_jsessionid=SecretStr("abc"))
+        msg = str(exc_info.value)
+        assert "LINKEDIN_JSESSIONID" in msg
+        assert "must be at least 8 characters" in msg
+        assert "got 3" in msg
+
+    def test_settings_accepts_minimum_length_8_for_jsessionid(self) -> None:
+        """`Settings(linkedin_jsessionid=SecretStr('12345678'))` (8 chars) PASSES."""
+        settings = Settings(linkedin_jsessionid=SecretStr("12345678"))
+        assert settings.linkedin_jsessionid is not None
+        assert settings.linkedin_jsessionid.get_secret_value() == "12345678"
+
+    def test_settings_normalizes_empty_bcookie_to_none(self) -> None:
+        """`Settings(linkedin_bcookie='')` normalizes to `None` (REQ-LST-CFG-001)."""
+        settings = Settings(linkedin_bcookie="")  # type: ignore[arg-type]
+        assert settings.linkedin_bcookie is None
+
+    def test_settings_repr_does_not_leak_jsessionid_value(self) -> None:
+        """`repr(Settings(linkedin_jsessionid=...))` does NOT contain the value.
+
+        Pins REQ-LST-CFG-003: the new field's repr mask matches the
+        v1 `linkedin_li_at` repr mask (the `SecretStr` type
+        enforces field-level masking; this test pins the model-level
+        repr mask).
+        """
+        settings = Settings(linkedin_jsessionid=SecretStr("AQEAAAAQEAAA"))
+        text = repr(settings)
+        assert "AQEAAAAQEAAA" not in text
+
+    def test_settings_env_alias_binds_uppercase(self) -> None:
+        """`LINKEDIN_LI_GC` env var is bound to `settings.linkedin_li_gc`.
+
+        Pins REQ-LST-CFG-001: the new fields follow the v1
+        `AliasChoices(<UPPER>, <lower>)` pattern. A monkeypatched
+        `LINKEDIN_LI_GC=...` env var MUST populate
+        `settings.linkedin_li_gc` (case-insensitive binding).
+        """
+        monkeypatch = pytest.MonkeyPatch()
+        try:
+            monkeypatch.setenv("LINKEDIN_LI_GC", "12345678")
+            settings = Settings()
+            assert settings.linkedin_li_gc is not None
+            assert settings.linkedin_li_gc.get_secret_value() == "12345678"
+        finally:
+            monkeypatch.undo()
