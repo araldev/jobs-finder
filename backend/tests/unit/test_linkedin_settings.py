@@ -222,6 +222,11 @@ def test_settings_equality_includes_resolver() -> None:
         def resolve(self, location: str) -> int | None:  # pragma: no cover
             return None
 
+        def resolve_structured(  # pragma: no cover
+            self, location: str
+        ) -> tuple[str, str, str] | None:
+            return None
+
     a = LinkedInScraperSettings(user_agent="ua", timeout_ms=10_000)
     b = LinkedInScraperSettings(
         user_agent="ua",

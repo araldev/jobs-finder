@@ -206,6 +206,43 @@ class LocationResolverPort(Protocol):
             script).
         """
 
+    def resolve_structured(self, location: str) -> tuple[str, str, str] | None:
+        """Translate `location` into a `(city, province, country)` triplet.
+
+        Spec: `backend-linkedin-location-fallback`
+        REQ-STR-LOC-001. This is the structured-location
+        counterpart to `resolve()`: for cities that have a
+        captured `geoId`, `resolve()` returns the int; for
+        cities that are NOT in the geoId dict but ARE in the
+        structured triplet dict (10 cities in
+        `_STRUCTURED_MAPPING`), `resolve_structured()` returns
+        the triplet. The LinkedIn scraper uses the triplet
+        in `?location=<city>,<province>,<country>` (URL-
+        encoded) — LinkedIn's fuzzy match handles the
+        structured form better than the raw string.
+
+        The two methods are independent: a city can have one,
+        both, or neither mapping. The consumer (the LinkedIn
+        scraper) decides the priority; the resolver exposes
+        both shapes.
+
+        Args:
+            location: The free-form location string (e.g.
+                `"Antequera"`, `"Cadiz"`). May be empty (the
+                v1 chat-filter path passes `location=""`);
+                an empty string short-circuits to `None`
+                without any log (same as `resolve()`).
+
+        Returns:
+            A 3-tuple `(city, province, country)` in Title
+            Case with tildes (NFC) on a successful match, OR
+            `None` on a miss (unknown / country-level /
+            CCAA-level / empty). No WARNING log is emitted
+            on miss (the structured semantic is different
+            from `resolve()`: it's an OPT-IN alternative
+            URL shape, not a fallback for the geoId path).
+        """
+
 
 # ---------------------------------------------------------------------------
 # Rate limiting (REQ-RL-001, REQ-RL-004 NoOp pre-condition)

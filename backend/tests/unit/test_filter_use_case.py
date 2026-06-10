@@ -963,6 +963,12 @@ class FakeLocationResolver:
     The Protocol is `LocationResolverPort.resolve(self, location:
     str) -> int | None` (the single method, intentionally NOT
     `async` — the resolver is a pure in-process dict lookup).
+    The second method `resolve_structured` was added in
+    `backend-linkedin-location-fallback` (REQ-STR-LOC-001);
+    the default returns `None` (the dict is city-level, so
+    the fake's default semantic is "no structured triplet",
+    which keeps the existing tests for the chat-filter
+    use case unchanged).
     """
 
     def __init__(
@@ -973,6 +979,8 @@ class FakeLocationResolver:
         self._canned: int | None = canned
         self._error: Exception | None = error
         self.calls: list[str] = []
+        self.structured_calls: list[str] = []
+        self.structured_canned: tuple[str, str, str] | None = None
 
     def resolve(self, location: str) -> int | None:
         """Record the call, return the canned value (or raise)."""
@@ -980,6 +988,11 @@ class FakeLocationResolver:
         if self._error is not None:
             raise self._error
         return self._canned
+
+    def resolve_structured(self, location: str) -> tuple[str, str, str] | None:
+        """Record the call, return the canned structured triplet (default `None`)."""
+        self.structured_calls.append(location)
+        return self.structured_canned
 
 
 async def test_2stage_calls_resolver_and_forwards_geo_id_to_aggregator() -> None:
