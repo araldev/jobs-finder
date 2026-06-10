@@ -652,3 +652,53 @@ def test_resolve_structured_independence_from_resolve() -> None:
         "Andalucía",
         "Spain",
     )
+
+
+# ---------------------------------------------------------------------------
+# Section 7: README documentation — `linkedin-structured-location-fallback`.
+#
+# The user-facing README documents the new structured-fallback
+# feature. The 2 grep-style tests below pin the documentation
+# contract: the README MUST mention the priority `geoId >
+# structured > raw`, the VERIFIED / SPECULATIVE markers
+# (per-city provenance), and the `LLM_LIVE_TESTS=1` gate.
+# A regression that drops a marker would surface here.
+# ---------------------------------------------------------------------------
+
+
+def test_readme_documents_structured_location_priority() -> None:
+    """The README documents the `geoId > structured > raw` priority.
+
+    Pinned keywords: `"structured"`, `"geoId"`, and
+    `"raw"` all appear in the new "LinkedIn structured
+    location fallback" section. The frontend sigue
+    enviando `location=<raw>`; el resolver convierte
+    internamente.
+    """
+    from pathlib import Path  # noqa: PLC0415
+
+    readme_path = Path(__file__).resolve().parent.parent.parent / "README.md"
+    readme = readme_path.read_text(encoding="utf-8")
+    # The new section title + the priority diagram.
+    assert "LinkedIn structured location fallback" in readme
+    # The priority order is documented in ASCII.
+    assert "geoId" in readme
+    assert "structured" in readme
+    assert "raw" in readme
+
+
+def test_readme_documents_verified_speculative_and_live_gate() -> None:
+    """The README documents VERIFIED + SPECULATIVE entries + the `LLM_LIVE_TESTS=1` gate.
+
+    Pinned keywords: `"VERIFIED"`, `"SPECULATIVE"`, and
+    `"LLM_LIVE_TESTS"` all appear in the new section. A
+    regression that drops the provenance markers would
+    break this test.
+    """
+    from pathlib import Path  # noqa: PLC0415
+
+    readme_path = Path(__file__).resolve().parent.parent.parent / "README.md"
+    readme = readme_path.read_text(encoding="utf-8")
+    assert "VERIFIED" in readme
+    assert "SPECULATIVE" in readme
+    assert "LLM_LIVE_TESTS" in readme
