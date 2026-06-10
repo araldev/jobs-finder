@@ -140,7 +140,7 @@ def _settings(
         timeout_ms=10_000,
         max_pages=max_pages,
         inter_page_delay_seconds=0.0,
-        auth_cookie=auth_cookie,  # type: ignore[arg-type]
+        auth_cookie=auth_cookie,
     )
 
 

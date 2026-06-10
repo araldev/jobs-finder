@@ -30,13 +30,15 @@ from jobs_finder.infrastructure.config import Settings
 class TestSettingsEnvBinding:
     """REQ-LA-CFG-001 — env binding + default `None`."""
 
-    def test_settings_reads_linkedin_li_at_from_env(self, monkeypatch) -> None:
+    def test_settings_reads_linkedin_li_at_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LINKEDIN_LI_AT", "AQEAAAAQEAAA")
         settings = Settings()
         assert settings.linkedin_li_at is not None
         assert settings.linkedin_li_at.get_secret_value() == "AQEAAAAQEAAA"
 
-    def test_settings_linkedin_li_at_defaults_to_none(self, monkeypatch) -> None:
+    def test_settings_linkedin_li_at_defaults_to_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.delenv("LINKEDIN_LI_AT", raising=False)
         settings = Settings()
         assert settings.linkedin_li_at is None
@@ -84,7 +86,7 @@ class TestSettingsEmptyNormalization:
         assert settings.linkedin_li_at is None
 
     def test_settings_normalizes_empty_string_to_none(self) -> None:
-        settings = Settings(linkedin_li_at="")
+        settings = Settings(linkedin_li_at="")  # type: ignore[arg-type]
         assert settings.linkedin_li_at is None
 
 
