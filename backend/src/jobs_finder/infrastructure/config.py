@@ -48,6 +48,15 @@ _DEFAULT_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
+# Minimum length for `LINKEDIN_LI_AT` (T-002 of `backend-linkedin-auth`,
+# REQ-LA-CFG-002). Real `li_at` cookies are ~150 chars; 8 is a
+# conservative threshold that catches operator typos
+# (`LINKEDIN_LI_AT=abc` → 3 chars → hard error) without rejecting
+# any realistic real cookie. The constant lives at module scope so
+# the validator + the error message reference the same value
+# (no magic numbers per ruff PLR2004).
+MIN_LI_AT_LENGTH: int = 8
+
 
 class Settings(BaseSettings):
     """Env-overridable runtime configuration.
@@ -290,6 +299,67 @@ class Settings(BaseSettings):
             "LINKEDIN_INTER_PAGE_DELAY_SECONDS", "linkedin_inter_page_delay_seconds"
         ),
     )
+    # `linkedin_li_at` (T-002 of `backend-linkedin-auth` —
+    # REQ-LA-CFG-001..004). The operator's personal `li_at`
+    # session cookie. Mirrors the v1 `llm_api_key: SecretStr |
+    # None` pattern (`config.py:714` + the
+    # `_normalize_empty_secret` validator below) and adds a
+    # second `mode="after"` validator that rejects values
+    # with `len < 8` (REQ-LA-CFG-002 — Q1 option C: catches
+    # operator typos at boot; soft None is allowed to
+    # preserve v1 zero-config boot). Real `li_at` cookies are
+    # ~150 chars; the 8-char threshold is conservative.
+    #
+    # When UNSET: the scraper runs anonymously (v1 behavior
+    # preserved). When SET + `len >= 8`: the scraper injects
+    # the cookie into the Playwright `BrowserContext` before
+    # the first navigation (T-004 wires the consumer).
+    linkedin_li_at: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("LINKEDIN_LI_AT", "linkedin_li_at"),
+    )
+
+    @field_validator("linkedin_li_at", mode="before")
+    @classmethod
+    def _normalize_empty_li_at(cls, v: SecretStr | str | None) -> SecretStr | None:
+        # Mirrors the `_normalize_empty_secret` validator at
+        # `config.py:734-743` for `llm_api_key`. Normalizes the
+        # 3 empty inputs to `None` so the kill-switch contract
+        # holds at the adapter boundary (REQ-LA-CFG-003):
+        #   `None`          → `None`
+        #   `""`            → `None`
+        #   `SecretStr("")` → `None`
+        # Non-empty `str` is wrapped in `SecretStr` (Pydantic's
+        # native behavior — the validator runs BEFORE the
+        # field's `SecretStr` coercion, so wrapping here keeps
+        # the contract uniform). Non-empty `SecretStr` is
+        # returned as-is (idempotent passthrough).
+        if v is None:
+            return None
+        if isinstance(v, SecretStr):
+            return v if v.get_secret_value() else None
+        if isinstance(v, str):
+            return SecretStr(v) if v else None
+        return v
+
+    @field_validator("linkedin_li_at", mode="after")
+    @classmethod
+    def _reject_short_li_at(cls, v: SecretStr | None) -> SecretStr | None:
+        # Q1 option C: HARD `ValueError` when present + `len < MIN_LI_AT_LENGTH`
+        # (REQ-LA-CFG-002); SOFT `None` is allowed (preserves
+        # v1 zero-config boot). The error message includes the
+        # actual length so the operator can self-diagnose the
+        # typo without re-running with DEBUG logging enabled.
+        if v is None:
+            return None
+        if len(v.get_secret_value()) < MIN_LI_AT_LENGTH:
+            raise ValueError(
+                f"LINKEDIN_LI_AT must be at least {MIN_LI_AT_LENGTH} "
+                f"characters (got {len(v.get_secret_value())}); check for "
+                "typos or unset the variable to run the scraper "
+                "anonymously."
+            )
+        return v
 
     # ------------------------------------------------------------------
     # Persistent-cache settings (REQ-PC-004, persistent-cache change)
