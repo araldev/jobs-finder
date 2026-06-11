@@ -107,13 +107,6 @@ _DATE_SELECTOR = "span.date"
 # (JOB METADATA like "Jornada completa") and MUST NOT be confused
 # with the description. The parser targets ONLY `belowJobSnippet`.
 _DESCRIPTION_SELECTOR = '[data-testid="belowJobSnippet"]'
-# Camino 1 (full description extraction): the full job description
-# is NOT in the SERP card — it lives in the detail panel that
-# Indeed renders when a user clicks a card. The panel is anchored
-# by `#jobDescriptionText` (real capture 2026-06-11 against
-# es.indeed.com). The parser reads that element and joins its
-# children into a single scrubbable string.
-_DETAIL_PANEL_SELECTOR = "#jobDescriptionText"
 
 # Substring anchor for the document-level JSON blob that holds the
 # per-result `pubDate` (epoch ms). Indeed's stable cross-locale
@@ -433,70 +426,6 @@ def parse_indeed_description(card: str | Tag) -> str | None:
     if not items:
         return None
     parts = [item.get_text(strip=True) for item in items]
-    joined = " | ".join(parts)
-    return joined.strip() or None
-
-
-def parse_indeed_detail_description(card: str | Tag) -> str | None:
-    """Extract the FULL job description from Indeed's detail panel.
-
-    Spec: REQ-PARSER-INDEED-DETAIL-001 (Camino 1, 2026-06-11).
-
-    Real capture (2026-06-11, es.indeed.com SERP) shows the
-    following:
-
-    - The SERP card's `[data-testid="belowJobSnippet"]` block is
-      EMPTY in the new layout (no `<li>` children). The card
-      parser returns `None` and the LLM downstream gets a null.
-    - The full description lives in a separate detail panel that
-      Indeed renders when a user clicks a card. The panel is
-      anchored by:
-
-          <div id="jobDescriptionText" class="jobsearch-JobComponent-description ...">
-            <h2><b>Descripción:</b></h2>
-            <p>...</p>
-            <ul><li>...</li></ul>
-            ...
-          </div>
-
-    This parser reads the panel and returns a single scrubbable
-    string: top-level `<p>` and `<li>` children are joined with
-    ` | ` (so the LLM gets a single line, easy to embed in a
-    prompt). HTML entities are preserved (the LLM handles
-    decoding). The `Descripción:` header is INCLUDED so the LLM
-    sees the section labels.
-
-    Contract:
-    - Returns the joined text when the panel is present and has
-      at least one non-empty `<p>` or `<li>` child.
-    - Returns `None` when the panel is absent.
-    - Returns `None` when the panel is present but has no
-      `<p>` or `<li>` children (empty / placeholder).
-    - Does NOT raise on malformed HTML.
-    """
-    tag = _to_tag(card)
-    # The `card` arg is EITHER the panel itself (e.g. the
-    # caller passed `page.eval_on_selector("#jobDescriptionText",
-    # "el => el.outerHTML")` and re-parsed it) OR a containing
-    # element (e.g. the whole page). Match either: if the
-    # arg has id=jobDescriptionText, treat it as the panel;
-    # otherwise search for the panel inside.
-    tag_id = tag.get("id") if hasattr(tag, "get") else None
-    if tag_id == "jobDescriptionText":
-        container: Tag = tag
-    else:
-        found = tag.select_one(_DETAIL_PANEL_SELECTOR)
-        if found is None:
-            return None
-        container = found
-    # Collect top-level <p> and <li> children. Skip empty ones.
-    parts: list[str] = []
-    for child in container.find_all(["p", "li"], recursive=True):
-        text = child.get_text(separator=" ", strip=True)
-        if text:
-            parts.append(text)
-    if not parts:
-        return None
     joined = " | ".join(parts)
     return joined.strip() or None
 

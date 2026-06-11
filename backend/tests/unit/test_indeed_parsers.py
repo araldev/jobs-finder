@@ -31,8 +31,6 @@ from jobs_finder.infrastructure.indeed.parsers import (
     is_indeed_blocked,
     parse_indeed_company,
     parse_indeed_description,
-    parse_indeed_detail_description,
-    parse_indeed_detail_description,
     parse_indeed_job_id,
     parse_indeed_location,
     parse_indeed_posted_at,
@@ -1025,60 +1023,3 @@ def test_parse_indeed_description_handles_malformed_html() -> None:
     assert "Recoverable first bullet" in result
     assert "Recoverable second bullet" in result
     assert " | " in result, "multiple items must be joined with ' | '"
-
-
-# --- Camino 1: full description panel parser (REQ-PARSER-INDEED-DETAIL-001) ---
-
-
-def test_parse_indeed_detail_description_real_fixture() -> None:
-    """The captured real detail panel fixture is parsed into a long description string.
-
-    Sanity check: the panel captured at
-    `tests/fixtures/indeed_detail_panel.py` (committed
-    2026-06-11) contains a multi-paragraph Spanish AI
-    Specialist job description. The parser must:
-    - return a non-None string,
-    - be at least 1000 chars (it's a full description, not a snippet),
-    - include the actual description text,
-    - join the <p> and <li> blocks with " | " so the LLM
-      downstream gets a single line.
-    """
-    from tests.fixtures.indeed_detail_panel import PANEL_HTML
-
-    result = parse_indeed_detail_description(PANEL_HTML)
-    assert result is not None
-    assert len(result) >= 1000, f"description too short ({len(result)} chars); expected full description"
-    assert "Inteligencia Artificial" in result
-    assert "Python" in result
-    assert " | " in result, "multiple <p>/<li> blocks must be joined with ' | '"
-
-
-def test_parse_indeed_detail_description_absent_returns_none() -> None:
-    """A page that does NOT contain `#jobDescriptionText` returns `None`."""
-    fragment = '<div><h1>Some other page</h1><p>Not the panel</p></div>'
-    assert parse_indeed_detail_description(fragment) is None
-
-
-def test_parse_indeed_detail_description_empty_panel_returns_none() -> None:
-    """A panel element with NO `<p>` or `<li>` children returns `None`.
-
-    "Empty == absent": a `#jobDescriptionText` element with
-    no description children is treated the same as no element
-    at all. The `Job.description` field is `None`, NOT `""`.
-    """
-    fragment = '<div id="jobDescriptionText"></div>'
-    assert parse_indeed_detail_description(fragment) is None
-
-
-def test_parse_indeed_detail_description_handles_malformed_html() -> None:
-    """Malformed HTML around the panel does NOT crash the parser."""
-    fragment = (
-        '<div id="jobDescriptionText">'
-        '<p>Recoverable first paragraph</p>'
-        '<ul><li>Recoverable first bullet</li></ul>'
-        # NO closing tags below — truncated fragment
-    )
-    result = parse_indeed_detail_description(fragment)
-    assert result is not None
-    assert "Recoverable first paragraph" in result
-    assert "Recoverable first bullet" in result

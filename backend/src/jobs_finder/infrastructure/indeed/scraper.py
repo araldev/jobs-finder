@@ -58,7 +58,6 @@ Errors:
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, Self
 from urllib.parse import quote
@@ -79,7 +78,6 @@ from .parsers import (
     is_indeed_blocked,
     parse_indeed_company,
     parse_indeed_description,
-    parse_indeed_detail_description,
     parse_indeed_job_id,
     parse_indeed_location,
     parse_indeed_posted_at,
@@ -306,31 +304,6 @@ class IndeedPlaywrightScraper(JobSearchPort):
                     "scraper: zero cards on first page",
                     details={"reason": "zero_cards_on_first_page"},
                 )
-            # Camino 1 (full description extraction): the SERP-side
-            # `belowJobSnippet` block is empty in the new layout
-            # (real capture 2026-06-11). The full description lives
-            # in a detail panel that Indeed renders when a user
-            # clicks a card. We click each card serially, read the
-            # `#jobDescriptionText` panel, and update the job.
-            #
-            # Anti-block: this runs INSIDE the throttle (acquired
-            # by `paginated_search`) and INSIDE the page that
-            # already loaded the SERP — no extra URL navigation
-            # beyond the AJAX the click triggers, so it does not
-            # raise the same Cloudflare triggers a direct
-            # `/viewjob?jk=...` visit would.
-            #
-            # Failure isolation: a per-card click or panel-read
-            # failure leaves the job's `description=None` (the
-            # v1 contract); the loop continues for the other
-            # jobs. We do NOT raise — `paginated_search` and
-            # the route handler are designed to tolerate
-            # partial descriptions.
-            new_jobs = await _enrich_with_detail_panels(
-                page=page,
-                jobs=new_jobs,
-                cards=soup.select(RESULTS_SELECTOR)[:remaining],
-            )
             return new_jobs
 
         return fetch_one_page
@@ -416,88 +389,3 @@ def _parse_cards(soup: BeautifulSoup, remaining: int, domain: str) -> list[Job]:
                 details={"card_html": str(card)[:200], "cause": str(e)},
             ) from e
     return jobs
-
-
-async def _enrich_with_detail_panels(
-    *,
-    page: Any,
-    jobs: list[Job],
-    cards: list[Any],
-) -> list[Job]:
-    """For each (job, card) pair, click the card and read the description panel.
-
-    Spec: REQ-SCRAPER-INDEED-DETAIL-001 (Camino 1, 2026-06-11).
-
-    Indeed renders the full job description in a separate detail
-    panel when a user clicks a card on the SERP. The panel is
-    anchored by `#jobDescriptionText`. This helper:
-
-    1. Iterates over `jobs` in order (capped at `len(cards)`).
-    2. For each card, calls `page.locator(RESULTS_SELECTOR).nth(i).click()`.
-    3. Waits for the panel to appear with a short timeout
-       (5s) — `state="attached"` so we don't fight any
-       click-overlay that might block visibility.
-    4. Reads the panel's `outerHTML` and parses it with
-       `parse_indeed_detail_description`.
-    5. Returns a new `Job` instance with the description
-       updated (uses `model_copy(update={...})` so the
-       `Job` value object stays immutable).
-
-    Failure isolation:
-    - Click fails (Playwright error): the job keeps
-      `description=None` (v1 contract). The loop continues.
-    - Panel does not appear within 5s: the job keeps
-      `description=None`. The loop continues.
-    - Panel parses to `None`: the job keeps
-      `description=None`. The loop continues.
-
-    The helper NEVER raises. It returns the same length list
-    as the input (1:1 correspondence with the input jobs).
-
-    Anti-block notes:
-    - Clicks are serial (one card at a time) — no parallel
-      `.click()` calls that could trip Cloudflare's
-      "non-human" detector.
-    - The page does NOT navigate; only AJAX is triggered,
-      so the same context cookies are reused.
-    - A 100ms `asyncio.sleep` between clicks yields the
-      event loop so the panel's AJAX can render before the
-      next click.
-    """
-    if not jobs:
-        return jobs
-    enriched: list[Job] = []
-    detail_selector = "#jobDescriptionText"
-    n = min(len(jobs), len(cards))
-    for i in range(n):
-        job = jobs[i]
-        desc: str | None = None
-        try:
-            card_locator = page.locator(RESULTS_SELECTOR).nth(i)
-            await card_locator.click(timeout=5000)
-            try:
-                await page.wait_for_selector(
-                    detail_selector, state="attached", timeout=5000
-                )
-                panel_html = await page.eval_on_selector(
-                    detail_selector, "el => el.outerHTML"
-                )
-                panel_soup = BeautifulSoup(panel_html, "html.parser")
-                desc = parse_indeed_detail_description(panel_soup)
-            except (PlaywrightTimeoutError, PlaywrightError):
-                desc = None
-        except (PlaywrightTimeoutError, PlaywrightError):
-            desc = None
-        except Exception:
-            # Catch-all so one bad card never breaks the batch.
-            desc = None
-        if desc:
-            enriched.append(replace(job, description=desc))
-        else:
-            enriched.append(job)
-    # Append any jobs beyond the card count (shouldn't happen,
-    # but defensive: the caller passed a `[:remaining]` cap).
-    if len(jobs) > n:
-        enriched.extend(jobs[n:])
-    return enriched
-
