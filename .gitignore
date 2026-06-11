@@ -65,3 +65,6 @@ package-lock.json.bak
 .env.local
 .env.*.local
 capture_log.txt
+
+# LinkedIn cookies (exported session tokens; never commit)
+linkedin_cookies.json

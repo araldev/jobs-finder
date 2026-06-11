@@ -73,7 +73,7 @@ class _FakePage:
     async def goto(self, url: str) -> None:
         self.goto_calls.append(url)
 
-    async def wait_for_selector(self, selector: str, timeout: int = 0) -> None:
+    async def wait_for_selector(self, selector: str, timeout: int = 0, **kwargs: object) -> None:
         return None
 
     async def content(self) -> str:

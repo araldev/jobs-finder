@@ -464,7 +464,7 @@ class Settings(BaseSettings):
     # The design's truth table (4 rows, design §2):
     #   xvfb=None  + headless=True  → launch(headless=True,  args=[])                (Row 1)
     #   xvfb=None  + headless=False → launch(headless=False, args=[])                (Row 2)
-    #   xvfb=":99" + headless=True  → launch(headless=False, args=[--ns,--ddsu])     (Row 3)
+    #   xvfb=":99" + headless=True  → launch(headless=True,  args=[--ns,--ddsu])     (Row 3)
     #   xvfb=":99" + headless=False → launch(headless=False, args=[--ns,--ddsu])     (Row 4)
     # ------------------------------------------------------------------
 

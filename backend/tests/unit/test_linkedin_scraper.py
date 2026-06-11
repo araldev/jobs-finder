@@ -378,7 +378,7 @@ async def test_search_uses_geo_id_when_resolver_returns_int() -> None:
             # without raising and the card-select returns [].
             return "<html><body></body></html>"
 
-        async def wait_for_selector(self, selector: str, timeout: int = 0) -> None:
+        async def wait_for_selector(self, selector: str, timeout: int = 0, **kwargs: object) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -443,7 +443,7 @@ async def test_search_uses_location_when_resolver_returns_none() -> None:
         async def content(self) -> str:
             return "<html><body></body></html>"
 
-        async def wait_for_selector(self, selector: str, timeout: int = 0) -> None:
+        async def wait_for_selector(self, selector: str, timeout: int = 0, **kwargs: object) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -498,7 +498,7 @@ async def test_search_uses_location_when_resolver_is_none() -> None:
         async def content(self) -> str:
             return "<html><body></body></html>"
 
-        async def wait_for_selector(self, selector: str, timeout: int = 0) -> None:
+        async def wait_for_selector(self, selector: str, timeout: int = 0, **kwargs: object) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -552,7 +552,7 @@ async def test_resolver_called_once_per_search_not_per_page() -> None:
         async def content(self) -> str:
             return self._html
 
-        async def wait_for_selector(self, selector: str, timeout: int = 0) -> None:
+        async def wait_for_selector(self, selector: str, timeout: int = 0, **kwargs: object) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -732,7 +732,7 @@ async def test_search_uses_structured_when_resolver_returns_triplet() -> None:
         async def content(self) -> str:
             return "<html><body></body></html>"
 
-        async def wait_for_selector(self, selector: str, timeout: int = 0) -> None:
+        async def wait_for_selector(self, selector: str, timeout: int = 0, **kwargs: object) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -786,7 +786,7 @@ async def test_resolver_called_once_per_search_not_per_page_for_structured() -> 
         async def content(self) -> str:
             return "<html><body></body></html>"
 
-        async def wait_for_selector(self, selector: str, timeout: int = 0) -> None:
+        async def wait_for_selector(self, selector: str, timeout: int = 0, **kwargs: object) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -846,7 +846,7 @@ async def test_legacy_wiring_without_resolver_works() -> None:
         async def content(self) -> str:
             return "<html><body></body></html>"
 
-        async def wait_for_selector(self, selector: str, timeout: int = 0) -> None:
+        async def wait_for_selector(self, selector: str, timeout: int = 0, **kwargs: object) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -901,7 +901,7 @@ async def test_structured_none_falls_back_to_legacy() -> None:
         async def content(self) -> str:
             return "<html><body></body></html>"
 
-        async def wait_for_selector(self, selector: str, timeout: int = 0) -> None:
+        async def wait_for_selector(self, selector: str, timeout: int = 0, **kwargs: object) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -984,7 +984,7 @@ class _LinkedInFakePage:
     async def goto(self, url: str) -> None:
         self.goto_calls.append(url)
 
-    async def wait_for_selector(self, selector: str, *, timeout: int) -> None:
+    async def wait_for_selector(self, selector: str, *, timeout: int = 0, **kwargs: object) -> None:
         self.wait_calls.append((selector, timeout))
 
     async def content(self) -> str:
@@ -1503,15 +1503,14 @@ async def test_chromium_launch_xvfb_display_none_keeps_headless_default() -> Non
     playwright_start.assert_called_once_with()
 
 
-async def test_chromium_launch_xvfb_display_forces_headless_false() -> None:
-    """Row 3 — `xvfb=":99", headless=True` → Xvfb branch (headless=False, Xvfb args).
+async def test_chromium_launch_xvfb_display_respects_headless_true() -> None:
+    """Row 3 — `xvfb=":99", headless=True` → Xvfb branch (headless=True, Xvfb args).
 
-    REQ-LXV-001: the Xvfb branch ALWAYS forces `headless=False`
-    regardless of `Settings.headless`. The Xvfb mode is the
-    "real browser under a virtual X display" path; Chromium
-    needs `headless=False` to actually render to the Xvfb
-    display. The `args=` adds the standard Chromium-in-Xvfb
-    incantation for Debian / Docker.
+    The Xvfb branch now RESPECTS the `headless` setting instead of
+    forcing `headless=False`. chromium-browser snap renders JavaScript
+    correctly under Xvfb even in headless mode, so we save GPU/rendering
+    resources while keeping the display server for the renderer.
+    The `args=` adds the standard Chromium-in-Xvfb incantation.
     """
     from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
 
@@ -1538,7 +1537,7 @@ async def test_chromium_launch_xvfb_display_forces_headless_false() -> None:
         user_agent="test-agent/1.0",
         timeout_ms=10_000,
         xvfb_display=":99",
-        headless=True,  # Even with headless=True, Xvfb forces headless=False
+        headless=True,
     )
     scraper = LinkedInPlaywrightScraper(
         throttle=AsyncThrottle(min_interval_seconds=0.0),
@@ -1549,12 +1548,13 @@ async def test_chromium_launch_xvfb_display_forces_headless_false() -> None:
         ap_mock.return_value.start = playwright_start
         async with scraper:
             pass
-    # Row 3: headless=False (Xvfb wins), args=[--no-sandbox, --disable-dev-shm-usage],
+    # Row 3: headless=True (respects settings), args=[--no-sandbox,
+    # --disable-dev-shm-usage, --disable-blink-features=AutomationControlled],
     # env={DISPLAY: ":99"} (the DISPLAY env var propagation is also asserted here
     # for completeness; the dedicated env-propagation test pins it independently).
     launch_mock.assert_called_once_with(
-        headless=False,
-        args=["--no-sandbox", "--disable-dev-shm-usage"],
+        headless=True,
+        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
         env={"DISPLAY": ":99"},
     )
 
@@ -1607,7 +1607,7 @@ async def test_chromium_launch_xvfb_display_overrides_headless_false() -> None:
     # Row 4: same as Row 3 (Xvfb wins, env propagates).
     launch_mock.assert_called_once_with(
         headless=False,
-        args=["--no-sandbox", "--disable-dev-shm-usage"],
+        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
         env={"DISPLAY": ":99"},
     )
 
@@ -1667,7 +1667,7 @@ async def test_chromium_launch_xvfb_propagates_display_env() -> None:
     # env={"DISPLAY": ":99"})`.
     launch_mock.assert_called_once_with(
         headless=False,
-        args=["--no-sandbox", "--disable-dev-shm-usage"],
+        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
         env={"DISPLAY": ":99"},
     )
 
@@ -1729,7 +1729,7 @@ async def test_chromium_launch_xvfb_propagates_channel() -> None:
             pass
     launch_mock.assert_called_once_with(
         headless=False,
-        args=["--no-sandbox", "--disable-dev-shm-usage"],
+        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
         env={"DISPLAY": ":99"},
         channel="chrome",
     )
@@ -1783,6 +1783,6 @@ async def test_chromium_launch_xvfb_no_channel_when_unset() -> None:
     # channel=None must NOT be passed — assert the EXACT 3 kwargs
     launch_mock.assert_called_once_with(
         headless=False,
-        args=["--no-sandbox", "--disable-dev-shm-usage"],
+        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
         env={"DISPLAY": ":99"},
     )
