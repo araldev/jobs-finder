@@ -74,36 +74,46 @@ class EnvLinkedInAuthCookieAdapter:
 
 
 class MultiEnvLinkedInAuthCookiesAdapter:
-    """Reads 4 LinkedIn cookies from `Settings.linkedin_*` (no I/O at runtime).
+    """Reads 4-5 LinkedIn cookies from `Settings.linkedin_*` (no I/O at runtime).
 
-    `cookies()` returns `None` when ALL 4 are `None` (the v1
-    anonymous sentinel); otherwise returns the filtered list in
-    the canonical order `li_at → JSESSIONID → bcookie → li_gc`
-    (REQ-LST-COOKIE-004). The 4 cookies are independent `SecretStr
-    | None` slots; each is checked at the `Settings` boundary by
-    the shared `mode="before"` validator that normalizes empty
-    values to `None`.
+    `cookies()` returns `None` when ALL cookies are `None` (the
+    v1 anonymous sentinel); otherwise returns the filtered list
+    in the canonical order
+    `li_at → JSESSIONID → bcookie → bscookie → li_gc`
+    (REQ-LST-COOKIE-004 + REQ-LBSc-002). The 5 cookies are
+    independent `SecretStr | None` slots; each is checked at
+    the `Settings` boundary by the shared `mode="before"`
+    validator that normalizes empty values to `None`.
 
-    Spec: REQ-LST-COOKIE-001..005. The ctor takes the 4 values
-    DIRECTLY (not the `Settings` instance). The composition root
-    is the only site that reads `Settings.linkedin_*`; the adapter
-    stays a pure value-holder. The class uses `__slots__` for
-    memory efficiency and to document the no-state invariant at
-    the type level (matches the `EnvLinkedInAuthCookieAdapter`
-    style above and the `NoOpRateLimiter` style at
-    `application/ports.py`).
+    Spec: REQ-LST-COOKIE-001..005 + REQ-LBSc-002 (F-4 fold-in).
+    The ctor takes the 5 values DIRECTLY (not the `Settings`
+    instance). The composition root is the only site that reads
+    `Settings.linkedin_*`; the adapter stays a pure value-holder.
+    The class uses `__slots__` for memory efficiency and to
+    document the no-state invariant at the type level (matches
+    the `EnvLinkedInAuthCookieAdapter` style above and the
+    `NoOpRateLimiter` style at `application/ports.py`).
+
+    T-005 of `backend-linkedin-xvfb` adds the 5th slot
+    `bscookie` (F-4 fold-in per obs #375 §9). The slot lands
+    alphabetically between `bcookie` and `li_gc` in the
+    canonical order. The 4-cookie path is byte-identical when
+    `bscookie=None` (the F-4 additivity pin).
     """
 
-    __slots__ = ("_li_at", "_jsessionid", "_bcookie", "_li_gc")
+    __slots__ = ("_li_at", "_jsessionid", "_bcookie", "_bscookie", "_li_gc")
 
     # Canonical LinkedIn-session cookie order. The order is
-    # load-bearing: a future refactor that re-orders these 4 names
-    # MUST also update the order in `__init__` AND in `cookies()`
-    # (they're both indexed by position in the ctor's `__init__`
-    # kwargs). The test
-    # `test_cookies_returns_deterministic_order` pins the order
-    # so a re-order breaks the test loudly.
-    _COOKIE_NAMES = ("li_at", "JSESSIONID", "bcookie", "li_gc")
+    # load-bearing: a future refactor that re-orders these 5
+    # names MUST also update the order in `__init__` AND in
+    # `cookies()` (they're both indexed by position in the
+    # ctor's `__init__` kwargs). The tests
+    # `test_cookies_returns_deterministic_order` (4 cookies)
+    # and `test_bscookie_cookie_injection` (5 cookies) pin the
+    # orders so a re-order breaks the tests loudly.
+    # T-005 of `backend-linkedin-xvfb` inserts `bscookie` at
+    # position 3 (between `bcookie` and `li_gc`).
+    _COOKIE_NAMES = ("li_at", "JSESSIONID", "bcookie", "bscookie", "li_gc")
 
     def __init__(
         self,
@@ -111,31 +121,39 @@ class MultiEnvLinkedInAuthCookiesAdapter:
         jsessionid: SecretStr | None,
         bcookie: SecretStr | None,
         li_gc: SecretStr | None,
+        bscookie: SecretStr | None = None,
     ) -> None:
         self._li_at = li_at
         self._jsessionid = jsessionid
         self._bcookie = bcookie
         self._li_gc = li_gc
+        # T-005 of `backend-linkedin-xvfb` — REQ-LBSc-002.
+        # The 5th LinkedIn cookie (F-4 fold-in per obs #375 §9).
+        # Default `None` preserves the v1 + v2 4-cookie path
+        # when the operator does not set `LINKEDIN_BSCOOKIE`.
+        self._bscookie = bscookie
 
     def cookies(self) -> list[tuple[str, SecretStr]] | None:
-        """Return the filtered cookie list, or `None` when all 4 are `None`.
+        """Return the filtered cookie list, or `None` when all 5 are `None`.
 
-        REQ-LST-COOKIE-002: when ALL 4 cookies are `None` (the
+        REQ-LST-COOKIE-002: when ALL cookies are `None` (the
         v1 anonymous path), returns `None` so the caller can
         short-circuit (the scraper skips `add_cookies` entirely).
 
         REQ-LST-COOKIE-003: when ≥1 cookie is non-`None`, returns
         the filtered list with `None` entries removed.
 
-        REQ-LST-COOKIE-004: the order is ALWAYS
-        `li_at → JSESSIONID → bcookie → li_gc` (the canonical
-        LinkedIn-session order), NOT the order the constructor
-        was called with.
+        REQ-LST-COOKIE-004 + REQ-LBSc-002: the order is ALWAYS
+        `li_at → JSESSIONID → bcookie → bscookie → li_gc` (the
+        canonical LinkedIn-session order), NOT the order the
+        constructor was called with. The 5-name order is
+        stable across the 4-cookie path (when `bscookie=None`,
+        the filtered list has 4 entries; when set, 5).
         """
         pairs: list[tuple[str, SecretStr]] = []
         for name, value in zip(
             self._COOKIE_NAMES,
-            (self._li_at, self._jsessionid, self._bcookie, self._li_gc),
+            (self._li_at, self._jsessionid, self._bcookie, self._bscookie, self._li_gc),
             strict=True,
         ):
             if value is not None:
@@ -155,7 +173,8 @@ class MultiEnvLinkedInAuthCookiesAdapter:
         channel.
         """
         count = sum(
-            v is not None for v in (self._li_at, self._jsessionid, self._bcookie, self._li_gc)
+            v is not None
+            for v in (self._li_at, self._jsessionid, self._bcookie, self._bscookie, self._li_gc)
         )
         if count == 0:
             return "MultiEnvLinkedInAuthCookiesAdapter(<unset>)"
@@ -171,8 +190,9 @@ class MultiEnvLinkedInAuthCookiesAdapter:
             self._li_at == other._li_at
             and self._jsessionid == other._jsessionid
             and self._bcookie == other._bcookie
+            and self._bscookie == other._bscookie
             and self._li_gc == other._li_gc
         )
 
     def __hash__(self) -> int:
-        return hash((self._li_at, self._jsessionid, self._bcookie, self._li_gc))
+        return hash((self._li_at, self._jsessionid, self._bcookie, self._bscookie, self._li_gc))

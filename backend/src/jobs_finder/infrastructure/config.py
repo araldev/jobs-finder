@@ -408,6 +408,33 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("LINKEDIN_LI_GC", "linkedin_li_gc"),
     )
+    # T-005 of `backend-linkedin-xvfb` (F-4 fold-in per
+    # obs #375 §9) — REQ-LBSc-001. The 5th LinkedIn cookie
+    # (`bscookie`) the operator's per-session browser has in
+    # addition to the 4 cycle-2 cookies. The new field
+    # reuses the 2 shared validators
+    # (`_normalize_empty_linkedin_optional_secret` +
+    # `_reject_short_linkedin_optional_cookie` with
+    # `field_name="LINKEDIN_BSCOOKIE"`) — no new helper code.
+    # The `__slots__` and `cookies()` of
+    # `MultiEnvLinkedInAuthCookiesAdapter` grow a 5th position
+    # in T-005's adapter extension. The field defaults to
+    # `None` (the F-4 additivity pin — the 4-cookie path is
+    # byte-identical when `bscookie` is unset).
+    linkedin_bscookie: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("LINKEDIN_BSCOOKIE", "linkedin_bscookie"),
+    )
+
+    @field_validator("linkedin_bscookie", mode="before")
+    @classmethod
+    def _normalize_empty_linkedin_bscookie(cls, v: SecretStr | str | None) -> SecretStr | None:
+        return _normalize_empty_linkedin_optional_secret(v)
+
+    @field_validator("linkedin_bscookie", mode="after")
+    @classmethod
+    def _reject_short_linkedin_bscookie(cls, v: SecretStr | None) -> SecretStr | None:
+        return _reject_short_linkedin_optional_cookie(v, field_name="LINKEDIN_BSCOOKIE")
 
     # ------------------------------------------------------------------
     # LinkedIn-Xvfb settings (REQ-LXV-005, `backend-linkedin-xvfb` T-002).
