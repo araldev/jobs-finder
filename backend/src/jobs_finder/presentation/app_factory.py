@@ -351,6 +351,7 @@ def build_app(  # noqa: PLR0915
                 stealth=Stealth(),  # NEW
                 headless=effective_settings.headless,  # NEW (T-001 bugfix wire)
                 xvfb_display=effective_settings.linkedin_xvfb_display,  # NEW (T-002 Xvfb wire)
+                launch_channel=effective_settings.linkedin_launch_channel,  # NEW (experiment)
             ),
         )
         raw_use_case = RawLinkedInJobsUseCase(port=scraper)

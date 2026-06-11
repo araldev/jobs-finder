@@ -236,6 +236,43 @@ class TestLinkedInXvfbDisplaySettings:
 
 
 # ---------------------------------------------------------------------------
+# Experiment: `LINKEDIN_LAUNCH_CHANNEL` env var.
+#
+# The new `Settings.linkedin_launch_channel: str | None` field
+# tells Playwright which browser channel to launch (e.g. "chrome"
+# for system Chrome). When set, the scraper passes
+# `chromium.launch(channel="chrome", ...)` to use the system
+# Chrome binary instead of the bundled Chromium.
+# ---------------------------------------------------------------------------
+
+
+class TestLinkedInLaunchChannelSettings:
+    """`Settings.linkedin_launch_channel` field — env alias + default.
+
+    The 2 scenarios:
+    1. Default = `None` (no `LINKEDIN_LAUNCH_CHANNEL` env var)
+    2. Env override: `LINKEDIN_LAUNCH_CHANNEL="chrome"` →
+       `settings.linkedin_launch_channel == "chrome"`
+    """
+
+    def test_settings_linkedin_launch_channel_defaults_to_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No `LINKEDIN_LAUNCH_CHANNEL` env var → `settings.linkedin_launch_channel is None`."""
+        monkeypatch.delenv("LINKEDIN_LAUNCH_CHANNEL", raising=False)
+        settings = Settings()
+        assert settings.linkedin_launch_channel is None
+
+    def test_settings_linkedin_launch_channel_env_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`LINKEDIN_LAUNCH_CHANNEL="chrome"` → `settings.linkedin_launch_channel == "chrome"`."""
+        monkeypatch.setenv("LINKEDIN_LAUNCH_CHANNEL", "chrome")
+        settings = Settings()
+        assert settings.linkedin_launch_channel == "chrome"
+
+
+# ---------------------------------------------------------------------------
 # T-005 of `backend-linkedin-xvfb` — REQ-LBSc-001 (F-4 fold-in).
 #
 # The 5th LinkedIn cookie (`bscookie`, F-4 per obs #375 §9) is a
