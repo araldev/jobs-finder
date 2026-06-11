@@ -100,6 +100,7 @@ from jobs_finder.infrastructure.infojobs.scraper import (
 from jobs_finder.infrastructure.infojobs.throttle import InfoJobsAsyncThrottle
 from jobs_finder.infrastructure.keyword_score import keyword_score
 from jobs_finder.infrastructure.linkedin.auth_cookie import (
+    JsonLinkedInAuthCookiesAdapter,
     MultiEnvLinkedInAuthCookiesAdapter,
 )
 from jobs_finder.infrastructure.linkedin.scraper import (
@@ -267,32 +268,42 @@ def build_app(  # noqa: PLR0915
         effective_settings.linkedin_li_at is None
         and effective_settings.linkedin_jsessionid is None
         and effective_settings.linkedin_bcookie is None
+        and effective_settings.linkedin_bscookie is None
         and effective_settings.linkedin_li_gc is None
     ):
         _logger.warning(
             "LinkedIn scraper running without any auth cookies; "
             "SERP will hit the Cloudflare / auth wall and return a "
-            "reduced list. Set at least LINKEDIN_LI_AT (or all 4) "
+            "reduced list. Set at least LINKEDIN_LI_AT (or all 5) "
             "in .env to bypass the wall."
         )
 
     if use_case is None:
         # T-005 of `backend-linkedin-stealth` — REQ-LST-COOKIE-001
         # + REQ-LST-SCR-001. Build the
-        # `MultiEnvLinkedInAuthCookiesAdapter` from the 4
-        # resolved `Settings.linkedin_*` cookie fields. The
-        # adapter is constructed ONCE per `build_app()` call
-        # and lives in the `LinkedInScraperSettings.auth_cookies`
-        # slot. The v1 `auth_cookie` slot is `None` in the
-        # production wire (the v1 adapter is preserved for
-        # backward compat with the 35 v1 tests that construct
+        # `MultiEnvLinkedInAuthCookiesAdapter` from the 5
+        # resolved `Settings.linkedin_*` cookie fields
+        # (T-005 of `backend-linkedin-xvfb` added the 5th
+        # `bscookie` field for the F-4 fold-in per
+        # obs #375 §9; default `None` preserves the
+        # 4-cookie path). The adapter is constructed ONCE
+        # per `build_app()` call and lives in the
+        # `LinkedInScraperSettings.auth_cookies` slot. The
+        # v1 `auth_cookie` slot is `None` in the production
+        # wire (the v1 adapter is preserved for backward
+        # compat with the 35 v1 tests that construct
         # `EnvLinkedInAuthCookieAdapter` directly).
-        auth_cookies_port = MultiEnvLinkedInAuthCookiesAdapter(
-            li_at=effective_settings.linkedin_li_at,
-            jsessionid=effective_settings.linkedin_jsessionid,
-            bcookie=effective_settings.linkedin_bcookie,
-            li_gc=effective_settings.linkedin_li_gc,
-        )
+        json_adapter = JsonLinkedInAuthCookiesAdapter()
+        if json_adapter.cookies() is not None:
+            auth_cookies_port: MultiEnvLinkedInAuthCookiesAdapter | JsonLinkedInAuthCookiesAdapter = json_adapter
+        else:
+            auth_cookies_port = MultiEnvLinkedInAuthCookiesAdapter(
+                li_at=effective_settings.linkedin_li_at,
+                jsessionid=effective_settings.linkedin_jsessionid,
+                bcookie=effective_settings.linkedin_bcookie,
+                bscookie=effective_settings.linkedin_bscookie,
+                li_gc=effective_settings.linkedin_li_gc,
+            )
         # `Stealth()` is constructed at the composition root
         # (mirrors the Indeed+InfoJobs wires below at L340 and
         # L396). The instance lives in the
@@ -316,6 +327,24 @@ def build_app(  # noqa: PLR0915
             # slot is `None` in the production wire; the v1
             # adapter is preserved for the 35 v1 tests that
             # construct it directly.
+            # T-001 of `backend-linkedin-xvfb` (REQ-LBUG-001,
+            # obs #379 bugfix fold-in): the new `headless`
+            # slot wires the previously-dead
+            # `Settings.headless` env binding into the
+            # `chromium.launch(headless=...)` kwarg. The
+            # default `True` preserves the v1 byte-identical
+            # default path.
+            # T-002 of `backend-linkedin-xvfb` (REQ-LXV-001/002/003):
+            # the new `xvfb_display` slot wires
+            # `Settings.linkedin_xvfb_display` (the opt-in
+            # Xvfb switch) into the scraper's `__aenter__`
+            # 2-branch conditional. When `None` (the v1+v2
+            # default), the byte-identical headless path is
+            # taken. When set (e.g. `":99"`), the Xvfb
+            # branch activates with `headless=False`,
+            # `--no-sandbox` + `--disable-dev-shm-usage`
+            # args, and the `DISPLAY` env kwarg on
+            # `async_playwright().start()`.
             settings=LinkedInScraperSettings(
                 user_agent=effective_settings.user_agent,
                 timeout_ms=effective_settings.request_timeout_ms,
@@ -325,6 +354,9 @@ def build_app(  # noqa: PLR0915
                 auth_cookie=None,  # v1 slot kept (None in production wire)
                 auth_cookies=auth_cookies_port,  # NEW (multi-cookie)
                 stealth=Stealth(),  # NEW
+                headless=effective_settings.headless,  # NEW (T-001 bugfix wire)
+                xvfb_display=effective_settings.linkedin_xvfb_display,  # NEW (T-002 Xvfb wire)
+                launch_channel=effective_settings.linkedin_launch_channel,  # NEW (experiment)
             ),
         )
         raw_use_case = RawLinkedInJobsUseCase(port=scraper)

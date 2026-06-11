@@ -173,3 +173,161 @@ class TestLinkedInStealthCookies:
             assert settings.linkedin_li_gc.get_secret_value() == "12345678"
         finally:
             monkeypatch.undo()
+
+
+# ---------------------------------------------------------------------------
+# T-002 of `backend-linkedin-xvfb` — REQ-LXV-005 (Settings field).
+#
+# The new `Settings.linkedin_xvfb_display: str | None` field
+# reads from the `LINKEDIN_XVFB_DISPLAY` env var and normalizes
+# the empty string to `None` (the kill switch). The 3 tests
+# below are the RED-first regression: each MUST fail on main
+# (the field doesn't exist) and pass after the field lands.
+# ---------------------------------------------------------------------------
+
+
+class TestLinkedInXvfbDisplaySettings:
+    """REQ-LXV-005 — `Settings.linkedin_xvfb_display` field.
+
+    The 3 scenarios:
+    1. Default = `None` (no `LINKEDIN_XVFB_DISPLAY` env var)
+    2. Env override: `LINKEDIN_XVFB_DISPLAY=":99"` →
+       `settings.linkedin_xvfb_display == ":99"`
+    3. Empty-string kill switch:
+       `LINKEDIN_XVFB_DISPLAY=""` → `None`
+    """
+
+    def test_settings_linkedin_xvfb_display_defaults_to_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No `LINKEDIN_XVFB_DISPLAY` env var → `settings.linkedin_xvfb_display is None`."""
+        monkeypatch.delenv("LINKEDIN_XVFB_DISPLAY", raising=False)
+        settings = Settings()
+        assert settings.linkedin_xvfb_display is None
+
+    def test_settings_linkedin_xvfb_display_env_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`LINKEDIN_XVFB_DISPLAY=":99"` → `settings.linkedin_xvfb_display == ":99"`.
+
+        The env binding is case-insensitive (pydantic-settings
+        standard) and uses the `AliasChoices` pattern to opt
+        out of the model-level `env_prefix="LINKEDIN_"`.
+        """
+        monkeypatch.setenv("LINKEDIN_XVFB_DISPLAY", ":99")
+        settings = Settings()
+        assert settings.linkedin_xvfb_display == ":99"
+
+    def test_settings_linkedin_xvfb_display_empty_string_normalizes_to_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`LINKEDIN_XVFB_DISPLAY=""` → `None` (the kill switch).
+
+        The empty-string normalization lets operators set
+        `LINKEDIN_XVFB_DISPLAY=` in `.env` (an explicit empty
+        value) and get the default `None` behavior (Xvfb OFF).
+        Without the normalizer, an empty string would pass
+        through as `""` and the Xvfb branch would activate
+        with `DISPLAY=""`, which Chromium rejects.
+        """
+        monkeypatch.setenv("LINKEDIN_XVFB_DISPLAY", "")
+        settings = Settings()
+        assert settings.linkedin_xvfb_display is None
+
+
+# ---------------------------------------------------------------------------
+# Experiment: `LINKEDIN_LAUNCH_CHANNEL` env var.
+#
+# The new `Settings.linkedin_launch_channel: str | None` field
+# tells Playwright which browser channel to launch (e.g. "chrome"
+# for system Chrome). When set, the scraper passes
+# `chromium.launch(channel="chrome", ...)` to use the system
+# Chrome binary instead of the bundled Chromium.
+# ---------------------------------------------------------------------------
+
+
+class TestLinkedInLaunchChannelSettings:
+    """`Settings.linkedin_launch_channel` field — env alias + default.
+
+    The 2 scenarios:
+    1. Default = `None` (no `LINKEDIN_LAUNCH_CHANNEL` env var)
+    2. Env override: `LINKEDIN_LAUNCH_CHANNEL="chrome"` →
+       `settings.linkedin_launch_channel == "chrome"`
+    """
+
+    def test_settings_linkedin_launch_channel_defaults_to_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No `LINKEDIN_LAUNCH_CHANNEL` env var → `settings.linkedin_launch_channel is None`."""
+        monkeypatch.delenv("LINKEDIN_LAUNCH_CHANNEL", raising=False)
+        settings = Settings()
+        assert settings.linkedin_launch_channel is None
+
+    def test_settings_linkedin_launch_channel_env_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`LINKEDIN_LAUNCH_CHANNEL="chrome"` → `settings.linkedin_launch_channel == "chrome"`."""
+        monkeypatch.setenv("LINKEDIN_LAUNCH_CHANNEL", "chrome")
+        settings = Settings()
+        assert settings.linkedin_launch_channel == "chrome"
+
+
+# ---------------------------------------------------------------------------
+# T-005 of `backend-linkedin-xvfb` — REQ-LBSc-001 (F-4 fold-in).
+#
+# The 5th LinkedIn cookie (`bscookie`, F-4 per obs #375 §9) is a
+# 1-line additive change to the existing 4 `linkedin_*` cookie
+# pattern. The new `Settings.linkedin_bscookie: SecretStr | None`
+# field reuses the 2 shared validators (no new helper code).
+# The 3 tests below are the RED-first regression: each MUST
+# fail on main (the field doesn't exist) and pass after the
+# field lands.
+# ---------------------------------------------------------------------------
+
+
+class TestLinkedInBscookieSettings:
+    """REQ-LBSc-001 — `Settings.linkedin_bscookie` field (F-4 fold-in).
+
+    The 3 scenarios:
+    1. Default = `None` (no `LINKEDIN_BSCOOKIE` env var)
+    2. Env override: `LINKEDIN_BSCOOKIE="AQE..."` →
+       `settings.linkedin_bscookie.get_secret_value() == "AQE..."`
+    3. Short-value reject: 3-char `bsc` → `ValidationError`
+       (the `_reject_short_linkedin_optional_cookie` validator
+       with `field_name="LINKEDIN_BSCOOKIE"`)
+    """
+
+    def test_settings_linkedin_bscookie_defaults_to_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No `LINKEDIN_BSCOOKIE` env var → `settings.linkedin_bscookie is None`."""
+        monkeypatch.delenv("LINKEDIN_BSCOOKIE", raising=False)
+        settings = Settings()
+        assert settings.linkedin_bscookie is None
+
+    def test_settings_linkedin_bscookie_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`LINKEDIN_BSCOOKIE="AQE1234567890"` → secret value bound.
+
+        The env binding is case-insensitive and uses the
+        `AliasChoices` pattern. A 13-char synthetic value
+        (`"AQE1234567890"`, well above the 8-char threshold)
+        populates the `SecretStr` field.
+        """
+        monkeypatch.setenv("LINKEDIN_BSCOOKIE", "AQE1234567890")
+        settings = Settings()
+        assert settings.linkedin_bscookie is not None
+        assert settings.linkedin_bscookie.get_secret_value() == "AQE1234567890"
+
+    def test_settings_linkedin_bscookie_rejects_short_value(self) -> None:
+        """`Settings(linkedin_bscookie=SecretStr('bsc'))` (3 chars) → ValidationError.
+
+        Pins the 2nd shared validator (`_reject_short_linkedin_optional_cookie`)
+        with `field_name="LINKEDIN_BSCOOKIE"`. The error message
+        names the env var (so the operator can self-diagnose).
+        """
+        with pytest.raises(ValidationError) as exc_info:
+            Settings(linkedin_bscookie=SecretStr("bsc"))
+        msg = str(exc_info.value)
+        assert "LINKEDIN_BSCOOKIE" in msg
+        assert "must be at least 8 characters" in msg
+        assert "got 3" in msg

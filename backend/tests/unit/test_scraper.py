@@ -77,7 +77,7 @@ class FakePage:
                 raise PlaywrightTimeoutError("FakePage: pages queue exhausted")
             self.html = self.pages.pop(0)
 
-    async def wait_for_selector(self, selector: str, *, timeout: int) -> None:
+    async def wait_for_selector(self, selector: str, *, timeout: int = 0, **kwargs: object) -> None:
         self.wait_calls.append((selector, timeout))
         if self.selector_timeout:
             raise PlaywrightTimeoutError(f"selector {selector!r} not found")

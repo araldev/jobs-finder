@@ -408,6 +408,122 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("LINKEDIN_LI_GC", "linkedin_li_gc"),
     )
+    # T-005 of `backend-linkedin-xvfb` (F-4 fold-in per
+    # obs #375 §9) — REQ-LBSc-001. The 5th LinkedIn cookie
+    # (`bscookie`) the operator's per-session browser has in
+    # addition to the 4 cycle-2 cookies. The new field
+    # reuses the 2 shared validators
+    # (`_normalize_empty_linkedin_optional_secret` +
+    # `_reject_short_linkedin_optional_cookie` with
+    # `field_name="LINKEDIN_BSCOOKIE"`) — no new helper code.
+    # The `__slots__` and `cookies()` of
+    # `MultiEnvLinkedInAuthCookiesAdapter` grow a 5th position
+    # in T-005's adapter extension. The field defaults to
+    # `None` (the F-4 additivity pin — the 4-cookie path is
+    # byte-identical when `bscookie` is unset).
+    linkedin_bscookie: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("LINKEDIN_BSCOOKIE", "linkedin_bscookie"),
+    )
+
+    @field_validator("linkedin_bscookie", mode="before")
+    @classmethod
+    def _normalize_empty_linkedin_bscookie(cls, v: SecretStr | str | None) -> SecretStr | None:
+        return _normalize_empty_linkedin_optional_secret(v)
+
+    @field_validator("linkedin_bscookie", mode="after")
+    @classmethod
+    def _reject_short_linkedin_bscookie(cls, v: SecretStr | None) -> SecretStr | None:
+        return _reject_short_linkedin_optional_cookie(v, field_name="LINKEDIN_BSCOOKIE")
+
+    # ------------------------------------------------------------------
+    # LinkedIn-Xvfb settings (REQ-LXV-005, `backend-linkedin-xvfb` T-002).
+    #
+    # The 1 new field below configures the opt-in `LINKEDIN_XVFB_DISPLAY`
+    # switch: when set to a non-`None` display string (e.g. `":99"`),
+    # the LinkedIn scraper launches Chromium non-headless under a
+    # virtual X display (Xvfb) so the browser has a real windowing
+    # context + real TLS / HTTP-2 SETTINGS frame, evading
+    # Cloudflare 2026's headless-Chromium fingerprint detection.
+    #
+    # The field opts out of the model-level `env_prefix="LINKEDIN_"`
+    # by declaring its own `validation_alias` (same pattern used by
+    # `indeed_*`, `infojobs_*`, `linkedin_*` pagination, cache, and
+    # rate-limit fields). The env var is `LINKEDIN_XVFB_DISPLAY`; the
+    # second alias in `AliasChoices` lets tests construct the field
+    # programmatically (`Settings(linkedin_xvfb_display=":99")`).
+    #
+    # The default `None` preserves the v1 + v2 byte-identical
+    # headless path (the `headless=True` launch is unchanged when
+    # the field is unset). An empty-string env value (e.g.
+    # `LINKEDIN_XVFB_DISPLAY=` in `.env`) normalizes to `None` via
+    # the `_normalize_empty_linkedin_xvfb_display` mode="before"
+    # validator (the kill-switch contract — operators can set the
+    # var to an explicit empty string to disable Xvfb).
+    #
+    # The design's truth table (4 rows, design §2):
+    #   xvfb=None  + headless=True  → launch(headless=True,  args=[])                (Row 1)
+    #   xvfb=None  + headless=False → launch(headless=False, args=[])                (Row 2)
+    #   xvfb=":99" + headless=True  → launch(headless=True,  args=[--ns,--ddsu])     (Row 3)
+    #   xvfb=":99" + headless=False → launch(headless=False, args=[--ns,--ddsu])     (Row 4)
+    # ------------------------------------------------------------------
+
+    linkedin_xvfb_display: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("LINKEDIN_XVFB_DISPLAY", "linkedin_xvfb_display"),
+    )
+
+    @field_validator("linkedin_xvfb_display", mode="before")
+    @classmethod
+    def _normalize_empty_linkedin_xvfb_display(cls, v: str | None) -> str | None:
+        """Mode='before': `None` / `""` → `None` (the empty-string kill switch).
+
+        Mirrors the v1 `_normalize_empty_li_at` empty-string
+        normalization but for the non-`SecretStr` `xvfb_display`
+        field. The field is `str | None` (NOT `SecretStr` because
+        the display string is not a secret — the operator's
+        `.env` can contain `LINKEDIN_XVFB_DISPLAY=:99` without
+        any value-masking concern).
+        """
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v if v else None
+        return v
+
+    # NEW: The opt-in `LINKEDIN_LAUNCH_CHANNEL` env var tells Playwright
+    # which browser channel to launch (e.g. "chrome" for system Chrome).
+    # When set, `chromium.launch(channel="chrome")` uses the system Chrome
+    # binary instead of Playwright's bundled Chromium. This gives LinkedIn
+    # the same TLS / HTTP-2 fingerprint as the user's real browser (where
+    # the cookies were originally created), breaking the session-fingerprint
+    # binding redirect loop.
+    #
+    # Default `None` → no `channel` kwarg (Playwright's bundled Chromium).
+    linkedin_launch_channel: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "LINKEDIN_LAUNCH_CHANNEL", "linkedin_launch_channel"
+        ),
+    )
+
+    @field_validator("linkedin_launch_channel", mode="before")
+    @classmethod
+    def _normalize_empty_linkedin_launch_channel(
+        cls, v: str | None
+    ) -> str | None:
+        """Mode='before': `None` / `""` → `None` (the empty-string kill switch).
+
+        Mirrors the v1 `_normalize_empty_linkedin_xvfb_display`
+        empty-string normalization. The field is `str | None` (NOT
+        `SecretStr` because the channel name, e.g. `"chrome"`, is
+        neither secret nor unique per session).
+        """
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v if v else None
+        return v
 
     # ------------------------------------------------------------------
     # Shared validators (REFACTORED from v1 inline validators — T-002 of

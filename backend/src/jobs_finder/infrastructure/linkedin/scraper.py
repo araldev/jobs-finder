@@ -145,12 +145,15 @@ class LinkedInScraperSettings:
     __slots__ = (
         "auth_cookie",
         "auth_cookies",
+        "headless",
         "inter_page_delay_seconds",
+        "launch_channel",
         "location_resolver",
         "max_pages",
         "stealth",
         "timeout_ms",
         "user_agent",
+        "xvfb_display",
     )
 
     def __init__(
@@ -164,6 +167,9 @@ class LinkedInScraperSettings:
         auth_cookie: LinkedInAuthCookiePort | None = None,
         auth_cookies: LinkedInAuthCookiesPort | None = None,
         stealth: Any | None = None,
+        headless: bool = True,
+        xvfb_display: str | None = None,
+        launch_channel: str | None = None,
     ) -> None:
         self.user_agent = user_agent
         self.timeout_ms = timeout_ms
@@ -209,6 +215,43 @@ class LinkedInScraperSettings:
         # Indeed+InfoJobs precedent byte-identically). The
         # default is `None` (preserves v1 behavior).
         self.stealth = stealth
+        # T-001 of `backend-linkedin-xvfb` — REQ-LBUG-001
+        # (obs #379 bugfix fold-in). The v1 cycle shipped
+        # `Settings.headless: bool = True` and the
+        # `LINKEDIN_HEADLESS=false` env binding, but
+        # `scraper.py:288` hardcoded `headless=True` so the
+        # field was DECLARED but NEVER CONSUMED (a
+        # "field-existence test is not a field-is-used test"
+        # gap, per obs #379). The new slot holds the
+        # composition-root-resolved `Settings.headless`
+        # value; the scraper's `__aenter__` reads it as
+        # `self._settings.headless` and passes it to
+        # `chromium.launch(headless=...)`. Default `True` so
+        # the v1 default path is byte-identical (the only
+        # change for v1 callers is the slot's existence).
+        self.headless = headless
+        # T-002 of `backend-linkedin-xvfb` — REQ-LXV-001/002/003.
+        # The opt-in `Settings.linkedin_xvfb_display` value
+        # (sourced from the `LINKEDIN_XVFB_DISPLAY` env var).
+        # When NOT `None`, the scraper's `__aenter__` enters
+        # the Xvfb branch: `chromium.launch(headless=False,
+        # args=["--no-sandbox", "--disable-dev-shm-usage"])`
+        # and `async_playwright().start(env={"DISPLAY":
+        # xvfb_display})`. When `None` (the default), the
+        # v1+v2 byte-identical headless path is taken. The
+        # field is `str | None` (NOT `SecretStr` because the
+        # display string is not a secret — `:99` is the
+        # default; no value-masking concern).
+        self.xvfb_display = xvfb_display
+        # Experiment: the opt-in `LINKEDIN_LAUNCH_CHANNEL` env var
+        # (wired from `Settings.linkedin_launch_channel`) tells
+        # Playwright to use a system browser channel (e.g. "chrome")
+        # instead of the bundled Chromium. This gives LinkedIn the
+        # same TLS / HTTP-2 fingerprint as the user's real browser,
+        # breaking the session-fingerprint binding redirect loop.
+        # When `None` (the default), no `channel=` kwarg is passed
+        # to `chromium.launch(...)`, preserving the current behavior.
+        self.launch_channel = launch_channel
 
     def __repr__(self) -> str:
         auth_cookie_repr = "<set>" if self.auth_cookie is not None else "<unset>"
@@ -221,7 +264,10 @@ class LinkedInScraperSettings:
             f"location_resolver={self.location_resolver!r}, "
             f"auth_cookie={auth_cookie_repr}, "
             f"auth_cookies={auth_cookies_repr}, "
-            f"stealth={stealth_repr})"
+            f"stealth={stealth_repr}, "
+            f"headless={self.headless}, "
+            f"xvfb_display={self.xvfb_display!r}, "
+            f"launch_channel={self.launch_channel!r})"
         )
 
     def __eq__(self, other: object) -> bool:
@@ -236,6 +282,9 @@ class LinkedInScraperSettings:
             and self.auth_cookie == other.auth_cookie
             and self.auth_cookies == other.auth_cookies
             and self.stealth == other.stealth
+            and self.headless == other.headless
+            and self.xvfb_display == other.xvfb_display
+            and self.launch_channel == other.launch_channel
         )
 
     def __hash__(self) -> int:
@@ -249,6 +298,9 @@ class LinkedInScraperSettings:
                 self.auth_cookie,
                 self.auth_cookies,
                 self.stealth,
+                self.headless,
+                self.xvfb_display,
+                self.launch_channel,
             )
         )
 
@@ -283,9 +335,64 @@ class LinkedInPlaywrightScraper(JobSearchPort):
     async def __aenter__(self) -> Self:
         if self._browser_factory is not None:
             self._browser = await self._browser_factory()
-        else:
+        elif self._settings.xvfb_display is not None:
+            # T-002 of `backend-linkedin-xvfb` — REQ-LXV-001/002/003.
+            # The Xvfb branch: launch Chromium non-headless under
+            # a virtual X display so the browser has a real
+            # windowing context + real TLS / HTTP-2 SETTINGS
+            # frame, evading Cloudflare 2026's headless-Chromium
+            # fingerprint detection.
+            #
+            # Three changes from the no-Xvfb path:
+            #   1. `headless=False` (Xvfb wins over
+            #      `Settings.headless`; Chromium needs a real
+            #      display to actually render).
+            #   2. `args=["--no-sandbox", "--disable-dev-shm-usage"]`
+            #      (the standard Chromium-in-Xvfb incantation for
+            #      Debian / Docker).
+            #   3. `env={"DISPLAY": xvfb_display}` is passed to
+            #      `chromium.launch(...)` (REQ-LXV-003) so the
+            #      Chromium subprocess inherits the `DISPLAY`
+            #      env var and can find the X server. NOTE:
+            #      the design's original `async_playwright()
+            #      .start(env=...)` was incorrect — Playwright
+            #      Python's `start()` takes no kwargs; the
+            #      `env=` kwarg is supported on `chromium.launch()`.
+            xvfb = self._settings.xvfb_display
             self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(headless=True)
+            # EXPERIMENT: `linkedin_launch_channel` — when set
+            # (e.g. "chrome"), the `channel=` kwarg tells
+            # Playwright to use the system Chrome binary instead
+            # of the bundled Chromium, giving LinkedIn the same
+            # TLS / HTTP-2 fingerprint as the user's real browser.
+            _launch_kwargs: dict[str, Any] = {
+                "headless": self._settings.headless,
+                "args": [
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
+                ],
+                "env": {"DISPLAY": xvfb},
+            }
+            if self._settings.launch_channel is not None:
+                _launch_kwargs["channel"] = self._settings.launch_channel
+            self._browser = await self._playwright.chromium.launch(
+                **_launch_kwargs,
+            )
+        else:
+            # No-Xvfb path (REQ-LXV-002 + REQ-LBUG-001):
+            # byte-identical to the v1 + v2 (cycle 2) ship
+            # when `Settings.headless` is `True` (the v1 default).
+            # T-001 of `backend-linkedin-xvfb` wired
+            # `self._settings.headless` (was hardcoded `True`).
+            # The `args=[]` is the explicit sentinel for the
+            # no-Xvfb path (the design's truth table requires
+            # `args=[]` in Rows 1 + 2; a regression to no-args
+            # would break the test).
+            self._playwright = await async_playwright().start()
+            self._browser = await self._playwright.chromium.launch(
+                headless=self._settings.headless, args=[]
+            )
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -374,6 +481,29 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         # skipped (no `if`-fallthrough side-effects).
         if self._stealth is not None:
             await self._stealth.apply_stealth_async(ctx)
+        # LinkedIn cookie-consent banner: inject an init script
+        # that auto-dismisses the consent modal as soon as it
+        # appears. This avoids the timing race between
+        # `page.goto(page)` and `_dismiss_cookie_consent`.
+        # AttributeError is silently caught so the method works
+        # with fake context objects in tests.
+        try:
+            await ctx.add_init_script(
+                """() => {
+                    new MutationObserver((mutations, observer) => {
+                        const btn = document.querySelector(
+                            'button[action-type="ACCEPT"]'
+                        );
+                        if (btn) {
+                            btn.click();
+                            observer.disconnect();
+                        }
+                    }).observe(document.documentElement, { childList: true, subtree: true });
+                }"""
+            )
+        except AttributeError:
+            pass
+
         # T-004 of `backend-linkedin-stealth` — REQ-LST-SCR-002.
         # Multi-cookie injection. The v1 single-cookie
         # `auth_cookie` slot is KEPT (the 35 v1 tests construct
@@ -391,22 +521,43 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         # value leak).
         auth_cookies_port = self._settings.auth_cookies
         if auth_cookies_port is not None:
-            cookies = auth_cookies_port.cookies()
-            if cookies is not None:
-                await ctx.add_cookies(
-                    [
-                        {
-                            "name": name,
-                            "value": value.get_secret_value(),
-                            "domain": ".linkedin.com",
-                            "path": "/",
-                            "httpOnly": True,
-                            "secure": True,
-                        }
-                        for (name, value) in cookies
-                    ]
-                )
-                _logger.debug("LinkedIn auth cookies injected (count=%d)", len(cookies))
+            # T-00X of `backend-linkedin-cookie-attrs` — try the full-dict
+            # path first. When the port supports ``cookie_dicts()`` (the
+            # ``JsonLinkedInAuthCookiesAdapter``), pass the ORIGINAL
+            # attributes (domain, path, httpOnly, secure) directly to
+            # ``ctx.add_cookies()``. This fixes the
+            # ``ERR_TOO_MANY_REDIRECTS`` that happens when hardcoding
+            # ``domain=".linkedin.com"`` for cookies that originally had
+            # ``domain=".www.linkedin.com"``.
+            cookie_dicts_fn = getattr(auth_cookies_port, "cookie_dicts", None)
+            if cookie_dicts_fn is not None:
+                dicts = cookie_dicts_fn()
+                if dicts is not None:
+                    await ctx.add_cookies(dicts)
+                    _logger.debug("LinkedIn auth cookies injected via dicts (count=%d)", len(dicts))
+                else:
+                    # dicts returned None — fall through to legacy path
+                    pass
+            # Legacy name+value path — hardcoded attributes (v1 contract).
+            # Used when the port does NOT support ``cookie_dicts()``
+            # (e.g. ``MultiEnvLinkedInAuthCookiesAdapter`` in tests).
+            if cookie_dicts_fn is None:
+                cookies = auth_cookies_port.cookies()
+                if cookies is not None:
+                    await ctx.add_cookies(
+                        [
+                            {
+                                "name": name,
+                                "value": value.get_secret_value(),
+                                "domain": ".linkedin.com",
+                                "path": "/",
+                                "httpOnly": True,
+                                "secure": True,
+                            }
+                            for (name, value) in cookies
+                        ]
+                    )
+                    _logger.debug("LinkedIn auth cookies injected via pairs (count=%d)", len(cookies))
         # v1 single-cookie path (KEPT byte-identical to the v1
         # `backend-linkedin-auth` cycle). When the v1 `auth_cookie`
         # slot is set (the 35 v1 tests construct
@@ -628,10 +779,44 @@ class LinkedInPlaywrightScraper(JobSearchPort):
             f"?keywords={quote(keywords)}&location={quote(location)}&start={start}"
         )
 
+    @staticmethod
+    async def _dismiss_cookie_consent(page: Any) -> None:
+        """Dismiss the LinkedIn cookie-consent banner if visible.
+
+        LinkedIn shows a cookie-consent modal that creates an overlay
+        covering the search results, causing ``wait_for_selector`` with
+        the default ``state="visible"`` to time out. This helper runs
+        via ``page.evaluate`` (raw DOM) to bypass Playwright's actionability
+        checks (the overlay intercepts pointer events).
+
+        The helper polls up to 5 times (10s total) to handle the race
+        between ``page.goto`` completing and the banner being rendered
+        by LinkedIn's JS. ``AttributeError`` is silently caught so the
+        method works with fake pages in tests.
+        """
+        js = """
+            (() => {
+                const btn = document.querySelector(
+                    'button[action-type="ACCEPT"]'
+                );
+                if (btn) { btn.click(); return true; }
+                return false;
+            })()
+        """
+        try:
+            for _ in range(5):
+                await page.wait_for_timeout(2000)
+                clicked = await page.evaluate(js)
+                if clicked:
+                    return
+        except AttributeError:
+            pass
+
     async def _navigate_and_wait(self, page: Any, url: str) -> None:
         try:
             await page.goto(url)
-            await page.wait_for_selector(RESULTS_SELECTOR, timeout=self._settings.timeout_ms)
+            await self._dismiss_cookie_consent(page)
+            await page.wait_for_selector(RESULTS_SELECTOR, state="attached", timeout=self._settings.timeout_ms)
         except PlaywrightTimeoutError as e:
             raise LinkedInTimeoutError(
                 "scraper: timeout waiting for results",
