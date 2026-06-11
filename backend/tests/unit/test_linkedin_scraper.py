@@ -1287,3 +1287,137 @@ class TestStealthIntegration:
         assert "LINKEDIN_JSESSIONID" in msg
         assert "LINKEDIN_BCOOKIE" in msg
         assert "LINKEDIN_LI_GC" in msg
+
+
+# ---------------------------------------------------------------------------
+# T-001 of `backend-linkedin-xvfb` — REQ-LBUG-001 (obs #379 bugfix fold-in).
+#
+# The v1 cycle shipped `Settings.headless: bool = True` and the
+# `LINKEDIN_HEADLESS=false` env binding, but `scraper.py:288`
+# hardcoded `chromium.launch(headless=True)` — the field was
+# DECLARED but NEVER CONSUMED (a "field-existence test is not
+# a field-is-used test" gap, per obs #379). The bugfix wires
+# `self._settings.headless` into the launch kwargs. The test
+# below is the RED-first regression: it MUST fail on main
+# (the launch is hardcoded `headless=True` regardless of the
+# settings value) and pass after the wire lands.
+# ---------------------------------------------------------------------------
+
+
+async def test_chromium_launch_uses_settings_headless() -> None:
+    """REQ-LBUG-001 — `chromium.launch(headless=...)` reads from `Settings.headless`.
+
+    Obs #379 bugfix fold-in. The v1 cycle's `Settings.headless` env
+    binding was a dead field: `scraper.py:288` hardcoded
+    `headless=True` so `LINKEDIN_HEADLESS=false` had zero
+    runtime effect. The bugfix wires `self._settings.headless`
+    into the launch kwargs.
+
+    The test drives the production launch path (no
+    `browser_factory=` injection) and patches `async_playwright`
+    so the test can capture the `chromium.launch` call kwargs
+    without launching a real browser. The patch is scoped to the
+    `jobs_finder.infrastructure.linkedin.scraper` module where
+    the import lives.
+
+    On main (pre-bugfix): the launch is hardcoded `headless=True`,
+    so `launch_mock.assert_called_with(headless=False)` FAILS
+    with the message `"Expected call: launch(headless=False)"`
+    `"Actual call: launch(headless=True)"`.
+
+    On the fix branch (T-001 GREEN): the launch reads from
+    `self._settings.headless`, so the test PASSES.
+
+    The test ALSO asserts `Settings.headless=True` (the v1
+    default) results in `launch(headless=True)` (no regression
+    for the v1 default path). The 2 assertions are independent
+    so a regression that flips the polarity would fail exactly
+    one of them.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
+
+    from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+        LinkedInPlaywrightScraper,
+        LinkedInScraperSettings,
+    )
+    from jobs_finder.infrastructure.linkedin.throttle import (  # noqa: PLC0415
+        AsyncThrottle,
+    )
+
+    # The launch mock that records the kwargs. Returns a
+    # browser-like mock so the post-`__aenter__` state is well-formed.
+    launch_mock_headless_false = AsyncMock()
+    browser_mock_headless_false = MagicMock()
+    browser_mock_headless_false.close = AsyncMock()
+    launch_mock_headless_false.return_value = browser_mock_headless_false
+
+    # The async_playwright context: `start()` returns the playwright
+    # instance, whose `.chromium.launch` is the mock above.
+    playwright_ctx_headless_false = MagicMock()
+    playwright_ctx_headless_false.chromium.launch = launch_mock_headless_false
+    playwright_ctx_headless_false.stop = AsyncMock()
+
+    async def fake_start_headless_false() -> MagicMock:
+        return playwright_ctx_headless_false
+
+    # `Settings.headless=False` → launch(headless=False). The
+    # `headless` slot is added by the T-001 GREEN step; on main
+    # this constructor call fails with `TypeError: __init__()
+    # got an unexpected keyword argument 'headless'` — that is
+    # the RED signal.
+    settings_headless_false = LinkedInScraperSettings(
+        user_agent="test-agent/1.0",
+        timeout_ms=10_000,
+        headless=False,
+    )
+    scraper_headless_false = LinkedInPlaywrightScraper(
+        throttle=AsyncThrottle(min_interval_seconds=0.0),
+        settings=settings_headless_false,
+        # `browser_factory=None` forces the launch path (the only
+        # path that calls `chromium.launch`).
+        browser_factory=None,
+    )
+    with patch(
+        "jobs_finder.infrastructure.linkedin.scraper.async_playwright"
+    ) as ap_mock_headless_false:
+        ap_mock_headless_false.return_value.start = fake_start_headless_false
+        async with scraper_headless_false:
+            pass
+    # On main (pre-bugfix): the launch is `launch(headless=True)`.
+    # The assertion below FAILS.
+    # On the fix branch: the launch is `launch(headless=False)`.
+    # The assertion PASSES.
+    launch_mock_headless_false.assert_called_once_with(headless=False)
+
+    # The v1 default: `Settings.headless=True` → launch(headless=True).
+    # Pinning this separately defends against a regression that
+    # flips the polarity.
+    launch_mock_headless_true = AsyncMock()
+    browser_mock_headless_true = MagicMock()
+    browser_mock_headless_true.close = AsyncMock()
+    launch_mock_headless_true.return_value = browser_mock_headless_true
+
+    playwright_ctx_headless_true = MagicMock()
+    playwright_ctx_headless_true.chromium.launch = launch_mock_headless_true
+    playwright_ctx_headless_true.stop = AsyncMock()
+
+    async def fake_start_headless_true() -> MagicMock:
+        return playwright_ctx_headless_true
+
+    settings_headless_true = LinkedInScraperSettings(
+        user_agent="test-agent/1.0",
+        timeout_ms=10_000,
+        headless=True,
+    )
+    scraper_headless_true = LinkedInPlaywrightScraper(
+        throttle=AsyncThrottle(min_interval_seconds=0.0),
+        settings=settings_headless_true,
+        browser_factory=None,
+    )
+    with patch(
+        "jobs_finder.infrastructure.linkedin.scraper.async_playwright"
+    ) as ap_mock_headless_true:
+        ap_mock_headless_true.return_value.start = fake_start_headless_true
+        async with scraper_headless_true:
+            pass
+    launch_mock_headless_true.assert_called_once_with(headless=True)

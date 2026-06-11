@@ -145,6 +145,7 @@ class LinkedInScraperSettings:
     __slots__ = (
         "auth_cookie",
         "auth_cookies",
+        "headless",
         "inter_page_delay_seconds",
         "location_resolver",
         "max_pages",
@@ -164,6 +165,7 @@ class LinkedInScraperSettings:
         auth_cookie: LinkedInAuthCookiePort | None = None,
         auth_cookies: LinkedInAuthCookiesPort | None = None,
         stealth: Any | None = None,
+        headless: bool = True,
     ) -> None:
         self.user_agent = user_agent
         self.timeout_ms = timeout_ms
@@ -209,6 +211,21 @@ class LinkedInScraperSettings:
         # Indeed+InfoJobs precedent byte-identically). The
         # default is `None` (preserves v1 behavior).
         self.stealth = stealth
+        # T-001 of `backend-linkedin-xvfb` — REQ-LBUG-001
+        # (obs #379 bugfix fold-in). The v1 cycle shipped
+        # `Settings.headless: bool = True` and the
+        # `LINKEDIN_HEADLESS=false` env binding, but
+        # `scraper.py:288` hardcoded `headless=True` so the
+        # field was DECLARED but NEVER CONSUMED (a
+        # "field-existence test is not a field-is-used test"
+        # gap, per obs #379). The new slot holds the
+        # composition-root-resolved `Settings.headless`
+        # value; the scraper's `__aenter__` reads it as
+        # `self._settings.headless` and passes it to
+        # `chromium.launch(headless=...)`. Default `True` so
+        # the v1 default path is byte-identical (the only
+        # change for v1 callers is the slot's existence).
+        self.headless = headless
 
     def __repr__(self) -> str:
         auth_cookie_repr = "<set>" if self.auth_cookie is not None else "<unset>"
@@ -221,7 +238,8 @@ class LinkedInScraperSettings:
             f"location_resolver={self.location_resolver!r}, "
             f"auth_cookie={auth_cookie_repr}, "
             f"auth_cookies={auth_cookies_repr}, "
-            f"stealth={stealth_repr})"
+            f"stealth={stealth_repr}, "
+            f"headless={self.headless})"
         )
 
     def __eq__(self, other: object) -> bool:
@@ -236,6 +254,7 @@ class LinkedInScraperSettings:
             and self.auth_cookie == other.auth_cookie
             and self.auth_cookies == other.auth_cookies
             and self.stealth == other.stealth
+            and self.headless == other.headless
         )
 
     def __hash__(self) -> int:
@@ -249,6 +268,7 @@ class LinkedInScraperSettings:
                 self.auth_cookie,
                 self.auth_cookies,
                 self.stealth,
+                self.headless,
             )
         )
 
@@ -284,8 +304,16 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         if self._browser_factory is not None:
             self._browser = await self._browser_factory()
         else:
+            # T-001 of `backend-linkedin-xvfb` — REQ-LBUG-001
+            # (obs #379 bugfix fold-in). The `headless=` kwarg
+            # now reads from `self._settings.headless` (the
+            # composition-root-resolved `Settings.headless` value)
+            # instead of the hardcoded `True`. The v1 default
+            # (`headless=True`) is byte-identical for default
+            # callers; `Settings(headless=False)` now actually
+            # takes effect.
             self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(headless=True)
+            self._browser = await self._playwright.chromium.launch(headless=self._settings.headless)
         return self
 
     async def __aexit__(self, *exc: object) -> None:

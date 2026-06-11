@@ -316,6 +316,13 @@ def build_app(  # noqa: PLR0915
             # slot is `None` in the production wire; the v1
             # adapter is preserved for the 35 v1 tests that
             # construct it directly.
+            # T-001 of `backend-linkedin-xvfb` (REQ-LBUG-001,
+            # obs #379 bugfix fold-in): the new `headless`
+            # slot wires the previously-dead
+            # `Settings.headless` env binding into the
+            # `chromium.launch(headless=...)` kwarg. The
+            # default `True` preserves the v1 byte-identical
+            # default path.
             settings=LinkedInScraperSettings(
                 user_agent=effective_settings.user_agent,
                 timeout_ms=effective_settings.request_timeout_ms,
@@ -325,6 +332,7 @@ def build_app(  # noqa: PLR0915
                 auth_cookie=None,  # v1 slot kept (None in production wire)
                 auth_cookies=auth_cookies_port,  # NEW (multi-cookie)
                 stealth=Stealth(),  # NEW
+                headless=effective_settings.headless,  # NEW (T-001 bugfix wire)
             ),
         )
         raw_use_case = RawLinkedInJobsUseCase(port=scraper)
