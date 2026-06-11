@@ -1907,6 +1907,50 @@ against the `CLOUDFLARE_CHALLENGE_HTML` fixture in
 on healthy SERPs that happen to render Cloudflare-style
 markup.
 
+### Running under Xvfb
+
+> **Linux only.** `xvfb` is a Linux binary. On macOS / Windows,
+> use a real display (omit `LINKEDIN_XVFB_DISPLAY` and Playwright
+> auto-detects `:0`).
+
+The `LINKEDIN_XVFB_DISPLAY` opt-in switch runs the same Chromium
+non-headless under a sidecar `Xvfb` server. The browser gets a
+real windowing context, real TLS / HTTP-2 SETTINGS frame, and a
+fingerprint indistinguishable from a real desktop Chrome —
+bypassing the Cloudflare 2026 headless-Chromium fingerprint
+detection that the v1 + v2 (cycle 2) `playwright-stealth` layer
+could not.
+
+The procedure is 4 commands:
+
+```bash
+# 1. Install Xvfb (one-time per host).
+sudo apt-get install -y xvfb
+
+# 2. Start the sidecar Xvfb server (default display :99).
+bash scripts/start_xvfb.sh &
+
+# 3. Export the DISPLAY env var so the Chromium subprocess finds the X server.
+export DISPLAY=:99
+
+# 4. Start the FastAPI service with LINKEDIN_XVFB_DISPLAY=:99.
+LINKEDIN_XVFB_DISPLAY=:99 uv run uvicorn jobs_finder.main:app --port 8000
+```
+
+The launch now uses `chromium.launch(headless=False, args=["--no-sandbox",
+"--disable-dev-shm-usage"], env={"DISPLAY": ":99"})`. The `--no-sandbox`
+flag is required because the operator's deployment runs Chromium as root
+in a Linux VM; running as a non-root user in production is recommended
+(R-7 in the design). The Xvfb server adds ~30-60 MB to the server
+footprint (R-6 in the design; the full FastAPI + Playwright + Chromium +
+Xvfb stack is ~300-400 MB).
+
+The Xvfb server is **independent** of the Python process — it survives
+FastAPI restarts and can be supervised by `systemd`, `supervisord`, or
+`tmux`. The `scripts/start_xvfb.sh` helper is supervisor-agnostic. To
+verify the script without spawning a real Xvfb, run `XVFB_DRY_RUN=1 bash
+scripts/start_xvfb.sh` (prints the spawn command and exits 0).
+
 ## Manual verification — Indeed
 
 > **Re-read the Legal Notice — Indeed above before proceeding.**
