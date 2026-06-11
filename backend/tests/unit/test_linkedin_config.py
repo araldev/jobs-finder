@@ -233,3 +233,64 @@ class TestLinkedInXvfbDisplaySettings:
         monkeypatch.setenv("LINKEDIN_XVFB_DISPLAY", "")
         settings = Settings()
         assert settings.linkedin_xvfb_display is None
+
+
+# ---------------------------------------------------------------------------
+# T-005 of `backend-linkedin-xvfb` — REQ-LBSc-001 (F-4 fold-in).
+#
+# The 5th LinkedIn cookie (`bscookie`, F-4 per obs #375 §9) is a
+# 1-line additive change to the existing 4 `linkedin_*` cookie
+# pattern. The new `Settings.linkedin_bscookie: SecretStr | None`
+# field reuses the 2 shared validators (no new helper code).
+# The 3 tests below are the RED-first regression: each MUST
+# fail on main (the field doesn't exist) and pass after the
+# field lands.
+# ---------------------------------------------------------------------------
+
+
+class TestLinkedInBscookieSettings:
+    """REQ-LBSc-001 — `Settings.linkedin_bscookie` field (F-4 fold-in).
+
+    The 3 scenarios:
+    1. Default = `None` (no `LINKEDIN_BSCOOKIE` env var)
+    2. Env override: `LINKEDIN_BSCOOKIE="AQE..."` →
+       `settings.linkedin_bscookie.get_secret_value() == "AQE..."`
+    3. Short-value reject: 3-char `bsc` → `ValidationError`
+       (the `_reject_short_linkedin_optional_cookie` validator
+       with `field_name="LINKEDIN_BSCOOKIE"`)
+    """
+
+    def test_settings_linkedin_bscookie_defaults_to_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No `LINKEDIN_BSCOOKIE` env var → `settings.linkedin_bscookie is None`."""
+        monkeypatch.delenv("LINKEDIN_BSCOOKIE", raising=False)
+        settings = Settings()
+        assert settings.linkedin_bscookie is None
+
+    def test_settings_linkedin_bscookie_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`LINKEDIN_BSCOOKIE="AQE1234567890"` → secret value bound.
+
+        The env binding is case-insensitive and uses the
+        `AliasChoices` pattern. A 13-char synthetic value
+        (`"AQE1234567890"`, well above the 8-char threshold)
+        populates the `SecretStr` field.
+        """
+        monkeypatch.setenv("LINKEDIN_BSCOOKIE", "AQE1234567890")
+        settings = Settings()
+        assert settings.linkedin_bscookie is not None
+        assert settings.linkedin_bscookie.get_secret_value() == "AQE1234567890"
+
+    def test_settings_linkedin_bscookie_rejects_short_value(self) -> None:
+        """`Settings(linkedin_bscookie=SecretStr('bsc'))` (3 chars) → ValidationError.
+
+        Pins the 2nd shared validator (`_reject_short_linkedin_optional_cookie`)
+        with `field_name="LINKEDIN_BSCOOKIE"`. The error message
+        names the env var (so the operator can self-diagnose).
+        """
+        with pytest.raises(ValidationError) as exc_info:
+            Settings(linkedin_bscookie=SecretStr("bsc"))
+        msg = str(exc_info.value)
+        assert "LINKEDIN_BSCOOKIE" in msg
+        assert "must be at least 8 characters" in msg
+        assert "got 3" in msg

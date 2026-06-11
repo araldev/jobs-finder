@@ -178,3 +178,88 @@ class TestV1SingleCookieAdapterBackwardCompat:
         """The v1 ctor normalizes empty `SecretStr` to `None` (v1 defense-in-depth)."""
         adapter = EnvLinkedInAuthCookieAdapter(SecretStr(""))
         assert adapter.cookie() is None
+
+
+# ---------------------------------------------------------------------------
+# T-005 of `backend-linkedin-xvfb` — REQ-LBSc-002 (F-4 fold-in).
+#
+# The 5th LinkedIn cookie (`bscookie`, F-4 per obs #375 §9)
+# extends `MultiEnvLinkedInAuthCookiesAdapter` to 5 positions.
+# The canonical 5-name order is
+# `li_at → JSESSIONID → bcookie → bscookie → li_gc`
+# (the new slot lands alphabetically between `bcookie` and `li_gc`).
+# The 2 tests below are the RED-first regression: each MUST
+# fail on main (the adapter has 4 slots) and pass after the
+# 5-slot extension lands.
+# ---------------------------------------------------------------------------
+
+
+class TestBscookieAdapter:
+    """REQ-LBSc-002 — `MultiEnvLinkedInAuthCookiesAdapter` 5-slot extension."""
+
+    def test_bscookie_cookie_injection(self) -> None:
+        """`cookies()` returns 5 entries in canonical order when all 5 cookies are set.
+
+        REQ-LBSc-002: when ALL 5 cookies are set, the adapter
+        returns the filtered list in the canonical order
+        `li_at → JSESSIONID → bcookie → bscookie → li_gc`.
+        The new `bscookie` slot lands alphabetically between
+        `bcookie` and `li_gc` (the position is load-bearing —
+        a future refactor that re-orders MUST also update the
+        order in `_COOKIE_NAMES` AND in `__init__`).
+        """
+        from jobs_finder.infrastructure.linkedin.auth_cookie import (  # noqa: PLC0415
+            MultiEnvLinkedInAuthCookiesAdapter,
+        )
+
+        adapter = MultiEnvLinkedInAuthCookiesAdapter(
+            li_at=SecretStr("AQE1234567890"),
+            jsessionid=SecretStr("ajax:12345"),
+            bcookie=SecretStr("v2_xyz_padded"),
+            bscookie=SecretStr("bsc_padded_xx"),
+            li_gc=SecretStr("gc_abc_padded"),
+        )
+        cookies = adapter.cookies()
+        assert cookies is not None
+        assert len(cookies) == 5
+        # The canonical order is load-bearing: li_at → JSESSIONID
+        # → bcookie → bscookie → li_gc.
+        assert [name for name, _ in cookies] == [
+            "li_at",
+            "JSESSIONID",
+            "bcookie",
+            "bscookie",
+            "li_gc",
+        ]
+
+    def test_bscookie_none_keeps_4_cookies(self) -> None:
+        """`cookies()` returns 4 entries when `bscookie=None` (F-4 additivity pin).
+
+        REQ-LBSc-002: when `bscookie=None` AND the other 4 are
+        set, the adapter returns 4 entries (the F-4 additivity
+        pin — adding a 5th optional cookie MUST NOT break the
+        4-cookie path). The order is the canonical 4:
+        `li_at → JSESSIONID → bcookie → li_gc`.
+        """
+        from jobs_finder.infrastructure.linkedin.auth_cookie import (  # noqa: PLC0415
+            MultiEnvLinkedInAuthCookiesAdapter,
+        )
+
+        adapter = MultiEnvLinkedInAuthCookiesAdapter(
+            li_at=SecretStr("AQE1234567890"),
+            jsessionid=SecretStr("ajax:12345"),
+            bcookie=SecretStr("v2_xyz_padded"),
+            bscookie=None,  # F-4 additivity pin
+            li_gc=SecretStr("gc_abc_padded"),
+        )
+        cookies = adapter.cookies()
+        assert cookies is not None
+        assert len(cookies) == 4
+        # The 4 names are in canonical order; `bscookie` is
+        # filtered out (not in the returned list).
+        assert [name for name, _ in cookies] == [
+            "li_at",
+            "JSESSIONID",
+            "bcookie",
+            "li_gc",
+        ]
