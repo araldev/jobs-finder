@@ -491,6 +491,40 @@ class Settings(BaseSettings):
             return v if v else None
         return v
 
+    # NEW: The opt-in `LINKEDIN_LAUNCH_CHANNEL` env var tells Playwright
+    # which browser channel to launch (e.g. "chrome" for system Chrome).
+    # When set, `chromium.launch(channel="chrome")` uses the system Chrome
+    # binary instead of Playwright's bundled Chromium. This gives LinkedIn
+    # the same TLS / HTTP-2 fingerprint as the user's real browser (where
+    # the cookies were originally created), breaking the session-fingerprint
+    # binding redirect loop.
+    #
+    # Default `None` → no `channel` kwarg (Playwright's bundled Chromium).
+    linkedin_launch_channel: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "LINKEDIN_LAUNCH_CHANNEL", "linkedin_launch_channel"
+        ),
+    )
+
+    @field_validator("linkedin_launch_channel", mode="before")
+    @classmethod
+    def _normalize_empty_linkedin_launch_channel(
+        cls, v: str | None
+    ) -> str | None:
+        """Mode='before': `None` / `""` → `None` (the empty-string kill switch).
+
+        Mirrors the v1 `_normalize_empty_linkedin_xvfb_display`
+        empty-string normalization. The field is `str | None` (NOT
+        `SecretStr` because the channel name, e.g. `"chrome"`, is
+        neither secret nor unique per session).
+        """
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v if v else None
+        return v
+
     # ------------------------------------------------------------------
     # Shared validators (REFACTORED from v1 inline validators — T-002 of
     # `backend-linkedin-stealth`, REQ-LST-CFG-001..003).

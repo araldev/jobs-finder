@@ -147,6 +147,7 @@ class LinkedInScraperSettings:
         "auth_cookies",
         "headless",
         "inter_page_delay_seconds",
+        "launch_channel",
         "location_resolver",
         "max_pages",
         "stealth",
@@ -168,6 +169,7 @@ class LinkedInScraperSettings:
         stealth: Any | None = None,
         headless: bool = True,
         xvfb_display: str | None = None,
+        launch_channel: str | None = None,
     ) -> None:
         self.user_agent = user_agent
         self.timeout_ms = timeout_ms
@@ -241,6 +243,15 @@ class LinkedInScraperSettings:
         # display string is not a secret — `:99` is the
         # default; no value-masking concern).
         self.xvfb_display = xvfb_display
+        # Experiment: the opt-in `LINKEDIN_LAUNCH_CHANNEL` env var
+        # (wired from `Settings.linkedin_launch_channel`) tells
+        # Playwright to use a system browser channel (e.g. "chrome")
+        # instead of the bundled Chromium. This gives LinkedIn the
+        # same TLS / HTTP-2 fingerprint as the user's real browser,
+        # breaking the session-fingerprint binding redirect loop.
+        # When `None` (the default), no `channel=` kwarg is passed
+        # to `chromium.launch(...)`, preserving the current behavior.
+        self.launch_channel = launch_channel
 
     def __repr__(self) -> str:
         auth_cookie_repr = "<set>" if self.auth_cookie is not None else "<unset>"
@@ -255,7 +266,8 @@ class LinkedInScraperSettings:
             f"auth_cookies={auth_cookies_repr}, "
             f"stealth={stealth_repr}, "
             f"headless={self.headless}, "
-            f"xvfb_display={self.xvfb_display!r})"
+            f"xvfb_display={self.xvfb_display!r}, "
+            f"launch_channel={self.launch_channel!r})"
         )
 
     def __eq__(self, other: object) -> bool:
@@ -272,6 +284,7 @@ class LinkedInScraperSettings:
             and self.stealth == other.stealth
             and self.headless == other.headless
             and self.xvfb_display == other.xvfb_display
+            and self.launch_channel == other.launch_channel
         )
 
     def __hash__(self) -> int:
@@ -287,6 +300,7 @@ class LinkedInScraperSettings:
                 self.stealth,
                 self.headless,
                 self.xvfb_display,
+                self.launch_channel,
             )
         )
 
@@ -346,10 +360,20 @@ class LinkedInPlaywrightScraper(JobSearchPort):
             #      `env=` kwarg is supported on `chromium.launch()`.
             xvfb = self._settings.xvfb_display
             self._playwright = await async_playwright().start()
+            # EXPERIMENT: `linkedin_launch_channel` — when set
+            # (e.g. "chrome"), the `channel=` kwarg tells
+            # Playwright to use the system Chrome binary instead
+            # of the bundled Chromium, giving LinkedIn the same
+            # TLS / HTTP-2 fingerprint as the user's real browser.
+            _launch_kwargs: dict[str, Any] = {
+                "headless": False,
+                "args": ["--no-sandbox", "--disable-dev-shm-usage"],
+                "env": {"DISPLAY": xvfb},
+            }
+            if self._settings.launch_channel is not None:
+                _launch_kwargs["channel"] = self._settings.launch_channel
             self._browser = await self._playwright.chromium.launch(
-                headless=False,
-                args=["--no-sandbox", "--disable-dev-shm-usage"],
-                env={"DISPLAY": xvfb},
+                **_launch_kwargs,
             )
         else:
             # No-Xvfb path (REQ-LXV-002 + REQ-LBUG-001):

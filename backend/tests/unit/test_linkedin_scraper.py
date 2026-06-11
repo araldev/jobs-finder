@@ -1670,3 +1670,119 @@ async def test_chromium_launch_xvfb_propagates_display_env() -> None:
         args=["--no-sandbox", "--disable-dev-shm-usage"],
         env={"DISPLAY": ":99"},
     )
+
+
+# ---------------------------------------------------------------------------
+# EXPERIMENT: `channel=` kwarg (system Chrome vs Playwright bundled Chromium).
+#
+# When `launch_channel="chrome"` is set on the settings, the Xvfb
+# branch passes `channel="chrome"` to `chromium.launch(...)`,
+# telling Playwright to use the system Chrome binary instead of
+# the bundled Chromium. This gives LinkedIn the same TLS / HTTP-2
+# fingerprint as the user's real browser, breaking the
+# session-fingerprint binding redirect loop.
+#
+# Two tests:
+#   1. `launch_channel="chrome"` → `channel="chrome"` is passed
+#   2. `launch_channel=None` (default) → `channel=` is NOT passed
+# ---------------------------------------------------------------------------
+
+
+async def test_chromium_launch_xvfb_propagates_channel() -> None:
+    """When `launch_channel="chrome"` + `xvfb=":99"` → launch(channel="chrome", ...)."""
+    from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
+
+    from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+        LinkedInPlaywrightScraper,
+        LinkedInScraperSettings,
+    )
+    from jobs_finder.infrastructure.linkedin.throttle import (  # noqa: PLC0415
+        AsyncThrottle,
+    )
+
+    launch_mock = AsyncMock()
+    browser_mock = MagicMock()
+    browser_mock.close = AsyncMock()
+    launch_mock.return_value = browser_mock
+
+    playwright_ctx = MagicMock()
+    playwright_ctx.chromium.launch = launch_mock
+    playwright_ctx.stop = AsyncMock()
+
+    playwright_start = AsyncMock(return_value=playwright_ctx)
+
+    settings = LinkedInScraperSettings(
+        user_agent="test-agent/1.0",
+        timeout_ms=10_000,
+        xvfb_display=":99",
+        headless=False,
+        launch_channel="chrome",
+    )
+    scraper = LinkedInPlaywrightScraper(
+        throttle=AsyncThrottle(min_interval_seconds=0.0),
+        settings=settings,
+        browser_factory=None,
+    )
+    with patch("jobs_finder.infrastructure.linkedin.scraper.async_playwright") as ap_mock:
+        ap_mock.return_value.start = playwright_start
+        async with scraper:
+            pass
+    launch_mock.assert_called_once_with(
+        headless=False,
+        args=["--no-sandbox", "--disable-dev-shm-usage"],
+        env={"DISPLAY": ":99"},
+        channel="chrome",
+    )
+
+
+async def test_chromium_launch_xvfb_no_channel_when_unset() -> None:
+    """When `launch_channel=None` + `xvfb=":99"` → launch WITHOUT channel kwarg (regression).
+
+    The `channel=` kwarg must only be passed when explicitly set.
+    When `launch_channel` is `None` (the default), the launch
+    should be byte-identical to the cycle 3 behavior with the
+    exact 3 kwargs: `headless=False`, `args=...`, `env=...`.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
+
+    from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+        LinkedInPlaywrightScraper,
+        LinkedInScraperSettings,
+    )
+    from jobs_finder.infrastructure.linkedin.throttle import (  # noqa: PLC0415
+        AsyncThrottle,
+    )
+
+    launch_mock = AsyncMock()
+    browser_mock = MagicMock()
+    browser_mock.close = AsyncMock()
+    launch_mock.return_value = browser_mock
+
+    playwright_ctx = MagicMock()
+    playwright_ctx.chromium.launch = launch_mock
+    playwright_ctx.stop = AsyncMock()
+
+    playwright_start = AsyncMock(return_value=playwright_ctx)
+
+    settings = LinkedInScraperSettings(
+        user_agent="test-agent/1.0",
+        timeout_ms=10_000,
+        xvfb_display=":99",
+        headless=False,
+        # launch_channel defaults to None
+    )
+    scraper = LinkedInPlaywrightScraper(
+        throttle=AsyncThrottle(min_interval_seconds=0.0),
+        settings=settings,
+        browser_factory=None,
+    )
+    with patch("jobs_finder.infrastructure.linkedin.scraper.async_playwright") as ap_mock:
+        ap_mock.return_value.start = playwright_start
+        async with scraper:
+            pass
+    # channel=None must NOT be passed — assert the EXACT 3 kwargs
+    launch_mock.assert_called_once_with(
+        headless=False,
+        args=["--no-sandbox", "--disable-dev-shm-usage"],
+        env={"DISPLAY": ":99"},
+    )
