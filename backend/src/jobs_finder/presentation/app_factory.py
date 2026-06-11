@@ -100,6 +100,7 @@ from jobs_finder.infrastructure.infojobs.scraper import (
 from jobs_finder.infrastructure.infojobs.throttle import InfoJobsAsyncThrottle
 from jobs_finder.infrastructure.keyword_score import keyword_score
 from jobs_finder.infrastructure.linkedin.auth_cookie import (
+    JsonLinkedInAuthCookiesAdapter,
     MultiEnvLinkedInAuthCookiesAdapter,
 )
 from jobs_finder.infrastructure.linkedin.scraper import (
@@ -292,13 +293,17 @@ def build_app(  # noqa: PLR0915
         # wire (the v1 adapter is preserved for backward
         # compat with the 35 v1 tests that construct
         # `EnvLinkedInAuthCookieAdapter` directly).
-        auth_cookies_port = MultiEnvLinkedInAuthCookiesAdapter(
-            li_at=effective_settings.linkedin_li_at,
-            jsessionid=effective_settings.linkedin_jsessionid,
-            bcookie=effective_settings.linkedin_bcookie,
-            bscookie=effective_settings.linkedin_bscookie,  # NEW (T-005 F-4 fold-in)
-            li_gc=effective_settings.linkedin_li_gc,
-        )
+        json_adapter = JsonLinkedInAuthCookiesAdapter()
+        if json_adapter.cookies() is not None:
+            auth_cookies_port: MultiEnvLinkedInAuthCookiesAdapter | JsonLinkedInAuthCookiesAdapter = json_adapter
+        else:
+            auth_cookies_port = MultiEnvLinkedInAuthCookiesAdapter(
+                li_at=effective_settings.linkedin_li_at,
+                jsessionid=effective_settings.linkedin_jsessionid,
+                bcookie=effective_settings.linkedin_bcookie,
+                bscookie=effective_settings.linkedin_bscookie,
+                li_gc=effective_settings.linkedin_li_gc,
+            )
         # `Stealth()` is constructed at the composition root
         # (mirrors the Indeed+InfoJobs wires below at L340 and
         # L396). The instance lives in the
