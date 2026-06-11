@@ -173,3 +173,63 @@ class TestLinkedInStealthCookies:
             assert settings.linkedin_li_gc.get_secret_value() == "12345678"
         finally:
             monkeypatch.undo()
+
+
+# ---------------------------------------------------------------------------
+# T-002 of `backend-linkedin-xvfb` — REQ-LXV-005 (Settings field).
+#
+# The new `Settings.linkedin_xvfb_display: str | None` field
+# reads from the `LINKEDIN_XVFB_DISPLAY` env var and normalizes
+# the empty string to `None` (the kill switch). The 3 tests
+# below are the RED-first regression: each MUST fail on main
+# (the field doesn't exist) and pass after the field lands.
+# ---------------------------------------------------------------------------
+
+
+class TestLinkedInXvfbDisplaySettings:
+    """REQ-LXV-005 — `Settings.linkedin_xvfb_display` field.
+
+    The 3 scenarios:
+    1. Default = `None` (no `LINKEDIN_XVFB_DISPLAY` env var)
+    2. Env override: `LINKEDIN_XVFB_DISPLAY=":99"` →
+       `settings.linkedin_xvfb_display == ":99"`
+    3. Empty-string kill switch:
+       `LINKEDIN_XVFB_DISPLAY=""` → `None`
+    """
+
+    def test_settings_linkedin_xvfb_display_defaults_to_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No `LINKEDIN_XVFB_DISPLAY` env var → `settings.linkedin_xvfb_display is None`."""
+        monkeypatch.delenv("LINKEDIN_XVFB_DISPLAY", raising=False)
+        settings = Settings()
+        assert settings.linkedin_xvfb_display is None
+
+    def test_settings_linkedin_xvfb_display_env_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`LINKEDIN_XVFB_DISPLAY=":99"` → `settings.linkedin_xvfb_display == ":99"`.
+
+        The env binding is case-insensitive (pydantic-settings
+        standard) and uses the `AliasChoices` pattern to opt
+        out of the model-level `env_prefix="LINKEDIN_"`.
+        """
+        monkeypatch.setenv("LINKEDIN_XVFB_DISPLAY", ":99")
+        settings = Settings()
+        assert settings.linkedin_xvfb_display == ":99"
+
+    def test_settings_linkedin_xvfb_display_empty_string_normalizes_to_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`LINKEDIN_XVFB_DISPLAY=""` → `None` (the kill switch).
+
+        The empty-string normalization lets operators set
+        `LINKEDIN_XVFB_DISPLAY=` in `.env` (an explicit empty
+        value) and get the default `None` behavior (Xvfb OFF).
+        Without the normalizer, an empty string would pass
+        through as `""` and the Xvfb branch would activate
+        with `DISPLAY=""`, which Chromium rejects.
+        """
+        monkeypatch.setenv("LINKEDIN_XVFB_DISPLAY", "")
+        settings = Settings()
+        assert settings.linkedin_xvfb_display is None
