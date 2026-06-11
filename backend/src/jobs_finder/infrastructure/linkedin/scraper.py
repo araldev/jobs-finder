@@ -152,6 +152,7 @@ class LinkedInScraperSettings:
         "stealth",
         "timeout_ms",
         "user_agent",
+        "xvfb_display",
     )
 
     def __init__(
@@ -166,6 +167,7 @@ class LinkedInScraperSettings:
         auth_cookies: LinkedInAuthCookiesPort | None = None,
         stealth: Any | None = None,
         headless: bool = True,
+        xvfb_display: str | None = None,
     ) -> None:
         self.user_agent = user_agent
         self.timeout_ms = timeout_ms
@@ -226,6 +228,19 @@ class LinkedInScraperSettings:
         # the v1 default path is byte-identical (the only
         # change for v1 callers is the slot's existence).
         self.headless = headless
+        # T-002 of `backend-linkedin-xvfb` — REQ-LXV-001/002/003.
+        # The opt-in `Settings.linkedin_xvfb_display` value
+        # (sourced from the `LINKEDIN_XVFB_DISPLAY` env var).
+        # When NOT `None`, the scraper's `__aenter__` enters
+        # the Xvfb branch: `chromium.launch(headless=False,
+        # args=["--no-sandbox", "--disable-dev-shm-usage"])`
+        # and `async_playwright().start(env={"DISPLAY":
+        # xvfb_display})`. When `None` (the default), the
+        # v1+v2 byte-identical headless path is taken. The
+        # field is `str | None` (NOT `SecretStr` because the
+        # display string is not a secret — `:99` is the
+        # default; no value-masking concern).
+        self.xvfb_display = xvfb_display
 
     def __repr__(self) -> str:
         auth_cookie_repr = "<set>" if self.auth_cookie is not None else "<unset>"
@@ -239,7 +254,8 @@ class LinkedInScraperSettings:
             f"auth_cookie={auth_cookie_repr}, "
             f"auth_cookies={auth_cookies_repr}, "
             f"stealth={stealth_repr}, "
-            f"headless={self.headless})"
+            f"headless={self.headless}, "
+            f"xvfb_display={self.xvfb_display!r})"
         )
 
     def __eq__(self, other: object) -> bool:
@@ -255,6 +271,7 @@ class LinkedInScraperSettings:
             and self.auth_cookies == other.auth_cookies
             and self.stealth == other.stealth
             and self.headless == other.headless
+            and self.xvfb_display == other.xvfb_display
         )
 
     def __hash__(self) -> int:
@@ -269,6 +286,7 @@ class LinkedInScraperSettings:
                 self.auth_cookies,
                 self.stealth,
                 self.headless,
+                self.xvfb_display,
             )
         )
 
@@ -303,17 +321,50 @@ class LinkedInPlaywrightScraper(JobSearchPort):
     async def __aenter__(self) -> Self:
         if self._browser_factory is not None:
             self._browser = await self._browser_factory()
-        else:
-            # T-001 of `backend-linkedin-xvfb` — REQ-LBUG-001
-            # (obs #379 bugfix fold-in). The `headless=` kwarg
-            # now reads from `self._settings.headless` (the
-            # composition-root-resolved `Settings.headless` value)
-            # instead of the hardcoded `True`. The v1 default
-            # (`headless=True`) is byte-identical for default
-            # callers; `Settings(headless=False)` now actually
-            # takes effect.
+        elif self._settings.xvfb_display is not None:
+            # T-002 of `backend-linkedin-xvfb` — REQ-LXV-001/002/003.
+            # The Xvfb branch: launch Chromium non-headless under
+            # a virtual X display so the browser has a real
+            # windowing context + real TLS / HTTP-2 SETTINGS
+            # frame, evading Cloudflare 2026's headless-Chromium
+            # fingerprint detection.
+            #
+            # Three changes from the no-Xvfb path:
+            #   1. `headless=False` (Xvfb wins over
+            #      `Settings.headless`; Chromium needs a real
+            #      display to actually render).
+            #   2. `args=["--no-sandbox", "--disable-dev-shm-usage"]`
+            #      (the standard Chromium-in-Xvfb incantation for
+            #      Debian / Docker).
+            #   3. `env={"DISPLAY": xvfb_display}` is passed to
+            #      `chromium.launch(...)` (REQ-LXV-003) so the
+            #      Chromium subprocess inherits the `DISPLAY`
+            #      env var and can find the X server. NOTE:
+            #      the design's original `async_playwright()
+            #      .start(env=...)` was incorrect — Playwright
+            #      Python's `start()` takes no kwargs; the
+            #      `env=` kwarg is supported on `chromium.launch()`.
+            xvfb = self._settings.xvfb_display
             self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(headless=self._settings.headless)
+            self._browser = await self._playwright.chromium.launch(
+                headless=False,
+                args=["--no-sandbox", "--disable-dev-shm-usage"],
+                env={"DISPLAY": xvfb},
+            )
+        else:
+            # No-Xvfb path (REQ-LXV-002 + REQ-LBUG-001):
+            # byte-identical to the v1 + v2 (cycle 2) ship
+            # when `Settings.headless` is `True` (the v1 default).
+            # T-001 of `backend-linkedin-xvfb` wired
+            # `self._settings.headless` (was hardcoded `True`).
+            # The `args=[]` is the explicit sentinel for the
+            # no-Xvfb path (the design's truth table requires
+            # `args=[]` in Rows 1 + 2; a regression to no-args
+            # would break the test).
+            self._playwright = await async_playwright().start()
+            self._browser = await self._playwright.chromium.launch(
+                headless=self._settings.headless, args=[]
+            )
         return self
 
     async def __aexit__(self, *exc: object) -> None:

@@ -1385,11 +1385,15 @@ async def test_chromium_launch_uses_settings_headless() -> None:
             pass
     # On main (pre-bugfix): the launch is `launch(headless=True)`.
     # The assertion below FAILS.
-    # On the fix branch: the launch is `launch(headless=False)`.
+    # On the fix branch: the launch is `launch(headless=False, args=[])`.
     # The assertion PASSES.
-    launch_mock_headless_false.assert_called_once_with(headless=False)
+    # NOTE: `args=[]` is the no-Xvfb sentinel from the design's
+    # truth table (Rows 1 + 2 explicitly set `args=[]` to
+    # distinguish from the Xvfb Rows 3 + 4 which set the
+    # `--no-sandbox` + `--disable-dev-shm-usage` args).
+    launch_mock_headless_false.assert_called_once_with(headless=False, args=[])
 
-    # The v1 default: `Settings.headless=True` → launch(headless=True).
+    # The v1 default: `Settings.headless=True` → launch(headless=True, args=[]).
     # Pinning this separately defends against a regression that
     # flips the polarity.
     launch_mock_headless_true = AsyncMock()
@@ -1420,4 +1424,249 @@ async def test_chromium_launch_uses_settings_headless() -> None:
         ap_mock_headless_true.return_value.start = fake_start_headless_true
         async with scraper_headless_true:
             pass
-    launch_mock_headless_true.assert_called_once_with(headless=True)
+    launch_mock_headless_true.assert_called_once_with(headless=True, args=[])
+
+
+# ---------------------------------------------------------------------------
+# T-002 of `backend-linkedin-xvfb` — REQ-LXV-001/002/003 (4-row truth
+# table) + REQ-LXV-005 (Settings field). The 4 scraper tests below
+# cover the 4 truth-table rows from design §2 plus the DISPLAY env
+# propagation (the env kwarg on `async_playwright().start()`):
+#
+#   | xvfb_display | headless | headless= | args=          | env={DISPLAY:...} |
+#   |--------------|----------|-----------|----------------|-------------------|
+#   | None         | True     | True      | []             | (none)            |  Row 1
+#   | None         | False    | False     | []             | (none)            |  Row 2 (T-001)
+#   | ":99"        | True     | False     | [..,--..]      | {"DISPLAY":":99"} |  Row 3
+#   | ":99"        | False    | False     | [..,--..]      | {"DISPLAY":":99"} |  Row 4
+#
+# The Xvfb branch ALWAYS forces `headless=False` and adds the
+# `--no-sandbox` + `--disable-dev-shm-usage` args; the DISPLAY
+# env var is passed to `async_playwright().start()` so Chromium
+# can find the X server.
+# ---------------------------------------------------------------------------
+
+
+async def test_chromium_launch_xvfb_display_none_keeps_headless_default() -> None:
+    """Row 1 — `xvfb_display=None, headless=True` → `launch(headless=True, args=[])`.
+
+    REQ-LXV-002: the no-Xvfb path is byte-identical to cycle 2
+    (the v1 + v2 ship). When both knobs are at their defaults
+    (`xvfb_display=None` + `headless=True`), the launch is
+    exactly `headless=True, args=[]` with NO env kwarg on
+    `async_playwright().start()`.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
+
+    from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+        LinkedInPlaywrightScraper,
+        LinkedInScraperSettings,
+    )
+    from jobs_finder.infrastructure.linkedin.throttle import (  # noqa: PLC0415
+        AsyncThrottle,
+    )
+
+    launch_mock = AsyncMock()
+    browser_mock = MagicMock()
+    browser_mock.close = AsyncMock()
+    launch_mock.return_value = browser_mock
+
+    playwright_ctx = MagicMock()
+    playwright_ctx.chromium.launch = launch_mock
+    playwright_ctx.stop = AsyncMock()
+
+    # `start()` is also an AsyncMock so we can assert whether it
+    # was called WITH or WITHOUT the `env=` kwarg. The Row 1
+    # contract is "no env kwarg" — the scraper uses
+    # `async_playwright().start()` with NO args.
+    playwright_start = AsyncMock(return_value=playwright_ctx)
+
+    settings = LinkedInScraperSettings(
+        user_agent="test-agent/1.0",
+        timeout_ms=10_000,
+        xvfb_display=None,
+        headless=True,
+    )
+    scraper = LinkedInPlaywrightScraper(
+        throttle=AsyncThrottle(min_interval_seconds=0.0),
+        settings=settings,
+        browser_factory=None,
+    )
+    with patch("jobs_finder.infrastructure.linkedin.scraper.async_playwright") as ap_mock:
+        ap_mock.return_value.start = playwright_start
+        async with scraper:
+            pass
+    # Row 1: headless=True, args=[].
+    launch_mock.assert_called_once_with(headless=True, args=[])
+    # No env kwarg on the start() call (the v2 byte-identical
+    # path — `async_playwright().start()` with no args).
+    playwright_start.assert_called_once_with()
+
+
+async def test_chromium_launch_xvfb_display_forces_headless_false() -> None:
+    """Row 3 — `xvfb=":99", headless=True` → Xvfb branch (headless=False, Xvfb args).
+
+    REQ-LXV-001: the Xvfb branch ALWAYS forces `headless=False`
+    regardless of `Settings.headless`. The Xvfb mode is the
+    "real browser under a virtual X display" path; Chromium
+    needs `headless=False` to actually render to the Xvfb
+    display. The `args=` adds the standard Chromium-in-Xvfb
+    incantation for Debian / Docker.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
+
+    from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+        LinkedInPlaywrightScraper,
+        LinkedInScraperSettings,
+    )
+    from jobs_finder.infrastructure.linkedin.throttle import (  # noqa: PLC0415
+        AsyncThrottle,
+    )
+
+    launch_mock = AsyncMock()
+    browser_mock = MagicMock()
+    browser_mock.close = AsyncMock()
+    launch_mock.return_value = browser_mock
+
+    playwright_ctx = MagicMock()
+    playwright_ctx.chromium.launch = launch_mock
+    playwright_ctx.stop = AsyncMock()
+
+    playwright_start = AsyncMock(return_value=playwright_ctx)
+
+    settings = LinkedInScraperSettings(
+        user_agent="test-agent/1.0",
+        timeout_ms=10_000,
+        xvfb_display=":99",
+        headless=True,  # Even with headless=True, Xvfb forces headless=False
+    )
+    scraper = LinkedInPlaywrightScraper(
+        throttle=AsyncThrottle(min_interval_seconds=0.0),
+        settings=settings,
+        browser_factory=None,
+    )
+    with patch("jobs_finder.infrastructure.linkedin.scraper.async_playwright") as ap_mock:
+        ap_mock.return_value.start = playwright_start
+        async with scraper:
+            pass
+    # Row 3: headless=False (Xvfb wins), args=[--no-sandbox, --disable-dev-shm-usage],
+    # env={DISPLAY: ":99"} (the DISPLAY env var propagation is also asserted here
+    # for completeness; the dedicated env-propagation test pins it independently).
+    launch_mock.assert_called_once_with(
+        headless=False,
+        args=["--no-sandbox", "--disable-dev-shm-usage"],
+        env={"DISPLAY": ":99"},
+    )
+
+
+async def test_chromium_launch_xvfb_display_overrides_headless_false() -> None:
+    """Row 4 — `xvfb=":99", headless=False` → Xvfb branch (same as Row 3).
+
+    REQ-LXV-001 + REQ-LBUG-001: when both knobs are flipped
+    (`xvfb_display=":99"` + `headless=False`), the Xvfb branch
+    still wins. The `args=` is the same Xvfb incantation.
+    The launch is byte-identical to Row 3 (Xvfb wins, no
+    double-flipping).
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
+
+    from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+        LinkedInPlaywrightScraper,
+        LinkedInScraperSettings,
+    )
+    from jobs_finder.infrastructure.linkedin.throttle import (  # noqa: PLC0415
+        AsyncThrottle,
+    )
+
+    launch_mock = AsyncMock()
+    browser_mock = MagicMock()
+    browser_mock.close = AsyncMock()
+    launch_mock.return_value = browser_mock
+
+    playwright_ctx = MagicMock()
+    playwright_ctx.chromium.launch = launch_mock
+    playwright_ctx.stop = AsyncMock()
+
+    playwright_start = AsyncMock(return_value=playwright_ctx)
+
+    settings = LinkedInScraperSettings(
+        user_agent="test-agent/1.0",
+        timeout_ms=10_000,
+        xvfb_display=":99",
+        headless=False,  # Both flipped
+    )
+    scraper = LinkedInPlaywrightScraper(
+        throttle=AsyncThrottle(min_interval_seconds=0.0),
+        settings=settings,
+        browser_factory=None,
+    )
+    with patch("jobs_finder.infrastructure.linkedin.scraper.async_playwright") as ap_mock:
+        ap_mock.return_value.start = playwright_start
+        async with scraper:
+            pass
+    # Row 4: same as Row 3 (Xvfb wins, env propagates).
+    launch_mock.assert_called_once_with(
+        headless=False,
+        args=["--no-sandbox", "--disable-dev-shm-usage"],
+        env={"DISPLAY": ":99"},
+    )
+
+
+async def test_chromium_launch_xvfb_propagates_display_env() -> None:
+    """REQ-LXV-003 — `xvfb_display=":99"` → `chromium.launch(env={"DISPLAY": ":99"})`.
+
+    Chromium needs the `DISPLAY` env var to find the X server.
+    Without it, the launch fails with "could not connect to
+    display :99". The scraper passes `env={"DISPLAY": ":99"}`
+    to `chromium.launch(...)` so the Chromium subprocess
+    inherits the `DISPLAY` env var. NOTE: the design's
+    original `async_playwright().start(env=...)` was incorrect
+    — Playwright Python's `start()` takes no kwargs; the
+    `env=` kwarg is supported on `chromium.launch()`. The
+    fix landed during the T-002 apply phase.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
+
+    from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+        LinkedInPlaywrightScraper,
+        LinkedInScraperSettings,
+    )
+    from jobs_finder.infrastructure.linkedin.throttle import (  # noqa: PLC0415
+        AsyncThrottle,
+    )
+
+    launch_mock = AsyncMock()
+    browser_mock = MagicMock()
+    browser_mock.close = AsyncMock()
+    launch_mock.return_value = browser_mock
+
+    playwright_ctx = MagicMock()
+    playwright_ctx.chromium.launch = launch_mock
+    playwright_ctx.stop = AsyncMock()
+
+    playwright_start = AsyncMock(return_value=playwright_ctx)
+
+    settings = LinkedInScraperSettings(
+        user_agent="test-agent/1.0",
+        timeout_ms=10_000,
+        xvfb_display=":99",
+        headless=False,
+    )
+    scraper = LinkedInPlaywrightScraper(
+        throttle=AsyncThrottle(min_interval_seconds=0.0),
+        settings=settings,
+        browser_factory=None,
+    )
+    with patch("jobs_finder.infrastructure.linkedin.scraper.async_playwright") as ap_mock:
+        ap_mock.return_value.start = playwright_start
+        async with scraper:
+            pass
+    # The DISPLAY env kwarg is the load-bearing assertion. The
+    # scraper calls `chromium.launch(headless=False,
+    # args=[--no-sandbox, --disable-dev-shm-usage],
+    # env={"DISPLAY": ":99"})`.
+    launch_mock.assert_called_once_with(
+        headless=False,
+        args=["--no-sandbox", "--disable-dev-shm-usage"],
+        env={"DISPLAY": ":99"},
+    )

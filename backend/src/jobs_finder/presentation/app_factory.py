@@ -323,6 +323,17 @@ def build_app(  # noqa: PLR0915
             # `chromium.launch(headless=...)` kwarg. The
             # default `True` preserves the v1 byte-identical
             # default path.
+            # T-002 of `backend-linkedin-xvfb` (REQ-LXV-001/002/003):
+            # the new `xvfb_display` slot wires
+            # `Settings.linkedin_xvfb_display` (the opt-in
+            # Xvfb switch) into the scraper's `__aenter__`
+            # 2-branch conditional. When `None` (the v1+v2
+            # default), the byte-identical headless path is
+            # taken. When set (e.g. `":99"`), the Xvfb
+            # branch activates with `headless=False`,
+            # `--no-sandbox` + `--disable-dev-shm-usage`
+            # args, and the `DISPLAY` env kwarg on
+            # `async_playwright().start()`.
             settings=LinkedInScraperSettings(
                 user_agent=effective_settings.user_agent,
                 timeout_ms=effective_settings.request_timeout_ms,
@@ -333,6 +344,7 @@ def build_app(  # noqa: PLR0915
                 auth_cookies=auth_cookies_port,  # NEW (multi-cookie)
                 stealth=Stealth(),  # NEW
                 headless=effective_settings.headless,  # NEW (T-001 bugfix wire)
+                xvfb_display=effective_settings.linkedin_xvfb_display,  # NEW (T-002 Xvfb wire)
             ),
         )
         raw_use_case = RawLinkedInJobsUseCase(port=scraper)
