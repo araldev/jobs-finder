@@ -366,8 +366,12 @@ class LinkedInPlaywrightScraper(JobSearchPort):
             # of the bundled Chromium, giving LinkedIn the same
             # TLS / HTTP-2 fingerprint as the user's real browser.
             _launch_kwargs: dict[str, Any] = {
-                "headless": False,
-                "args": ["--no-sandbox", "--disable-dev-shm-usage"],
+                "headless": self._settings.headless,
+                "args": [
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
+                ],
                 "env": {"DISPLAY": xvfb},
             }
             if self._settings.launch_channel is not None:
@@ -477,6 +481,29 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         # skipped (no `if`-fallthrough side-effects).
         if self._stealth is not None:
             await self._stealth.apply_stealth_async(ctx)
+        # LinkedIn cookie-consent banner: inject an init script
+        # that auto-dismisses the consent modal as soon as it
+        # appears. This avoids the timing race between
+        # `page.goto(page)` and `_dismiss_cookie_consent`.
+        # AttributeError is silently caught so the method works
+        # with fake context objects in tests.
+        try:
+            await ctx.add_init_script(
+                """() => {
+                    new MutationObserver((mutations, observer) => {
+                        const btn = document.querySelector(
+                            'button[action-type="ACCEPT"]'
+                        );
+                        if (btn) {
+                            btn.click();
+                            observer.disconnect();
+                        }
+                    }).observe(document.documentElement, { childList: true, subtree: true });
+                }"""
+            )
+        except AttributeError:
+            pass
+
         # T-004 of `backend-linkedin-stealth` — REQ-LST-SCR-002.
         # Multi-cookie injection. The v1 single-cookie
         # `auth_cookie` slot is KEPT (the 35 v1 tests construct
@@ -494,22 +521,43 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         # value leak).
         auth_cookies_port = self._settings.auth_cookies
         if auth_cookies_port is not None:
-            cookies = auth_cookies_port.cookies()
-            if cookies is not None:
-                await ctx.add_cookies(
-                    [
-                        {
-                            "name": name,
-                            "value": value.get_secret_value(),
-                            "domain": ".linkedin.com",
-                            "path": "/",
-                            "httpOnly": True,
-                            "secure": True,
-                        }
-                        for (name, value) in cookies
-                    ]
-                )
-                _logger.debug("LinkedIn auth cookies injected (count=%d)", len(cookies))
+            # T-00X of `backend-linkedin-cookie-attrs` — try the full-dict
+            # path first. When the port supports ``cookie_dicts()`` (the
+            # ``JsonLinkedInAuthCookiesAdapter``), pass the ORIGINAL
+            # attributes (domain, path, httpOnly, secure) directly to
+            # ``ctx.add_cookies()``. This fixes the
+            # ``ERR_TOO_MANY_REDIRECTS`` that happens when hardcoding
+            # ``domain=".linkedin.com"`` for cookies that originally had
+            # ``domain=".www.linkedin.com"``.
+            cookie_dicts_fn = getattr(auth_cookies_port, "cookie_dicts", None)
+            if cookie_dicts_fn is not None:
+                dicts = cookie_dicts_fn()
+                if dicts is not None:
+                    await ctx.add_cookies(dicts)
+                    _logger.debug("LinkedIn auth cookies injected via dicts (count=%d)", len(dicts))
+                else:
+                    # dicts returned None — fall through to legacy path
+                    pass
+            # Legacy name+value path — hardcoded attributes (v1 contract).
+            # Used when the port does NOT support ``cookie_dicts()``
+            # (e.g. ``MultiEnvLinkedInAuthCookiesAdapter`` in tests).
+            if cookie_dicts_fn is None:
+                cookies = auth_cookies_port.cookies()
+                if cookies is not None:
+                    await ctx.add_cookies(
+                        [
+                            {
+                                "name": name,
+                                "value": value.get_secret_value(),
+                                "domain": ".linkedin.com",
+                                "path": "/",
+                                "httpOnly": True,
+                                "secure": True,
+                            }
+                            for (name, value) in cookies
+                        ]
+                    )
+                    _logger.debug("LinkedIn auth cookies injected via pairs (count=%d)", len(cookies))
         # v1 single-cookie path (KEPT byte-identical to the v1
         # `backend-linkedin-auth` cycle). When the v1 `auth_cookie`
         # slot is set (the 35 v1 tests construct
@@ -731,10 +779,44 @@ class LinkedInPlaywrightScraper(JobSearchPort):
             f"?keywords={quote(keywords)}&location={quote(location)}&start={start}"
         )
 
+    @staticmethod
+    async def _dismiss_cookie_consent(page: Any) -> None:
+        """Dismiss the LinkedIn cookie-consent banner if visible.
+
+        LinkedIn shows a cookie-consent modal that creates an overlay
+        covering the search results, causing ``wait_for_selector`` with
+        the default ``state="visible"`` to time out. This helper runs
+        via ``page.evaluate`` (raw DOM) to bypass Playwright's actionability
+        checks (the overlay intercepts pointer events).
+
+        The helper polls up to 5 times (10s total) to handle the race
+        between ``page.goto`` completing and the banner being rendered
+        by LinkedIn's JS. ``AttributeError`` is silently caught so the
+        method works with fake pages in tests.
+        """
+        js = """
+            (() => {
+                const btn = document.querySelector(
+                    'button[action-type="ACCEPT"]'
+                );
+                if (btn) { btn.click(); return true; }
+                return false;
+            })()
+        """
+        try:
+            for _ in range(5):
+                await page.wait_for_timeout(2000)
+                clicked = await page.evaluate(js)
+                if clicked:
+                    return
+        except AttributeError:
+            pass
+
     async def _navigate_and_wait(self, page: Any, url: str) -> None:
         try:
             await page.goto(url)
-            await page.wait_for_selector(RESULTS_SELECTOR, timeout=self._settings.timeout_ms)
+            await self._dismiss_cookie_consent(page)
+            await page.wait_for_selector(RESULTS_SELECTOR, state="attached", timeout=self._settings.timeout_ms)
         except PlaywrightTimeoutError as e:
             raise LinkedInTimeoutError(
                 "scraper: timeout waiting for results",

@@ -74,7 +74,7 @@ class FakePage:
     async def goto(self, url: str) -> None:
         self.goto_calls.append(url)
 
-    async def wait_for_selector(self, selector: str, *, timeout: int) -> None:
+    async def wait_for_selector(self, selector: str, *, timeout: int = 0, **kwargs: object) -> None:
         self.wait_calls.append((selector, timeout))
         if callable(self.selector_timeout):
             if self.selector_timeout(self.goto_calls[-1]):
