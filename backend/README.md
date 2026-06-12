@@ -287,6 +287,23 @@ shape. The 3 source caches (LinkedIn + Indeed + InfoJobs) are
 always independent — a LinkedIn HIT never satisfies an Indeed
 query — regardless of backend.
 
+#### Data retention
+
+The scheduler supports TTL-based data retention. After each scheduler
+cycle's `upsert_jobs` batch, jobs with `last_seen_at` older than
+`RETENTION_DAYS` days are deleted, capped at `LIMIT 1000` rows per
+call to bound transaction duration. Retention runs inside the same
+`asyncio.Lock` acquisition as the upsert — it never overlaps with a
+concurrent scrape cycle.
+
+| Env var | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `RETENTION_DAYS` | int | `0` | TTL in days. `0` (default) disables retention entirely. Positive values (e.g. `30`) enable cleanup after each scheduler cycle. |
+
+When `RETENTION_DAYS=0` (the default), no `DELETE` is issued — the
+scheduler cycle behavior is byte-identical to the pre-retention
+baseline.
+
 #### Caveats
 
 - **In-memory backend** is per-process: 4 uvicorn workers = 4
@@ -512,6 +529,155 @@ locked to `{timestamp, level, name, message, request_id}`. The
 (generated if absent) so a single grep can join a request, its
 response, and any error logged during processing. Set
 `LINKEDIN_LOG_FORMAT=plain` for a human-readable fallback.
+
+### Scheduler Status Endpoint
+
+`GET /scheduler/status` returns the `BackgroundJobScheduler`'s runtime
+state as JSON. The endpoint is always registered; when the scheduler is
+disabled (`SCHEDULER_ENABLED=false`), it returns `{"enabled": false}`
+with default values (graceful degradation — never crashes).
+
+#### Response shape
+
+```json
+{
+  "enabled": true,
+  "running": false,
+  "last_run_start": "2026-06-12T10:00:00+00:00",
+  "last_run_end": "2026-06-12T10:01:30+00:00",
+  "last_error": null,
+  "cycle_count": 3,
+  "total_jobs_collected": 147,
+  "total_in_db": 0,
+  "per_source": {},
+  "queries": [{"keywords": "desarrollador", "location": "España"}],
+  "min_interval_seconds": 1500.0,
+  "max_interval_seconds": 2100.0
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `enabled` | bool | Whether the scheduler is configured and running. |
+| `running` | bool | Whether a cycle is currently in progress. |
+| `last_run_start` | str \| null | UTC timestamp of the most recent cycle start. |
+| `last_run_end` | str \| null | UTC timestamp of the most recent cycle end. |
+| `last_error` | str \| null | Traceback of the last error, if any. |
+| `cycle_count` | int | Number of completed cycles. |
+| `total_jobs_collected` | int | Cumulative jobs collected across cycles. |
+| `total_in_db` | int | Total jobs in the database (currently `0` — requires a follow-up change to wire repository stats through the Protocol). |
+| `per_source` | object | Per-source job counts (currently `{}` — same limitation). |
+| `queries` | list | The search queries the scheduler iterates over. |
+| `min_interval_seconds` | float | Minimum sleep between cycles. |
+| `max_interval_seconds` | float | Maximum sleep between cycles. |
+
+#### Example
+
+```bash
+# Start the API with scheduler enabled and a DB path set:
+SCHEDULER_ENABLED=true DB_PATH=jobs.db \
+  uv run uvicorn jobs_finder.main:app --port 8000
+
+# Query the status endpoint:
+curl -s http://localhost:8000/scheduler/status | jq
+```
+
+Response with scheduler enabled:
+```json
+{
+  "enabled": true,
+  "running": false,
+  "cycle_count": 0,
+  "total_jobs_collected": 0,
+  "total_in_db": 0,
+  "per_source": {},
+  "queries": [{"keywords": "desarrollador", "location": "España"}],
+  "min_interval_seconds": 1500.0,
+  "max_interval_seconds": 2100.0,
+  "last_run_start": null,
+  "last_run_end": null,
+  "last_error": null
+}
+```
+
+Response with scheduler disabled (the default):
+```json
+curl -s http://localhost:8000/scheduler/status
+{"enabled":false,"running":false,"cycle_count":0,"last_error":null,"last_run_end":null,"last_run_start":null,"max_interval_seconds":0.0,"min_interval_seconds":0.0,"per_source":{},"queries":[],"total_in_db":0,"total_jobs_collected":0}
+```
+
+### Historical Jobs Endpoint
+
+`GET /jobs/history` returns paginated historical job data from the
+SQLite database, with optional filters by source, keywords, and date
+range. The endpoint works without the scheduler: it reads from the
+same `DB_PATH` database that the scheduler writes to, so jobs
+persisted by a previous scheduler run (or by a manual ingest) are
+always queryable.
+
+#### Query parameters
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `sources` | str | `linkedin,indeed,infojobs` | Comma-separated list of source names to filter by. |
+| `keywords` | str | — | Optional string to match against job title or company (case-insensitive). |
+| `date_from` | str | — | Inclusive ISO date string for `posted_at >=` filter (e.g. `2026-01-01`). |
+| `date_to` | str | — | Inclusive ISO date string for `posted_at <=` filter (e.g. `2026-06-01`). |
+| `limit` | int | `50` | Max results per page (max `200`). |
+| `offset` | int | `0` | Pagination offset. |
+
+#### Response shape
+
+```json
+{
+  "items": [
+    {
+      "id": "abc123",
+      "source": "linkedin",
+      "title": "Senior Python Developer",
+      "company": "Acme Corp",
+      "location": "Madrid, Spain",
+      "url": "https://www.linkedin.com/jobs/view/abc123/",
+      "description": "We are looking for...",
+      "posted_at": "2026-06-01T00:00:00+00:00",
+      "first_seen_at": "2026-06-01T10:00:00",
+      "last_seen_at": "2026-06-12T10:00:00",
+      "query_snapshot": "{\"keywords\": \"desarrollador\", \"location\": \"España\"}"
+    }
+  ],
+  "total": 147,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `items` | list | The paginated list of historical job entries. |
+| `total` | int | Total number of matching jobs (across all pages). |
+| `limit` | int | The max results per page (echoed from the request). |
+| `offset` | int | The pagination offset (echoed from the request). |
+
+Each item in `items` includes all `JobResponse` fields plus
+`source`, `first_seen_at`, `last_seen_at`, and `query_snapshot`
+(the JSON-serialized query that originally captured the job).
+
+#### Example
+
+```bash
+# All jobs, first page:
+curl -s "http://localhost:8000/jobs/history?limit=10&offset=0" | jq
+
+# Filter by source and keywords:
+curl -s "http://localhost:8000/jobs/history?sources=linkedin,indeed&keywords=python&date_from=2026-01-01&limit=20&offset=0" | jq
+
+# Total count only (limit=1, then read total):
+curl -s "http://localhost:8000/jobs/history?limit=1" | jq '.total'
+```
+
+When no database is configured (`DB_PATH` empty or unset), the endpoint
+returns `{"items": [], "total": 0, "limit": 50, "offset": 0}` —
+graceful degradation, never a 500.
 
 ## Stack
 

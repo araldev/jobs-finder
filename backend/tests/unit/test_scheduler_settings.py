@@ -4,6 +4,9 @@ Spec: REQ-CFG-001. 5 new fields: `db_path`, `scheduler_enabled`,
 `scheduler_min_interval_seconds`, `scheduler_max_interval_seconds`,
 `scheduler_queries`. All use `AliasChoices` so they read from both
 UPPER and lower env var names.
+
+`scheduler-retention-history` adds `retention_days: int = 0`
+(REQ-RET-001).
 """
 
 from __future__ import annotations
@@ -99,4 +102,41 @@ def test_all_scheduler_fields_have_alias_choices() -> None:
     assert s.scheduler_min_interval_seconds == 100.0
     assert s.scheduler_max_interval_seconds == 200.0
     assert s.scheduler_queries == [{"keywords": "test", "location": "Valencia"}]
+    monkeypatch.undo()
+
+
+# ── REQ-RET-001: retention_days ────────────────────────────────────────────
+
+
+def test_retention_days_default() -> None:
+    """`retention_days` defaults to 0 (disabled)."""
+    s = Settings()
+    assert s.retention_days == 0
+
+
+def test_retention_days_from_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`RETENTION_DAYS=30` sets the field to 30."""
+    monkeypatch.setenv("RETENTION_DAYS", "30")
+    s = Settings()
+    assert s.retention_days == 30
+
+
+def test_retention_days_programmatic() -> None:
+    """Programmatic construction via `retention_days` works."""
+    s = Settings(retention_days=45)
+    assert s.retention_days == 45
+
+
+def test_retention_days_negative_clamps() -> None:
+    """Negative `retention_days` is clamped to 0."""
+    s = Settings(retention_days=-10)
+    assert s.retention_days == 0
+
+
+def test_retention_days_has_alias_choices() -> None:
+    """`retention_days` must read from `RETENTION_DAYS` env var."""
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("RETENTION_DAYS", "90")
+    s = Settings()
+    assert s.retention_days == 90
     monkeypatch.undo()

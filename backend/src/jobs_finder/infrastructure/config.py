@@ -1244,6 +1244,22 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("SCHEDULER_QUERIES", "scheduler_queries"),
     )
 
+    # `scheduler-retention-history`: TTL-based retention after each
+    # scheduler cycle. `0` (default) means "never delete"; any
+    # positive value deletes jobs with `last_seen_at` older than
+    # that many days, capped at `LIMIT 1000` per call
+    # (REQ-RET-001).
+    retention_days: int = Field(
+        default=0,
+        validation_alias=AliasChoices("RETENTION_DAYS", "retention_days"),
+    )
+
+    @field_validator("retention_days", mode="after")
+    @classmethod
+    def _clamp_negative_retention_days(cls, v: int) -> int:
+        """Clamp negative `retention_days` to 0."""
+        return max(0, v)
+
     @field_validator("scheduler_queries", mode="before")
     @classmethod
     def _parse_scheduler_queries(cls, v: object) -> list[dict[str, str]]:

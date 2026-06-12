@@ -5,6 +5,8 @@ Spec: REQ-DB-001 — the Protocol must have 3 async methods
 (no `@runtime_checkable`). Mypy --strict enforces structural
 conformance at type-check time; these tests verify the Protocol's
 shape at runtime + mypy structural conformance via a test helper.
+
+`scheduler-retention-history` adds `delete_older_than` (REQ-DB-001 MODIFIED).
 """
 
 from __future__ import annotations
@@ -34,6 +36,9 @@ class _TestConcreteRepository:
     ) -> list[Job]:
         return []
 
+    async def delete_older_than(self, *, days: int, limit: int = 1000) -> int:
+        return 0
+
     async def close(self) -> None:
         return None
 
@@ -56,6 +61,17 @@ def test_job_repository_port_has_search_jobs() -> None:
 def test_job_repository_port_has_close() -> None:
     """The Protocol must declare `close`."""
     assert hasattr(JobRepositoryPort, "close")
+
+
+# ── REQ-DB-001 (MODIFIED): delete_older_than ───────────────────────────────
+
+
+def test_job_repository_port_has_delete_older_than() -> None:
+    """The Protocol must declare `delete_older_than`."""
+    assert hasattr(JobRepositoryPort, "delete_older_than")
+
+
+# ── Structural conformance ──────────────────────────────────────────────────
 
 
 def test_concrete_class_conforms_structurally() -> None:

@@ -48,8 +48,8 @@ Chain strategy: pending
 
 ## Phase 6: Cleanup + Verification
 
-- [ ] 6.1 Update backend `README.md` — document `RETENTION_DAYS`, `GET /scheduler/status`, `GET /jobs/history`
-- [ ] 6.2 Run full check suite: `uv run mypy && uv run ruff check && uv run ruff format --check && uv run pytest`
+- [x] 6.1 Update backend `README.md` — document `RETENTION_DAYS`, `GET /scheduler/status`, `GET /jobs/history`
+- [x] 6.2 Run full check suite: `uv run mypy && uv run ruff check && uv run ruff format --check && uv run pytest`
 
 ## Implementation Order
 
