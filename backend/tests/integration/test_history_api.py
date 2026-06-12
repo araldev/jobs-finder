@@ -107,7 +107,7 @@ async def _client_with_lifespan(app: Any) -> AsyncIterator[AsyncClient]:
 
 async def _insert_fixtures(app: Any) -> None:
     """Insert _HISTORY_JOBS into the repo."""
-    repo: SqliteJobRepository = getattr(app.state, "job_repository")
+    repo: SqliteJobRepository = app.state.job_repository  # type: ignore[assignment]
     await repo.upsert_jobs([_HISTORY_JOBS[0]], source="linkedin", query_snapshot={})
     await repo.upsert_jobs([_HISTORY_JOBS[1]], source="linkedin", query_snapshot={})
     await repo.upsert_jobs([_HISTORY_JOBS[2]], source="indeed", query_snapshot={})
@@ -161,7 +161,9 @@ class TestHistoryApi:
 
         async with _client_with_lifespan(app) as client:
             repo = getattr(app.state, "job_repository", None)
-            assert repo is not None, "Expected repo even when scheduler is disabled, as long as db_path is set"
+            assert repo is not None, (
+                "Expected repo when scheduler disabled, as long as db_path is set"
+            )
             await _insert_fixtures(app)
 
             resp = await client.get("/jobs/history")
@@ -283,9 +285,7 @@ class TestHistoryApi:
             # date_from=2026-05-01, date_to=2026-06-05 should include:
             #   linkedin_1 (2026-06-01), linkedin_2 (2026-05-15)
             #   but NOT indeed_1 (2026-06-10) or infojobs_1 (2026-04-01)
-            resp = await client.get(
-                "/jobs/history?date_from=2026-05-01&date_to=2026-06-05"
-            )
+            resp = await client.get("/jobs/history?date_from=2026-05-01&date_to=2026-06-05")
 
         assert resp.status_code == 200
         data = resp.json()
