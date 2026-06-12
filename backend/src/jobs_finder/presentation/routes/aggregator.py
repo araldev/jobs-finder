@@ -123,6 +123,7 @@ def _to_aggregated_response(result: AggregatedResult) -> AggregatedJobsResponse:
                 company=agg.job.company,
                 location=agg.job.location,
                 url=HttpUrl(agg.job.url),
+                description=agg.job.description,
                 posted_at=agg.job.posted_at,
                 sources=agg.sources,  # type: ignore[arg-type]
             )

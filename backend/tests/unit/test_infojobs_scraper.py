@@ -250,14 +250,14 @@ def _build_n_cards_html(n: int, *, id_prefix: str) -> str:
 
 
 async def test_search_navigates_to_infojobs_ofertas_trabajo() -> None:
-    """The URL is `https://{domain}/ofertas-trabajo?q={kw}&l={loc}&page=1` (1-indexed)."""
+    """The URL is `https://{domain}/ofertas-trabajo?keyword={kw}&l={loc}&page=1` (1-indexed)."""
     page = FakePage(SEARCH_PAGE_HTML)
     scraper, _ = await _make_scraper_with(page)
     async with scraper:
         # `limit=10` keeps the test on a single page so the assertion
         # isolates the URL contract from the pagination contract.
         await scraper.search(keywords="python", location="madrid", limit=5)
-    assert page.goto_calls == ["https://www.infojobs.net/ofertas-trabajo?q=python&l=madrid&page=1"]
+    assert page.goto_calls == ["https://www.infojobs.net/ofertas-trabajo?keyword=python&l=madrid&page=1"]
 
 
 async def test_search_uses_one_indexed_page_param_on_first_page() -> None:
@@ -492,8 +492,8 @@ async def test_search_paginates_with_page_increment_when_limit_exceeds_first_pag
 
     assert len(jobs) == 10
     assert page.goto_calls == [
-        "https://www.infojobs.net/ofertas-trabajo?q=python&l=madrid&page=1",
-        "https://www.infojobs.net/ofertas-trabajo?q=python&l=madrid&page=2",
+        "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=madrid&page=1",
+        "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=madrid&page=2",
     ]
     # First 5 are from the real first page; last 5 are from the
     # synthetic second page.
@@ -509,7 +509,7 @@ async def test_search_does_not_paginate_when_first_page_satisfies_limit() -> Non
     scraper, _ = await _make_scraper_with(page)
     async with scraper:
         await scraper.search("python", "madrid", limit=3)
-    assert page.goto_calls == ["https://www.infojobs.net/ofertas-trabajo?q=python&l=madrid&page=1"]
+    assert page.goto_calls == ["https://www.infojobs.net/ofertas-trabajo?keyword=python&l=madrid&page=1"]
 
 
 async def test_search_returns_first_page_results_when_subsequent_page_times_out() -> None:
@@ -534,8 +534,8 @@ async def test_search_returns_first_page_results_when_subsequent_page_times_out(
     assert jobs[0].id == "i98495453525856678980690018195550513554"
     # Exactly 2 page requests: page 1 succeeded, page 2 timed out.
     assert page.goto_calls == [
-        "https://www.infojobs.net/ofertas-trabajo?q=python&l=madrid&page=1",
-        "https://www.infojobs.net/ofertas-trabajo?q=python&l=madrid&page=2",
+        "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=madrid&page=1",
+        "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=madrid&page=2",
     ]
 
 
@@ -548,8 +548,8 @@ async def test_search_stops_at_max_pages() -> None:
 
     assert len(page.goto_calls) == 2
     assert page.goto_calls == [
-        "https://www.infojobs.net/ofertas-trabajo?q=python&l=madrid&page=1",
-        "https://www.infojobs.net/ofertas-trabajo?q=python&l=madrid&page=2",
+        "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=madrid&page=1",
+        "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=madrid&page=2",
     ]
     assert len(jobs) == 10  # 5 per page on the real-capture fixture, capped at limit=200
 
@@ -831,7 +831,7 @@ def test_infojobs_build_url_includes_province_and_country_ids_when_mapped() -> N
     )
     assert (
         url
-        == "https://www.infojobs.net/ofertas-trabajo?q=python&l=malaga&page=1&provinceIds=34&countryIds=17"
+        == "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=malaga&page=1&provinceIds=34&countryIds=17"
     )
 
 
@@ -857,7 +857,7 @@ def test_infojobs_build_url_country_only_when_province_is_none() -> None:
         1,
         infojobs_geo=(None, 17),
     )
-    assert url == "https://www.infojobs.net/ofertas-trabajo?q=python&l=remote&page=1&countryIds=17"
+    assert url == "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=remote&page=1&countryIds=17"
     assert "provinceIds" not in url
 
 
@@ -884,7 +884,7 @@ def test_infojobs_build_url_falls_back_when_infojobs_geo_is_none() -> None:
         1,
         infojobs_geo=None,
     )
-    assert url == "https://www.infojobs.net/ofertas-trabajo?q=python&l=Berlin&page=1"
+    assert url == "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=Berlin&page=1"
 
 
 def test_infojobs_build_url_falls_back_when_both_ids_are_none() -> None:
@@ -908,7 +908,7 @@ def test_infojobs_build_url_falls_back_when_both_ids_are_none() -> None:
         1,
         infojobs_geo=(None, None),
     )
-    assert url == "https://www.infojobs.net/ofertas-trabajo?q=python&l=Tokyo&page=1"
+    assert url == "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=Tokyo&page=1"
 
 
 # ---------------------------------------------------------------------------
@@ -948,8 +948,8 @@ async def test_infojobs_make_fetch_one_page_captures_infojobs_geo() -> None:
     await closure(fake_page_obj, 1, 20)
     goto_urls = [call.args[0] for call in fake_page_obj.goto.await_args_list]
     assert goto_urls == [
-        "https://www.infojobs.net/ofertas-trabajo?q=python&l=malaga&page=1&provinceIds=34&countryIds=17",
-        "https://www.infojobs.net/ofertas-trabajo?q=python&l=malaga&page=2&provinceIds=34&countryIds=17",
+        "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=malaga&page=1&provinceIds=34&countryIds=17",
+        "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=malaga&page=2&provinceIds=34&countryIds=17",
     ]
 
 
@@ -1056,7 +1056,7 @@ async def test_infojobs_search_emits_province_country_in_url() -> None:
         await scraper.search("python", "malaga", limit=5)
 
     assert page.goto_calls == [
-        "https://www.infojobs.net/ofertas-trabajo?q=python&l=malaga&page=1&provinceIds=34&countryIds=17",
+        "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=malaga&page=1&provinceIds=34&countryIds=17",
     ]
 
 
@@ -1089,7 +1089,7 @@ async def test_infojobs_search_emits_country_only_when_province_is_none() -> Non
         await scraper.search("python", "remote", limit=5)
 
     assert page.goto_calls == [
-        "https://www.infojobs.net/ofertas-trabajo?q=python&l=remote&page=1&countryIds=17",
+        "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=remote&page=1&countryIds=17",
     ]
 
 
@@ -1122,7 +1122,7 @@ async def test_infojobs_search_falls_back_when_resolver_returns_none_none() -> N
         await scraper.search("python", "Berlin", limit=5)
 
     assert page.goto_calls == [
-        "https://www.infojobs.net/ofertas-trabajo?q=python&l=Berlin&page=1",
+        "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=Berlin&page=1",
     ]
 
 
@@ -1144,7 +1144,7 @@ async def test_infojobs_search_falls_back_when_no_resolver_configured() -> None:
         await scraper.search("python", "madrid", limit=5)
 
     assert page.goto_calls == [
-        "https://www.infojobs.net/ofertas-trabajo?q=python&l=madrid&page=1",
+        "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=madrid&page=1",
     ]
 
 

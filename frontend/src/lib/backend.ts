@@ -12,11 +12,12 @@ import "server-only";
 /** The URL of the FastAPI backend. Configurable per environment. */
 export const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8000";
 
-/** Per-request timeout for backend calls. 60s is the upper bound for the
- *  search endpoint (3 sources scraping in parallel, cold cache can take
- *  20-30s on slow networks). The chat stream is allowed up to 120s
- *  end-to-end (LLM + scrape + parse) — see app/api/chat/stream/route.ts. */
-const DEFAULT_TIMEOUT_MS = 60_000;
+/** Per-request timeout for backend calls. 180s accounts for the cold-cache
+ *  case where the LinkedIn scraper (with Xvfb + throttle) takes 30-120s
+ *  for a single scrape. The aggregator uses `asyncio.gather` so it waits
+ *  for ALL sources — the slowest source determines the total wall time.
+ *  The chat stream uses its own timeout — see app/api/chat/stream/route.ts. */
+const DEFAULT_TIMEOUT_MS = 180_000;
 
 export interface BackendFetchInit {
   readonly method?: string;

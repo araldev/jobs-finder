@@ -58,7 +58,6 @@ Errors:
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, Self
 from urllib.parse import quote
@@ -76,10 +75,8 @@ from jobs_finder.infrastructure.pagination import paginated_search
 from .exceptions import IndeedBlockedError, IndeedParseError, IndeedTimeoutError
 from .parsers import (
     _extract_posted_at_map,
-    extract_indeed_snippets_from_provider_data,
     is_indeed_blocked,
     parse_indeed_company,
-    parse_indeed_description,
     parse_indeed_job_id,
     parse_indeed_location,
     parse_indeed_posted_at,
@@ -306,26 +303,7 @@ class IndeedPlaywrightScraper(JobSearchPort):
                     "scraper: zero cards on first page",
                     details={"reason": "zero_cards_on_first_page"},
                 )
-            # Camino 1 (snippet extraction from SERP-side JSON):
-            # The SERP card parser returns `None` for the
-            # description because the `[data-testid="belowJobSnippet"]`
-            # block is empty in the new layout (observed
-            # 2026-06-02). Indeed embeds a short description
-            # (125-170 chars per `<li>`, 1-2 items) in
-            # `window.mosaic.providerData["mosaic-provider-jobcards"]`
-            # — a JSON object in a `<script>` tag.
-            #
-            # We extract the snippet map ONCE per page and
-            # apply it to the parsed jobs. The click-en-card
-            # approach (which would give the full description)
-            # is BLOCKED by Cloudflare on rapid clicks, so
-            # the JSON snippet is the only zero-anti-block
-            # path to non-null descriptions on Indeed.
-            #
-            # Failure isolation: a parse error or shape change
-            # leaves `description=None` (v1 contract). The
-            # helper does NOT raise.
-            return _apply_snippet_map(content, new_jobs)
+            return new_jobs
 
         return fetch_one_page
 
@@ -384,8 +362,15 @@ def _parse_cards(soup: BeautifulSoup, remaining: int, domain: str) -> list[Job]:
     # None → scraper `datetime.now(UTC)` safety net still applies).
     posted_at_map = _extract_posted_at_map(soup)
     cards = soup.select(RESULTS_SELECTOR)
+    # Page-level extract: Indeed renders description snippets OUTSIDE the
+    # `job_seen_beacon` div, in a sibling `slider_sub_item` container with
+    # `data-testid="belowJobSnippet"`. We extract them in document order
+    # (same order as `cards`) and pair by index. CSS `select_one` on a
+    # `belowJobSnippet` Tag does NOT match the element itself (it only
+    # searches descendants), so we extract the `<li>` text inline.
+    desc_blocks = soup.select('[data-testid="belowJobSnippet"]')
     jobs: list[Job] = []
-    for card in cards[:remaining]:
+    for i, card in enumerate(cards[:remaining]):
         try:
             # Per-card call: pass the pre-extracted map (the
             # page-level optimization). `parse_indeed_posted_at`
@@ -394,6 +379,15 @@ def _parse_cards(soup: BeautifulSoup, remaining: int, domain: str) -> list[Job]:
             # grammar. The final safety net (None → now(UTC))
             # is the line below.
             posted = parse_indeed_posted_at(card, posted_at_map=posted_at_map)
+            # Extract description from the page-level `belowJobSnippet`
+            # block paired by index (reuses the same `<li>`-join logic
+            # as `parse_indeed_description` but operates on the block
+            # directly since CSS select_one skips the matching element).
+            desc: str | None = None
+            if i < len(desc_blocks):
+                items = desc_blocks[i].find_all("li")
+                if items:
+                    desc = " | ".join(item.get_text(strip=True) for item in items) or None
             job = Job(
                 id=parse_indeed_job_id(card),
                 title=parse_indeed_title(card),
@@ -401,7 +395,7 @@ def _parse_cards(soup: BeautifulSoup, remaining: int, domain: str) -> list[Job]:
                 location=parse_indeed_location(card),
                 url=parse_indeed_url(card, domain=domain),
                 posted_at=posted if posted is not None else datetime.now(UTC),
-                description=parse_indeed_description(card),
+                description=desc,
             )
             jobs.append(job)
         except IndeedParseError as e:
@@ -410,54 +404,3 @@ def _parse_cards(soup: BeautifulSoup, remaining: int, domain: str) -> list[Job]:
                 details={"card_html": str(card)[:200], "cause": str(e)},
             ) from e
     return jobs
-
-
-def _apply_snippet_map(
-    page_html: str, jobs: list[Job]
-) -> list[Job]:
-    """Apply the JSON-embedded snippets to the parsed jobs.
-
-    Spec: REQ-SCRAPER-INDEED-SNIPPET-001 (Camino 1, 2026-06-12).
-
-    Indeed embeds a short description (1-2 `<li>` items, 125-170
-    chars each) in the SERP-side JSON
-    `window.mosaic.providerData["mosaic-provider-jobcards"]`.
-    The SERP card parser returns `None` for the description
-    because the visible `belowJobSnippet` block is empty in
-    the new layout.
-
-    This helper:
-    1. Extracts `{jobkey: snippet_text}` from the page HTML
-       via `extract_indeed_snippets_from_provider_data()`.
-    2. For each parsed `Job`, looks up `snippet_map[job.id]`
-       and sets `description` if the lookup succeeds.
-
-    Failure isolation (the helper NEVER raises):
-    - HTML is `None` or empty: returns the input `jobs`
-      unchanged.
-    - The providerData anchor is absent (Indeed refactor):
-      returns the input `jobs` unchanged.
-    - The JSON is malformed: returns the input `jobs`
-      unchanged.
-    - A specific job's id is not in the snippet map (rare):
-      the job keeps `description=None`.
-
-    Returns a new list of `Job` instances (uses
-    `dataclasses.replace` to preserve immutability). The
-    input list is not mutated.
-
-    Anti-block notes: zero. This is a pure string parse of
-    HTML that's already loaded by the SERP fetch — no extra
-    navigations, no extra clicks, no anti-bot risk.
-    """
-    snippet_map = extract_indeed_snippets_from_provider_data(page_html)
-    if not snippet_map:
-        return jobs
-    enriched: list[Job] = []
-    for job in jobs:
-        snippet = snippet_map.get(job.id)
-        if snippet:
-            enriched.append(replace(job, description=snippet))
-        else:
-            enriched.append(job)
-    return enriched

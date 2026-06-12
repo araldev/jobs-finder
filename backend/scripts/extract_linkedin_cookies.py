@@ -2,7 +2,7 @@
 Matches the exact browser fingerprint the scraper uses.
 
 Usage:
-    DISPLAY=:99 uv run python scripts/extract_linkedin_cookies.py
+    DISPLAY=:99 uv run --env-file .env python scripts/extract_linkedin_cookies.py
 
 Credentials are read from environment variables:
     LINKEDIN_EMAIL    - LinkedIn login email
@@ -69,11 +69,14 @@ async def main() -> None:
         # ── Fill credentials ─────────────────────────────────────────────
         print("[2/5] Llenando credenciales ...")
 
-        # LinkedIn usa IDs dinámicos. Buscar primer input email/password VISIBLE.
+        # LinkedIn usa IDs fijos: #username y #password
         await asyncio.sleep(2)  # dar tiempo a JS
 
-        email_input = page.locator('input[type="email"]').nth(1)  # visible
-        pass_input = page.locator('input[type="password"]').nth(1)  # visible
+        email_input = page.locator("#username").first
+        pass_input = page.locator("#password").first
+
+        await email_input.wait_for(state="visible", timeout=10000)
+        await pass_input.wait_for(state="visible", timeout=10000)
 
         await email_input.fill(LINKEDIN_EMAIL)
         await pass_input.fill(LINKEDIN_PASSWORD)
@@ -82,29 +85,48 @@ async def main() -> None:
         # ── Click Sign In ────────────────────────────────────────────────
         print("[3/5] Click en Sign In ...")
 
-        # LinkedIn muestra "Iniciar sesión con Apple" + "Iniciar sesión" — usar exact=True
-        signin_btn = page.get_by_role("button", name="Iniciar sesión", exact=True).first
-        await signin_btn.wait_for(state="visible", timeout=10000)
-        await signin_btn.click()
+        # LinkedIn muestra "Sign in" o "Iniciar sesión" + "Sign in with Apple"
+        # Usar el botón de submit o el rol button con texto Sign in
+        try:
+            signin_btn = page.get_by_role("button", name="Sign in", exact=True).first
+            await signin_btn.wait_for(state="visible", timeout=5000)
+            await signin_btn.click()
+        except Exception:
+            signin_btn = page.get_by_role("button", name="Iniciar sesión", exact=True).first
+            await signin_btn.wait_for(state="visible", timeout=5000)
+            await signin_btn.click()
+
         print("    → Click enviado. Esperando redirección ...")
 
-        # ── Wait for successful login (poll URL, up to 180s) ─────────────
+        # ── Wait for successful login (poll URL, up to 300s) ─────────────
         login_ok = False
-        for attempt in range(180):
+        for attempt in range(300):
             current_url = page.url
-            if any(k in current_url for k in ["feed", "jobs", "mynetwork", "notifications", "checkpoint"]):
+            if any(k in current_url for k in ["feed", "jobs", "mynetwork", "notifications"]):
                 login_ok = True
                 print(f"    ✅ Redirección detectada en {attempt}s: {current_url[:80]}")
+                break
+            if "checkpoint" in current_url:
+                # LinkedIn challenge - esperar hasta 5 min a que se resuelva
+                print(f"    ⚠️  Challenge en {attempt}s. Esperando resolución manual ...")
+                for wait_sec in range(300 - attempt):
+                    await asyncio.sleep(1)
+                    current_url = page.url
+                    if any(k in current_url for k in ["feed", "jobs", "mynetwork", "notifications"]):
+                        login_ok = True
+                        print(f"    ✅ Challenge resuelto en {wait_sec}s")
+                        break
                 break
             await asyncio.sleep(1)
 
         if not login_ok:
-            print(f"    ⚠️  Sin redirección después de 180s. URL actual: {page.url}")
+            print(f"    ⚠️  Sin redirección después del timeout. URL: {page.url[:80]}")
             print("    → Continuando con cookies actuales ...")
 
-        print(f"    → URL final: {page.url}")
+        print(f"    → URL final: {page.url[:80]}")
 
         # ── Extract cookies ──────────────────────────────────────────────
+        print()
         print("[4/4] Extrayendo cookies ...")
         cookies = await context.cookies()
         print(f"    → {len(cookies)} cookies extraídas")

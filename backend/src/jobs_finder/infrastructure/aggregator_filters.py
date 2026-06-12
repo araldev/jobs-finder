@@ -10,10 +10,11 @@ This module contains two pure functions:
   `unicodedata.normalize`); `"Málaga"` tokenizes to
   `{"málaga"}`, NOT `{"málagu\u0301a"}` (NFD-decomposed).
 - `filter_infojobs_results(jobs, query_tokens) -> list[Job]`:
-  discard `Job` instances whose `title` has zero token
-  overlap with `query_tokens`. A job is kept iff
-  `len(tokenize(job.title) & query_tokens) > 0`. The
-  function is pure: it returns a new list, does not mutate
+  discard `Job` instances whose `title` AND `description` have
+  zero token overlap with `query_tokens`. A job is kept iff
+  `len(tokenize(job.title) & query_tokens) > 0` OR
+  `len(tokenize(job.description) & query_tokens) > 0`.
+  The function is pure: it returns a new list, does not mutate
   the input, has no I/O and no randomness.
 
 The `SearchAllSourcesUseCase` calls
@@ -73,29 +74,28 @@ def tokenize(text: str) -> set[str]:
 
 
 def filter_infojobs_results(jobs: list[Job], query_tokens: set[str]) -> list[Job]:
-    """Discard `Job` instances whose `title` has zero token overlap with `query_tokens`.
+    """Discard `Job` whose `title` AND `description` have zero token overlap with `query_tokens`.
 
     **Defense-in-depth safety net** (REQ-PROV-005). The
     PRIMARY narrowing of InfoJobs results happens at the
-    URL level via the `provinceIds` + `countryIds` query
-    params — see `InfoJobsScraper.search()` /
+    URL level via the `keyword=` param + `provinceIds` /
+    `countryIds` query params — see `InfoJobsScraper.search()` /
     `InfoJobsScraperSettings.location_resolver` and the
     "InfoJobs province/country resolution" section of the
     README. This function's role is the SECONDARY safety
-    net: it catches zero-overlap jobs that slip through
-    when the URL plumb returns the wrong region (unmapped
-    locations, future province ID drift, transient InfoJobs
-    SERP changes). The function is KEEP-alive (not removed,
-    not no-op'd) because the cost of removing it is small
-    (~5 lines + 6 tests) but the cost of needing it again
-    (a re-deploy + a hotfix + a re-capture of the broken
-    region) is higher. The 6 tests in
-    `test_aggregator_filters.py` pin the keep-as-defense-
-    in-depth contract.
+    net: it catches zero-overlap jobs that slip through when
+    the URL plumb returns the wrong region or when InfoJobs's
+    broad keyword search returns tangentially-related jobs.
+
+    A job is kept when EITHER the title OR the description
+    has at least one token in common with `query_tokens`.
+    Description is checked because InfoJobs's keyword search
+    matches against description text as well — a job like
+    "Programador/a Full Stack" may not contain "react" in the
+    title but does reference React in its description snippet.
 
     Pure function: no I/O, no mutation of the input,
-    returns a new list. A job is kept iff
-    `len(tokenize(job.title) & query_tokens) > 0`.
+    returns a new list.
 
     Args:
         jobs: The list of `Job` instances to filter. NOT
@@ -112,4 +112,11 @@ def filter_infojobs_results(jobs: list[Job], query_tokens: set[str]) -> list[Job
     """
     if not query_tokens:
         return list(jobs)
-    return [job for job in jobs if tokenize(job.title) & query_tokens]
+
+    def _overlaps(job: Job) -> bool:
+        return bool(
+            tokenize(job.title) & query_tokens
+            or (job.description and tokenize(job.description) & query_tokens)
+        )
+
+    return [job for job in jobs if _overlaps(job)]

@@ -413,7 +413,7 @@ class InfoJobsPlaywrightScraper(JobSearchPort):
     ) -> str:
         """Build the InfoJobs search URL, optionally narrowed by province/country.
 
-        The v1 URL formula is `?q=<kw>&l=<loc>&page=<p>`. The
+        The v1 URL formula is `?keyword=<kw>&l=<loc>&page=<p>`. The
         v3 formula extends it with `&provinceIds=<id>&countryIds=<id>`
         when the `infojobs_geo` tuple carries one or both
         IDs (REQ-PROV-002):
@@ -435,7 +435,7 @@ class InfoJobsPlaywrightScraper(JobSearchPort):
         """
         base = (
             f"https://{self._settings.domain}/ofertas-trabajo"
-            f"?q={quote(keywords)}&l={quote(location)}&page={page}"
+            f"?keyword={quote(keywords)}&l={quote(location)}&page={page}"
         )
         # Fallback: no resolver configured OR resolver returned
         # `(None, None)`. The unmapped sentinel is the
