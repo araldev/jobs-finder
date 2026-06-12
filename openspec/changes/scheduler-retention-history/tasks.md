@@ -42,9 +42,9 @@ Chain strategy: pending
 
 ## Phase 5: Historical Jobs — Route + Wiring (TDD)
 
-- [ ] 5.1 **RED**: Integration test `test_history_api.py` — `GET /jobs/history` with source/keywords/date filters returns 200 + `{"items": [...], "total": N}`. **GREEN**: Create `routes/history.py` with query params `sources`, `keywords`, `date_from`, `date_to`, `limit` (default 50, max 200), `offset` (default 0). Add `HistoryJobQuery(BaseModel)` + `HistoryJobResponse(items: list[JobResponse], total: int)` to `schemas.py`
-- [ ] 5.2 **RED**: Integration test — history works when `SCHEDULER_ENABLED=false` but `DB_PATH` is set. **GREEN**: Refactor `app_factory` lifespan — build `SqliteJobRepository` when `db_path` non-empty (NOT gated by `scheduler_enabled`), expose `app.state.job_repository`. Build scheduler ONLY when `scheduler_enabled`. Register `history.router` always. Update `test_scheduler_wiring.py` assertions
-- [ ] 5.3 **GREEN**: Register both new routers in `app_factory`. `history.router` always; `scheduler_status.router` always (graceful degradation when scheduler is None). Run `mypy --strict`, `ruff check`, `ruff format --check`, full `pytest` suite
+- [x] 5.1 **RED**: Integration test `test_history_api.py` — `GET /jobs/history` with source/keywords/date filters returns 200 + `{"items": [...], "total": N}`. **GREEN**: Create `routes/history.py` with query params `sources`, `keywords`, `date_from`, `date_to`, `limit` (default 50, max 200), `offset` (default 0). Add `HistoryJobQuery(BaseModel)` + `HistoryJobResponse(items: list[JobResponse], total: int)` to `schemas.py`
+- [x] 5.2 **RED**: Integration test — history works when `SCHEDULER_ENABLED=false` but `DB_PATH` is set. **GREEN**: Refactor `app_factory` lifespan — build `SqliteJobRepository` when `db_path` non-empty (NOT gated by `scheduler_enabled`), expose `app.state.job_repository`. Build scheduler ONLY when `scheduler_enabled`. Register `history.router` always. Update `test_scheduler_wiring.py` assertions
+- [x] 5.3 **GREEN**: Register both new routers in `app_factory`. `history.router` always; `scheduler_status.router` always (graceful degradation when scheduler is None). Run `mypy --strict`, `ruff check`, `ruff format --check`, full `pytest` suite
 
 ## Phase 6: Cleanup + Verification
 
