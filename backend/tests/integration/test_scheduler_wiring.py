@@ -1,11 +1,13 @@
 """Integration tests for scheduler wiring in `app_factory.build_app`.
 
-Spec: REQ-ROOT-001. Uses `asgi_lifespan.LifespanManager` to exercise the
-FastAPI lifespan and verify that the scheduler + repository are correctly
-wired when `SCHEDULER_ENABLED=true` and absent when `SCHEDULER_ENABLED=false`.
+Spec: REQ-ROOT-001, REQ-HIST-002 (scenario 2). Uses
+`asgi_lifespan.LifespanManager` to exercise the FastAPI lifespan and
+verify that the scheduler + repository are correctly wired.
 
-`scheduler-retention-history` adds `retention_days` wiring
-(REQ-RET-001, REQ-SCH-001 MODIFIED, REQ-ROOT-001 MODIFIED).
+`scheduler-retention-history` Phase 5 (DB path independence): the
+repository is now built when `db_path` is non-empty regardless of
+`scheduler_enabled`. The scheduler is only built when
+`scheduler_enabled=true`.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ import pytest
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 
+from jobs_finder.infrastructure.config import Settings
 from jobs_finder.presentation.app_factory import build_app
 
 
@@ -35,20 +38,30 @@ async def _client_with_lifespan(app: Any) -> AsyncIterator[AsyncClient]:
 
 
 class TestSchedulerWiringDisabled:
-    """SCHEDULER_ENABLED=false (default): zero behavioral change."""
+    """SCHEDULER_ENABLED=false: repo built only when db_path is set."""
 
     @pytest.mark.asyncio
-    async def test_scheduler_not_created_when_disabled(self) -> None:
-        """When `scheduler_enabled=False`, no scheduler or repo is exposed."""
-        app = build_app()
-
-        # Before the lifespan runs, verify no scheduler state.
-        assert not hasattr(app.state, "job_repository") or app.state.job_repository is None
+    async def test_no_repo_when_db_path_empty(self) -> None:
+        """When `db_path=""`, no repository is built regardless of scheduler."""
+        app = build_app(settings=Settings(db_path=""))
 
         async with _client_with_lifespan(app):
-            # After lifespan startup, still no scheduler state.
             repo = getattr(app.state, "job_repository", None)
-            assert repo is None, "Expected no job_repository when SCHEDULER_ENABLED=false"
+            assert repo is None, "Expected no job_repository when db_path=''"
+
+    @pytest.mark.asyncio
+    async def test_repo_built_without_scheduler_when_db_path_set(self) -> None:
+        """When db_path set and scheduler disabled, repo is built but scheduler is not."""
+        app = build_app(settings=Settings(db_path=":memory:", scheduler_enabled=False))
+
+        async with _client_with_lifespan(app):
+            repo = getattr(app.state, "job_repository", None)
+            assert repo is not None, (
+                "Expected repo when db_path is set even with scheduler_enabled=False"
+            )
+            assert repo._connection is not None, "Repo should be open after lifespan startup"
+            scheduler = getattr(app.state, "scheduler", None)
+            assert scheduler is None, "Expected no scheduler when scheduler_enabled=False"
 
 
 class TestSchedulerWiringEnabled:

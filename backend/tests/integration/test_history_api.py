@@ -146,6 +146,33 @@ class TestHistoryApi:
     """Integration tests for `GET /jobs/history` (REQ-HIST-002)."""
 
     @pytest.mark.asyncio
+    async def test_history_works_without_scheduler(self) -> None:
+        """History endpoint works when scheduler is disabled but DB_PATH is set.
+
+        Spec: REQ-HIST-002 scenario 2 — history without scheduler.
+        When `scheduler_enabled=False` and `db_path` is set, the repo
+        should be available and the history endpoint should return data.
+        """
+        settings = Settings(
+            scheduler_enabled=False,
+            db_path=":memory:",
+        )
+        app = _make_app_with_empty_fakes(settings)
+
+        async with _client_with_lifespan(app) as client:
+            repo = getattr(app.state, "job_repository", None)
+            assert repo is not None, "Expected repo even when scheduler is disabled, as long as db_path is set"
+            await _insert_fixtures(app)
+
+            resp = await client.get("/jobs/history")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "items" in data
+        assert "total" in data
+        assert data["total"] >= 4
+
+    @pytest.mark.asyncio
     async def test_history_returns_items_and_total(self) -> None:
         """Basic request returns items list and total count."""
         settings = Settings(

@@ -575,9 +575,13 @@ def build_app(  # noqa: PLR0915, PLR0912
         # the aggregator which calls the scrapers) and the scheduler
         # starts AFTER the repo is ready so the DB is available on
         # the first tick.
-        if _scheduler_repo is not None and _scheduler_instance is not None:
+        # Open the repository when db_path is set (REQ-HIST-002 scenario 2).
+        # The repo is opened regardless of scheduler_enabled so the history
+        # endpoint can read from it. The scheduler starts only when built.
+        if _scheduler_repo is not None:
             await _scheduler_repo.__aenter__()
             _app.state.job_repository = _scheduler_repo
+        if _scheduler_instance is not None:
             _scheduler_instance.start()
         try:
             yield
@@ -716,19 +720,23 @@ def build_app(  # noqa: PLR0915, PLR0912
 
     # ── Background scheduler + repository (REQ-ROOT-001) ──────────────────
     #
-    # When `settings.scheduler_enabled` AND the aggregator use case is
-    # available, build a `SqliteJobRepository` and a
-    # `BackgroundJobScheduler`. The lifecycle (open → start → serve →
-    # stop → close) is managed in the lifespan below.
+    # The repository is built when `db_path` is non-empty, regardless of
+    # `scheduler_enabled` (REQ-HIST-002 scenario 2 — history works without
+    # scheduler). The scheduler is built only when `scheduler_enabled` AND
+    # the aggregator use case is available.
     #
-    # When disabled (`scheduler_enabled=False`, the default): both are
-    # `None` and the lifespan is unchanged from prior behavior.
+    # The lifecycle (open → start → serve → stop → close) is managed in
+    # the lifespan below. When `db_path` is empty (default `""`): the
+    # repo is `None` and the lifespan skips it.
     _scheduler_repo: SqliteJobRepository | None = None
     _scheduler_instance: BackgroundJobScheduler | None = None
     _wire_scheduler: bool = effective_settings.scheduler_enabled and aggregator_use_case is not None
 
-    if _wire_scheduler:
+    # Build repo when db_path is non-empty (REQ-HIST-002 scenario 2).
+    if effective_settings.db_path:
         _scheduler_repo = SqliteJobRepository(db_path=effective_settings.db_path)
+
+    if _wire_scheduler and _scheduler_repo is not None:
 
         # Wrap the aggregator's search() to match the
         # Callable[[str, str], Awaitable[list[Job]]] signature.
