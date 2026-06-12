@@ -129,36 +129,72 @@ CREATE INDEX IF NOT EXISTS idx_jobs_source_source_id ON jobs(source, source_id);
 
 ### REQ-DB-004: Upsert semantics
 
-The system MUST upsert jobs via:
+(Modified 2026-06-13 — `scheduler-source-fix` delta — previously accepted a `source` parameter alongside the job list.)
+
+The `JobRepositoryPort.upsert_jobs` signature changed from:
+
+```python
+async def upsert_jobs(
+    self, jobs: list[Job], query_snapshot: str, source: str
+) -> int: ...
+```
+
+To:
+
+```python
+async def upsert_jobs(self, jobs: list[Job], query_snapshot: str) -> int: ...
+```
+
+The `source` parameter is removed. Each `Job` in the list carries
+its own `source` field. The repository implementation MUST read
+`job.source` per-row and issue per-source SQL upserts, grouping jobs by
+source internally. The SQL `ON CONFLICT` clause MUST use `excluded.source`
+to preserve the per-row source value on conflict.
 
 ```sql
-INSERT INTO jobs (...)
+INSERT INTO jobs (source, source_id, title, company, location, url,
+                  description, posted_at, query_snapshot,
+                  first_seen_at, last_seen_at)
 ON CONFLICT(source, source_id) DO UPDATE SET
     title=excluded.title, company=excluded.company,
     location=excluded.location, url=excluded.url,
     description=excluded.description, posted_at=excluded.posted_at,
+    source=excluded.source,
     last_seen_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
 ```
 
 The method MUST return the count of affected rows.
 
-#### Scenario: New job inserts a row
+#### Scenario: New job inserts with job.source as row source
 
 - GIVEN a repository with an empty `jobs` table
-- WHEN `upsert_jobs([job_1], source="linkedin",
-  query_snapshot={"keywords": "python", "location": "Madrid"})`
-  is called
-- THEN 1 row is inserted
+- WHEN `upsert_jobs([job_1], query_snapshot='{"keywords":"python","location":"Madrid"}')`
+  is called where `job_1.source == "linkedin"`
+- THEN 1 row is inserted with `source="linkedin"`
 - AND `first_seen_at` equals `last_seen_at`
 
-#### Scenario: Existing job updates on conflict
+#### Scenario: Existing job updates using job.source on conflict
 
 - GIVEN a repository with a row for `(source="linkedin", source_id="123")`
   with `title="Old Title"`
-- WHEN `upsert_jobs([updated_job], source="linkedin", ...)` is called
-  with `title="New Title"` and the same `source_id`
-- THEN the row's `title` is updated to `"New Title"`
+- WHEN `upsert_jobs([updated_job], query_snapshot=...)` is called
+  where `updated_job.source == "linkedin"` and same `source_id`
+- THEN the row's `title` is updated to `updated_job.title`
 - AND `last_seen_at` is updated but `first_seen_at` is unchanged
+- AND `source` is preserved as `"linkedin"` via `excluded.source`
+
+#### Scenario: Mixed-source upsert groups by source internally
+
+- GIVEN jobs with `source="linkedin"` and `source="indeed"` in the same call
+- WHEN `upsert_jobs([linkedin_job, indeed_job], query_snapshot=...)` is called
+- THEN the repository internally issues separate SQL upserts per source
+- AND each row's `source` column matches `job.source` of the respective job
+
+#### Scenario: Source parameter no longer accepted
+
+- GIVEN a call with `upsert_jobs(jobs, query_snapshot, source="linkedin")`
+- WHEN the call is made to `SqliteJobRepository`
+- THEN a `TypeError` for unexpected keyword argument is raised
 
 ### REQ-CFG-001 (db_path): Database path configuration
 
