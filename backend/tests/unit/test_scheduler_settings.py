@@ -75,9 +75,7 @@ def test_scheduler_queries_from_json_env_var(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_scheduler_queries_programmatic() -> None:
     """Programmatic construction via `scheduler_queries` works."""
-    s = Settings(
-        scheduler_queries=[{"keywords": "java", "location": "Barcelona"}]
-    )
+    s = Settings(scheduler_queries=[{"keywords": "java", "location": "Barcelona"}])
     assert s.scheduler_queries == [{"keywords": "java", "location": "Barcelona"}]
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+import aiosqlite
 import pytest
 
 from jobs_finder.application.ports import JobRepositoryPort
@@ -57,8 +58,8 @@ async def test_wal_mode_enabled(tmp_path: Any) -> None:
     db_file = str(tmp_path / "test_wal.db")
     r = SqliteJobRepository(db_path=db_file)
     async with r:
-        async with r._connection.execute("PRAGMA journal_mode") as cursor:
-            row = await cursor.fetchone()
+        cursor = await r._connection.execute("PRAGMA journal_mode")
+        row = await cursor.fetchone()
     assert row is not None
     # WAL mode may report as "wal" (lowercase) on some Python versions
     assert row[0].upper() == "WAL"
@@ -67,7 +68,7 @@ async def test_wal_mode_enabled(tmp_path: Any) -> None:
 @pytest.mark.asyncio
 async def test_source_check_constraint(repo: SqliteJobRepository) -> None:
     """The `CHECK(source IN (...))` constraint must reject invalid sources."""
-    with pytest.raises(Exception):  # aiosqlite.IntegrityError
+    with pytest.raises(aiosqlite.IntegrityError):
         await repo._connection.execute(
             "INSERT INTO jobs (source, source_id, title, company, location, url, "
             "posted_at, query_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -93,9 +94,7 @@ async def test_indexes_exist(repo: SqliteJobRepository) -> None:
 @pytest.mark.asyncio
 async def test_upsert_inserts_new_row(repo: SqliteJobRepository) -> None:
     """Inserting a new job returns 1 and the row exists."""
-    count = await repo.upsert_jobs(
-        [_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY
-    )
+    count = await repo.upsert_jobs([_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY)
     assert count == 1
 
     async with repo._connection.execute(
@@ -110,9 +109,7 @@ async def test_upsert_inserts_new_row(repo: SqliteJobRepository) -> None:
 @pytest.mark.asyncio
 async def test_upsert_updates_existing_row(repo: SqliteJobRepository) -> None:
     """Upserting a job with the same (source, source_id) updates fields."""
-    await repo.upsert_jobs(
-        [_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY
-    )
+    await repo.upsert_jobs([_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY)
 
     updated_job = Job(
         id="123",
@@ -122,9 +119,7 @@ async def test_upsert_updates_existing_row(repo: SqliteJobRepository) -> None:
         url="https://example.com/job/123",
         posted_at=datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC),
     )
-    count = await repo.upsert_jobs(
-        [updated_job], source="linkedin", query_snapshot=_SAMPLE_QUERY
-    )
+    count = await repo.upsert_jobs([updated_job], source="linkedin", query_snapshot=_SAMPLE_QUERY)
     # SQLite reports 2 affected rows for an UPDATE on conflict
     assert count >= 1
 
@@ -139,9 +134,7 @@ async def test_upsert_updates_existing_row(repo: SqliteJobRepository) -> None:
 @pytest.mark.asyncio
 async def test_upsert_preserves_first_seen_at(repo: SqliteJobRepository) -> None:
     """On update, `first_seen_at` stays unchanged while `last_seen_at` updates."""
-    await repo.upsert_jobs(
-        [_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY
-    )
+    await repo.upsert_jobs([_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY)
 
     async with repo._connection.execute(
         "SELECT first_seen_at, last_seen_at FROM jobs WHERE source='linkedin' AND source_id='123'"
@@ -152,9 +145,7 @@ async def test_upsert_preserves_first_seen_at(repo: SqliteJobRepository) -> None
     original_last = row[1]
 
     # Upsert again with same job
-    await repo.upsert_jobs(
-        [_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY
-    )
+    await repo.upsert_jobs([_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY)
 
     async with repo._connection.execute(
         "SELECT first_seen_at, last_seen_at FROM jobs WHERE source='linkedin' AND source_id='123'"
@@ -170,12 +161,20 @@ async def test_upsert_multiple_jobs(repo: SqliteJobRepository) -> None:
     """Multiple jobs in one upsert call are all inserted."""
     jobs = [
         Job(
-            id="1", title="Job 1", company="C1", location="L1",
-            url="https://ex.com/1", posted_at=datetime(2026, 1, 1, tzinfo=UTC),
+            id="1",
+            title="Job 1",
+            company="C1",
+            location="L1",
+            url="https://ex.com/1",
+            posted_at=datetime(2026, 1, 1, tzinfo=UTC),
         ),
         Job(
-            id="2", title="Job 2", company="C2", location="L2",
-            url="https://ex.com/2", posted_at=datetime(2026, 1, 2, tzinfo=UTC),
+            id="2",
+            title="Job 2",
+            company="C2",
+            location="L2",
+            url="https://ex.com/2",
+            posted_at=datetime(2026, 1, 2, tzinfo=UTC),
         ),
     ]
     count = await repo.upsert_jobs(jobs, source="indeed", query_snapshot=_SAMPLE_QUERY)
@@ -204,8 +203,11 @@ async def test_search_jobs_all(repo: SqliteJobRepository) -> None:
     """Search without filters returns all jobs."""
     await repo.upsert_jobs([_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY)
     j2 = Job(
-        id="456", title="Java Developer", company="Java Co",
-        location="Barcelona", url="https://ex.com/456",
+        id="456",
+        title="Java Developer",
+        company="Java Co",
+        location="Barcelona",
+        url="https://ex.com/456",
         posted_at=datetime(2026, 6, 2, tzinfo=UTC),
     )
     await repo.upsert_jobs([j2], source="indeed", query_snapshot=_SAMPLE_QUERY)
@@ -219,8 +221,11 @@ async def test_search_jobs_filter_by_source(repo: SqliteJobRepository) -> None:
     """Search with `sources` filter returns only matching source."""
     await repo.upsert_jobs([_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY)
     j2 = Job(
-        id="456", title="Java Developer", company="Java Co",
-        location="Barcelona", url="https://ex.com/456",
+        id="456",
+        title="Java Developer",
+        company="Java Co",
+        location="Barcelona",
+        url="https://ex.com/456",
         posted_at=datetime(2026, 6, 2, tzinfo=UTC),
     )
     await repo.upsert_jobs([j2], source="indeed", query_snapshot=_SAMPLE_QUERY)
@@ -235,8 +240,11 @@ async def test_search_jobs_filter_by_keywords(repo: SqliteJobRepository) -> None
     """Search with keywords matches on title and company."""
     await repo.upsert_jobs([_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY)
     j2 = Job(
-        id="456", title="Java Developer", company="Java Co",
-        location="Barcelona", url="https://ex.com/456",
+        id="456",
+        title="Java Developer",
+        company="Java Co",
+        location="Barcelona",
+        url="https://ex.com/456",
         posted_at=datetime(2026, 6, 2, tzinfo=UTC),
     )
     await repo.upsert_jobs([j2], source="indeed", query_snapshot=_SAMPLE_QUERY)
@@ -251,11 +259,16 @@ async def test_search_jobs_limit_offset(repo: SqliteJobRepository) -> None:
     """Search respects limit and offset."""
     jobs = []
     for i in range(10):
-        jobs.append(Job(
-            id=str(i), title=f"Job {i}", company="C",
-            location="L", url=f"https://ex.com/{i}",
-            posted_at=datetime(2026, 1, i + 1, tzinfo=UTC),
-        ))
+        jobs.append(
+            Job(
+                id=str(i),
+                title=f"Job {i}",
+                company="C",
+                location="L",
+                url=f"https://ex.com/{i}",
+                posted_at=datetime(2026, 1, i + 1, tzinfo=UTC),
+            )
+        )
     await repo.upsert_jobs(jobs, source="linkedin", query_snapshot=_SAMPLE_QUERY)
 
     results = await repo.search_jobs(limit=3, offset=0)

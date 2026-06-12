@@ -159,7 +159,7 @@ def _row_to_job(row: aiosqlite.Row) -> Job:
     """Convert an `aiosqlite.Row` to a `Job` domain object."""
     posted_at_str: str = row["posted_at"]
     posted_at_dt = datetime.strptime(posted_at_str, "%Y-%m-%dT%H:%M:%SZ").replace(
-        tzinfo=timezone.utc
+        tzinfo=timezone.utc  # noqa: UP017 — datetime.UTC unavailable on Python 3.12.3
     )
 
     return Job(

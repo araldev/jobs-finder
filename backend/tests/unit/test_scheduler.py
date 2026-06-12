@@ -242,9 +242,7 @@ class TestBackgroundJobScheduler:
         assert ("python", "Madrid") in search_calls or ("java", "Barcelona") in search_calls
 
         # upsert_jobs should have been called with accumulated results
-        assert len(repo.upsert_calls) >= 1, (
-            "Expected at least 1 upsert_jobs call"
-        )
+        assert len(repo.upsert_calls) >= 1, "Expected at least 1 upsert_jobs call"
 
     # ── Sequential runs succeed (REQ-SCH-003 scenario 2) ────────────────────
 
@@ -272,9 +270,7 @@ class TestBackgroundJobScheduler:
         await scheduler.stop()
 
         # Should have completed multiple cycles
-        assert call_count >= 3, (
-            f"Expected at least 3 completed cycles, got {call_count}"
-        )
+        assert call_count >= 3, f"Expected at least 3 completed cycles, got {call_count}"
 
 
 def _make_job(id_suffix: str) -> Job:

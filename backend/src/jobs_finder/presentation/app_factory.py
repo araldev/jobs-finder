@@ -723,9 +723,7 @@ def build_app(  # noqa: PLR0915, PLR0912
     # `None` and the lifespan is unchanged from prior behavior.
     _scheduler_repo: SqliteJobRepository | None = None
     _scheduler_instance: BackgroundJobScheduler | None = None
-    _wire_scheduler: bool = (
-        effective_settings.scheduler_enabled and aggregator_use_case is not None
-    )
+    _wire_scheduler: bool = effective_settings.scheduler_enabled and aggregator_use_case is not None
 
     if _wire_scheduler:
         _scheduler_repo = SqliteJobRepository(db_path=effective_settings.db_path)

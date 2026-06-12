@@ -45,9 +45,7 @@ class TestSchedulerWiringDisabled:
         async with _client_with_lifespan(app):
             # After lifespan startup, still no scheduler state.
             repo = getattr(app.state, "job_repository", None)
-            assert repo is None, (
-                "Expected no job_repository when SCHEDULER_ENABLED=false"
-            )
+            assert repo is None, "Expected no job_repository when SCHEDULER_ENABLED=false"
 
 
 class TestSchedulerWiringEnabled:
@@ -71,9 +69,7 @@ class TestSchedulerWiringEnabled:
 
         async with _client_with_lifespan(app):
             repo = getattr(app.state, "job_repository", None)
-            assert repo is not None, (
-                "Expected job_repository to be set when SCHEDULER_ENABLED=true"
-            )
+            assert repo is not None, "Expected job_repository to be set when SCHEDULER_ENABLED=true"
             # The repo should be open (connection established)
             assert repo._connection is not None, "Repository should be open after lifespan startup"
 

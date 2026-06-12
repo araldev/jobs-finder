@@ -132,15 +132,10 @@ def _validate_str_dict_list(items: list[object], name: str) -> None:
     """
     for item in items:
         if not isinstance(item, dict):
-            raise ValueError(
-                f"{name} items must be dicts, got {type(item).__name__}"
-            )
+            raise ValueError(f"{name} items must be dicts, got {type(item).__name__}")
         for key, val in item.items():
             if not isinstance(key, str) or not isinstance(val, str):
-                raise ValueError(
-                    f"{name} dict keys and values must be strings: "
-                    f"{key!r}: {val!r}"
-                )
+                raise ValueError(f"{name} dict keys and values must be strings: {key!r}: {val!r}")
 
 
 class Settings(BaseSettings):
@@ -520,16 +515,12 @@ class Settings(BaseSettings):
     # Default `None` → no `channel` kwarg (Playwright's bundled Chromium).
     linkedin_launch_channel: str | None = Field(
         default=None,
-        validation_alias=AliasChoices(
-            "LINKEDIN_LAUNCH_CHANNEL", "linkedin_launch_channel"
-        ),
+        validation_alias=AliasChoices("LINKEDIN_LAUNCH_CHANNEL", "linkedin_launch_channel"),
     )
 
     @field_validator("linkedin_launch_channel", mode="before")
     @classmethod
-    def _normalize_empty_linkedin_launch_channel(
-        cls, v: str | None
-    ) -> str | None:
+    def _normalize_empty_linkedin_launch_channel(cls, v: str | None) -> str | None:
         """Mode='before': `None` / `""` → `None` (the empty-string kill switch).
 
         Mirrors the v1 `_normalize_empty_linkedin_xvfb_display`

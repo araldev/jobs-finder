@@ -79,9 +79,7 @@ class BackgroundJobScheduler:
         """
         while True:
             if self._lock.locked():
-                _logger.warning(
-                    "BackgroundJobScheduler: overlapping run detected — skipping cycle"
-                )
+                _logger.warning("BackgroundJobScheduler: overlapping run detected — skipping cycle")
                 await asyncio.sleep(random.uniform(self._min_interval, self._max_interval))
                 continue
 
@@ -97,7 +95,9 @@ class BackgroundJobScheduler:
 
                 if all_jobs:
                     await self._repo.upsert_jobs(
-                        all_jobs, source="aggregator", query_snapshot=last_query,
+                        all_jobs,
+                        source="aggregator",
+                        query_snapshot=last_query,
                     )
 
                 _logger.info(
