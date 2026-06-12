@@ -85,6 +85,7 @@ from jobs_finder.application.usecases.search_linkedin_jobs import (
     RawLinkedInJobsUseCase,
     SearchLinkedInJobsUseCase,
 )
+from jobs_finder.domain.job import Job
 from jobs_finder.infrastructure.aggregator_filters import filter_infojobs_results
 from jobs_finder.infrastructure.cache._factory import build_cache
 from jobs_finder.infrastructure.config import Settings
@@ -114,7 +115,11 @@ from jobs_finder.infrastructure.llm._intent_parser import parse_intent_response
 from jobs_finder.infrastructure.location.hardcoded_resolver import (
     HardcodedLocationResolver,
 )
+from jobs_finder.infrastructure.persistence.sqlite_job_repository import (
+    SqliteJobRepository,
+)
 from jobs_finder.infrastructure.rate_limit._factory import build_rate_limiter
+from jobs_finder.infrastructure.scheduler import BackgroundJobScheduler
 from jobs_finder.presentation.exception_handlers import (
     register_exception_handlers,
 )
@@ -140,7 +145,7 @@ from jobs_finder.presentation.routes import linkedin as linkedin_routes
 _logger = logging.getLogger(__name__)
 
 
-def build_app(  # noqa: PLR0915
+def build_app(  # noqa: PLR0915, PLR0912
     use_case: SearchLinkedInJobsUseCase | None = None,
     *,
     indeed_use_case: IndeedSearchJobsUseCase | None = None,
@@ -295,7 +300,9 @@ def build_app(  # noqa: PLR0915
         # `EnvLinkedInAuthCookieAdapter` directly).
         json_adapter = JsonLinkedInAuthCookiesAdapter()
         if json_adapter.cookies() is not None:
-            auth_cookies_port: MultiEnvLinkedInAuthCookiesAdapter | JsonLinkedInAuthCookiesAdapter = json_adapter
+            auth_cookies_port: (
+                MultiEnvLinkedInAuthCookiesAdapter | JsonLinkedInAuthCookiesAdapter
+            ) = json_adapter
         else:
             auth_cookies_port = MultiEnvLinkedInAuthCookiesAdapter(
                 li_at=effective_settings.linkedin_li_at,
@@ -522,7 +529,7 @@ def build_app(  # noqa: PLR0915
     )
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:  # noqa: PLR0912
         # T-005 (persistent-cache): ping Redis on startup when the
         # backend is `redis`. The ping is fail-fast: a
         # `redis.exceptions.RedisError` (e.g. `ConnectionError`
@@ -559,6 +566,17 @@ def build_app(  # noqa: PLR0915
             # scrapers share a process but each owns its own
             # browser.
             await infojobs_scraper_for_lifespan.__aenter__()
+        # T-009 (background-scheduler-persistence): open the SQLite
+        # repository and start the background scheduler when both
+        # SCHEDULER_ENABLED and the aggregator use case are available.
+        # The repo is opened AFTER the scrapers (the scheduler calls
+        # the aggregator which calls the scrapers) and the scheduler
+        # starts AFTER the repo is ready so the DB is available on
+        # the first tick.
+        if _scheduler_repo is not None and _scheduler_instance is not None:
+            await _scheduler_repo.__aenter__()
+            _app.state.job_repository = _scheduler_repo
+            _scheduler_instance.start()
         try:
             yield
         finally:
@@ -589,6 +607,15 @@ def build_app(  # noqa: PLR0915
             rl_redis_client = getattr(rate_limiter, "_client", None)
             if rl_redis_client is not None and rl_redis_client is not redis_client:
                 await rl_redis_client.aclose()
+            # T-009 (background-scheduler-persistence): stop the
+            # scheduler first (cancel the background task), then close
+            # the repository. This runs BEFORE the scrapers close so
+            # the shutdown order is LIFO: scrapers → repo → scheduler
+            # on startup, scheduler → repo → scrapers on shutdown.
+            if _scheduler_instance is not None:
+                await _scheduler_instance.stop()
+            if _scheduler_repo is not None:
+                await _scheduler_repo.__aexit__(None, None, None)
             if infojobs_scraper_for_lifespan is not None:
                 # Close the InfoJobs browser and stop its Playwright
                 # driver. Runs FIRST so the InfoJobs shutdown is the
@@ -684,6 +711,43 @@ def build_app(  # noqa: PLR0915
             enable_keyword_scoring=effective_settings.enable_keyword_scoring,
         )
     app.state.aggregator_use_case = aggregator_use_case
+
+    # ── Background scheduler + repository (REQ-ROOT-001) ──────────────────
+    #
+    # When `settings.scheduler_enabled` AND the aggregator use case is
+    # available, build a `SqliteJobRepository` and a
+    # `BackgroundJobScheduler`. The lifecycle (open → start → serve →
+    # stop → close) is managed in the lifespan below.
+    #
+    # When disabled (`scheduler_enabled=False`, the default): both are
+    # `None` and the lifespan is unchanged from prior behavior.
+    _scheduler_repo: SqliteJobRepository | None = None
+    _scheduler_instance: BackgroundJobScheduler | None = None
+    _wire_scheduler: bool = (
+        effective_settings.scheduler_enabled and aggregator_use_case is not None
+    )
+
+    if _wire_scheduler:
+        _scheduler_repo = SqliteJobRepository(db_path=effective_settings.db_path)
+
+        # Wrap the aggregator's search() to match the
+        # Callable[[str, str], Awaitable[list[Job]]] signature.
+        async def _scheduler_search_fn(keywords: str, location: str) -> list[Job]:
+            result = await aggregator_use_case.search(
+                keywords=keywords,
+                location=location,
+                limit=20,
+                sources=["linkedin", "indeed", "infojobs"],
+            )
+            return [aj.job for aj in result.jobs]
+
+        _scheduler_instance = BackgroundJobScheduler(
+            search_fn=_scheduler_search_fn,
+            repo=_scheduler_repo,
+            queries=effective_settings.scheduler_queries,
+            min_interval=effective_settings.scheduler_min_interval_seconds,
+            max_interval=effective_settings.scheduler_max_interval_seconds,
+        )
 
     # T-016 (chat filter wiring): build the LLM client + the
     # chat-filter use case ONLY when the chat feature is enabled
