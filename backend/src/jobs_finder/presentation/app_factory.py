@@ -133,9 +133,11 @@ from jobs_finder.presentation.middleware import (
 from jobs_finder.presentation.routes import aggregator as aggregator_routes
 from jobs_finder.presentation.routes import chat as chat_routes
 from jobs_finder.presentation.routes import health as health_routes
+from jobs_finder.presentation.routes import history as history_routes
 from jobs_finder.presentation.routes import indeed as indeed_routes
 from jobs_finder.presentation.routes import infojobs as infojobs_routes
 from jobs_finder.presentation.routes import linkedin as linkedin_routes
+from jobs_finder.presentation.routes import scheduler_status as scheduler_status_routes
 
 # Module-level logger for the composition root. Used by the
 # LinkedIn auth-cookie startup WARNING (T-005 of
@@ -745,7 +747,17 @@ def build_app(  # noqa: PLR0915, PLR0912
             queries=effective_settings.scheduler_queries,
             min_interval=effective_settings.scheduler_min_interval_seconds,
             max_interval=effective_settings.scheduler_max_interval_seconds,
+            # `scheduler-retention-history`: forward `retention_days`
+            # from settings so the scheduler can run TTL-based inline
+            # cleanup after each upsert batch (REQ-RET-001, REQ-RET-002).
+            retention_days=effective_settings.retention_days,
         )
+
+        # Expose on `app.state` so routes and integration tests can
+        # access the scheduler (e.g. `GET /scheduler/status` reads
+        # `app.state.scheduler`). May be `None` when scheduler is
+        # disabled.
+        app.state.scheduler = _scheduler_instance
 
     # T-016 (chat filter wiring): build the LLM client + the
     # chat-filter use case ONLY when the chat feature is enabled
@@ -925,6 +937,16 @@ def build_app(  # noqa: PLR0915, PLR0912
     # `GET /jobs` aggregator. Mounted LAST so its `/{source}`-less
     # path is not shadowed by the per-source routers.
     app.include_router(aggregator_routes.router)
+    # `scheduler-retention-history` Phase 3: `GET /scheduler/status`
+    # exposed via `SchedulerState` + `SchedulerStatusResponse`.
+    # Registered unconditionally — graceful degradation when
+    # scheduler is `None` (REQ-STATUS-002).
+    app.include_router(scheduler_status_routes.router)
+    # `scheduler-retention-history` Phase 5: `GET /jobs/history`
+    # exposed via `HistoryJobQuery` + `JobsHistoryResponse`.
+    # Registered unconditionally — graceful degradation when
+    # repository is `None` (REQ-HIST-002).
+    app.include_router(history_routes.router)
     # T-016 (chat filter wiring): the chat route is registered
     # ONLY when the chat feature is enabled. When disabled,
     # `POST /jobs/chat` returns 404 (the safest default per

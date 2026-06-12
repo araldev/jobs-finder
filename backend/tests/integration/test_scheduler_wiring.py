@@ -3,6 +3,9 @@
 Spec: REQ-ROOT-001. Uses `asgi_lifespan.LifespanManager` to exercise the
 FastAPI lifespan and verify that the scheduler + repository are correctly
 wired when `SCHEDULER_ENABLED=true` and absent when `SCHEDULER_ENABLED=false`.
+
+`scheduler-retention-history` adds `retention_days` wiring
+(REQ-RET-001, REQ-SCH-001 MODIFIED, REQ-ROOT-001 MODIFIED).
 """
 
 from __future__ import annotations
@@ -99,3 +102,36 @@ class TestSchedulerWiringEnabled:
         assert repo._connection is None, (
             "Repository connection should be closed after lifespan shutdown"
         )
+
+
+# ── REQ-RET-001 / REQ-ROOT-001 (MODIFIED): retention_days wiring ────────────
+
+
+class TestSchedulerRetentionWiring:
+    """SCHEDULER_ENABLED=true + RETENTION_DAYS > 0."""
+
+    @pytest.mark.asyncio
+    async def test_retention_days_wired_to_scheduler(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When `RETENTION_DAYS=30`, the scheduler receives `retention_days=30`."""
+        monkeypatch.setenv("SCHEDULER_ENABLED", "true")
+        monkeypatch.setenv("DB_PATH", ":memory:")
+        monkeypatch.setenv("RETENTION_DAYS", "30")
+        monkeypatch.setenv("SCHEDULER_MIN_INTERVAL_SECONDS", "10000.0")
+        monkeypatch.setenv("SCHEDULER_MAX_INTERVAL_SECONDS", "20000.0")
+        monkeypatch.setenv(
+            "SCHEDULER_QUERIES",
+            '[{"keywords": "python", "location": "Madrid"}]',
+        )
+
+        app = build_app()
+
+        async with _client_with_lifespan(app):
+            scheduler = getattr(app.state, "scheduler", None)
+            assert scheduler is not None, (
+                "Expected scheduler to be set on app.state when SCHEDULER_ENABLED=true"
+            )
+            assert scheduler._retention_days == 30, (
+                f"Expected retention_days=30, got {scheduler._retention_days}"
+            )

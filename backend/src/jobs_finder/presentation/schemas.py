@@ -405,3 +405,119 @@ class ChatStreamDoneEvent(BaseModel):
     total_matched: int
     used_fallback: bool
     request_id: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Scheduler status schema (REQ-STATUS-001, REQ-STATUS-002)
+#
+# `GET /scheduler/status` returns this shape. When the scheduler is
+# disabled or `app.state.scheduler` is `None`, the route returns
+# `enabled=False` with default values for all other fields
+# (graceful degradation — no crash).
+# ---------------------------------------------------------------------------
+
+
+class SchedulerStatusResponse(BaseModel):
+    """`GET /scheduler/status` response shape.
+
+    Spec: REQ-STATUS-001, REQ-STATUS-002. All fields are populated
+    from the scheduler's `SchedulerState` and the scheduler's config
+    attributes. When the scheduler is `None` (disabled), the route
+    returns `enabled=False` with all other fields at their defaults.
+
+    Fields:
+        enabled: Whether the scheduler is configured and running.
+        running: Whether a cycle is currently in progress.
+        last_run_start: UTC timestamp of the most recent cycle start.
+        last_run_end: UTC timestamp of the most recent cycle end.
+        last_error: Traceback of the last error, if any.
+        cycle_count: Number of completed cycles.
+        total_jobs_collected: Cumulative jobs collected across cycles.
+        total_in_db: Total jobs in the database (0 if repo unavailable).
+        per_source: Per-source job counts in the database (empty if
+            repo unavailable).
+        queries: The search queries the scheduler iterates over.
+        min_interval_seconds: Minimum sleep between cycles.
+        max_interval_seconds: Maximum sleep between cycles.
+    """
+
+    enabled: bool
+    running: bool = False
+    last_run_start: datetime | None = None
+    last_run_end: datetime | None = None
+    last_error: str | None = None
+    cycle_count: int = 0
+    total_jobs_collected: int = 0
+    total_in_db: int = 0
+    per_source: dict[str, int] = {}
+    queries: list[dict[str, str]] = []
+    min_interval_seconds: float = 0.0
+    max_interval_seconds: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Historical jobs schemas (REQ-HIST-001, REQ-HIST-002)
+#
+# `GET /jobs/history` returns paginated historical job data from the DB.
+# The response includes all DB columns for each job, enriching the basic
+# `JobResponse` with source origin, first/last seen timestamps, and
+# the query snapshot that originally captured the job.
+# ---------------------------------------------------------------------------
+
+
+class JobsHistoryQuery(BaseModel):
+    """Validated query parameters for `GET /jobs/history`.
+
+    Spec: REQ-HIST-002. Sources is a comma-separated string (default all 3
+    sources). Keywords, date_from, date_to are optional filters. Limit caps
+    at 200 (default 50). Offset starts at 0.
+    """
+
+    sources: str = Field(
+        "linkedin,indeed,infojobs",
+        description="Comma-separated list of sources to filter by",
+    )
+    keywords: str | None = Field(default=None, max_length=200)
+    date_from: str | None = Field(
+        default=None,
+        description="Inclusive ISO date string for posted_at >= filter",
+    )
+    date_to: str | None = Field(
+        default=None,
+        description="Inclusive ISO date string for posted_at <= filter",
+    )
+    limit: int = Field(default=50, ge=1, le=200)
+    offset: int = Field(default=0, ge=0)
+
+
+class HistoricalJobResponse(BaseModel):
+    """One job in the history API response.
+
+    Spec: REQ-HIST-002. Includes all core job fields plus source origin
+    and DB metadata (first_seen_at, last_seen_at, query_snapshot).
+    """
+
+    id: str
+    source: str | None = None
+    title: str
+    company: str
+    location: str
+    url: HttpUrl
+    description: str | None = None
+    posted_at: datetime | None = None
+    first_seen_at: str | None = None
+    last_seen_at: str | None = None
+    query_snapshot: str | None = None
+
+
+class JobsHistoryResponse(BaseModel):
+    """`GET /jobs/history` response shape.
+
+    Spec: REQ-HIST-002. Paginated list with total count and the
+    limit/offset of the current page.
+    """
+
+    items: list[HistoricalJobResponse]
+    total: int
+    limit: int
+    offset: int
