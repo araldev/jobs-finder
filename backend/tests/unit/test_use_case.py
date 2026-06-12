@@ -68,6 +68,7 @@ def _sample_job(idx: int = 1) -> Job:
         location="Madrid",
         url=f"https://www.linkedin.com/jobs/view/{idx}/",
         posted_at=datetime(2026, 1, idx, tzinfo=UTC),
+        source="linkedin",
     )
 
 

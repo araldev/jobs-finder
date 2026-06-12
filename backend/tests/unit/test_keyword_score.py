@@ -58,6 +58,7 @@ def _job(
         url="https://example.com/j1",
         posted_at=datetime(2026, 6, 1, tzinfo=UTC),
         description=description,
+        source="linkedin",
     )
 
 

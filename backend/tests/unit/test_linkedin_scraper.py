@@ -1605,6 +1605,7 @@ async def test_enrich_with_detail_visits_populates_description() -> None:
             url="https://es.linkedin.com/jobs/view/desarrollador-python-junior-4304525450",
             posted_at=datetime(2026, 4, 23, tzinfo=UTC),
             description=None,
+            source="linkedin",
         ),
     ]
     enriched = await _enrich_with_detail_visits(page=page, jobs=jobs, timeout_ms=10_000)
@@ -1643,6 +1644,7 @@ async def test_enrich_with_detail_visits_keeps_none_on_panel_missing() -> None:
             url="https://es.linkedin.com/jobs/view/1234567890",
             posted_at=datetime(2026, 1, 1, tzinfo=UTC),
             description=None,
+            source="linkedin",
         ),
     ]
     enriched = await _enrich_with_detail_visits(page=page, jobs=jobs, timeout_ms=10_000)
@@ -1669,6 +1671,7 @@ async def test_enrich_with_detail_visits_skips_non_linkedin_urls() -> None:
             url="https://example.com/not-linkedin",
             posted_at=datetime(2026, 1, 1, tzinfo=UTC),
             description=None,
+            source="linkedin",
         ),
     ]
     enriched = await _enrich_with_detail_visits(page=page, jobs=jobs, timeout_ms=10_000)

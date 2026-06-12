@@ -49,6 +49,7 @@ class Job:
     location: str
     url: str
     posted_at: datetime
+    source: str
     description: str | None = None
 
     def __post_init__(self) -> None:

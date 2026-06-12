@@ -29,16 +29,15 @@ class FakeJobRepository:
     """
 
     def __init__(self) -> None:
-        self.upsert_calls: list[tuple[list[Job], str, dict[str, str]]] = []
+        self.upsert_calls: list[tuple[list[Job], dict[str, str]]] = []
         self.delete_older_calls: list[tuple[int, int]] = []
 
     async def upsert_jobs(
         self,
         jobs: list[Job],
-        source: str,
         query_snapshot: dict[str, str],
     ) -> int:
-        self.upsert_calls.append((jobs, source, query_snapshot))
+        self.upsert_calls.append((jobs, query_snapshot))
         return len(jobs)
 
     async def search_jobs(
@@ -527,7 +526,7 @@ class TestBackgroundJobScheduler:
         )
 
 
-def _make_job(id_suffix: str) -> Job:
+def _make_job(id_suffix: str, source: str = "linkedin") -> Job:
     return Job(
         id=f"job_{id_suffix}",
         title="Test Job",
@@ -535,4 +534,5 @@ def _make_job(id_suffix: str) -> Job:
         location="Test Location",
         url=f"https://example.com/job/{id_suffix}",
         posted_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC),
+        source=source,
     )

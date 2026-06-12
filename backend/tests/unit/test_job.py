@@ -39,6 +39,7 @@ def test_job_constructs_with_all_fields() -> None:
         location="Madrid, Spain",
         url="https://www.linkedin.com/jobs/view/3850000000/",
         posted_at=posted,
+        source="linkedin",
     )
     assert job.id == "3850000000"
     assert job.title == "Senior Python Developer"
@@ -60,6 +61,7 @@ def test_job_rejects_naive_datetime() -> None:
             location="l",
             url="https://www.linkedin.com/jobs/view/1/",
             posted_at=naive,
+            source="linkedin",
         )
 
 
@@ -79,6 +81,7 @@ def test_description_default_is_none() -> None:
         location="l",
         url="https://www.linkedin.com/jobs/view/100/",
         posted_at=_aware_utc(),
+        source="linkedin",
     )
     assert job.description is None
 
@@ -100,6 +103,7 @@ def test_description_with_value() -> None:
         url="https://www.linkedin.com/jobs/view/200/",
         posted_at=_aware_utc(),
         description="Senior Python role",
+        source="linkedin",
     )
     assert job.description == "Senior Python role"
 
@@ -111,6 +115,7 @@ def test_description_with_value() -> None:
         url="https://www.linkedin.com/jobs/view/200/",
         posted_at=_aware_utc(),
         description="Other description",
+        source="linkedin",
     )
     assert job != other, "Jobs differing only by description must compare unequal"
 
@@ -129,6 +134,7 @@ def test_job_accepts_other_aware_timezone() -> None:
         location="l",
         url="https://www.linkedin.com/jobs/view/2/",
         posted_at=aware,
+        source="linkedin",
     )
     assert job.posted_at.tzinfo is plus_two
 
@@ -142,6 +148,7 @@ def test_job_is_frozen() -> None:
         location="l",
         url="https://www.linkedin.com/jobs/view/3/",
         posted_at=_aware_utc(),
+        source="linkedin",
     )
     with pytest.raises(FrozenInstanceError):
         job.title = "new"  # type: ignore[misc]

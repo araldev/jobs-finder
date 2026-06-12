@@ -895,6 +895,7 @@ def _parse_cards(soup: BeautifulSoup, remaining: int) -> list[Job]:
                 url=parse_url(card),
                 posted_at=posted if posted is not None else datetime.now(UTC),
                 description=parse_description(card),
+                source="linkedin",
             )
             jobs.append(job)
         except LinkedInParseError as e:

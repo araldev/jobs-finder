@@ -104,6 +104,7 @@ def make_job(i: int) -> Job:
         location="Madrid",
         url=f"https://example.com/jobs/{i}",
         posted_at=datetime(2026, 5, 1, tzinfo=UTC),
+        source="linkedin",
     )
 
 

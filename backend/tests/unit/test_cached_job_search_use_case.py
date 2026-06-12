@@ -47,6 +47,7 @@ def _job(idx: int) -> Job:
         location="Madrid",
         url=f"https://example.com/j{idx}",
         posted_at=datetime(2026, 6, idx, tzinfo=UTC),
+        source="linkedin",
     )
 
 

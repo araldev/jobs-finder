@@ -396,6 +396,7 @@ def _parse_cards(soup: BeautifulSoup, remaining: int, domain: str) -> list[Job]:
                 url=parse_indeed_url(card, domain=domain),
                 posted_at=posted if posted is not None else datetime.now(UTC),
                 description=desc,
+                source="indeed",
             )
             jobs.append(job)
         except IndeedParseError as e:

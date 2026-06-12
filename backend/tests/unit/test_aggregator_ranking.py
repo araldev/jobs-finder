@@ -74,6 +74,7 @@ def _job(
         location=location,
         url=f"https://example.com/j{idx}",
         posted_at=posted_at if posted_at is not None else datetime(2026, 6, idx, tzinfo=UTC),
+        source="linkedin",
     )
 
 

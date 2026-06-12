@@ -498,6 +498,7 @@ def _parse_cards(soup: BeautifulSoup, remaining: int, domain: str) -> list[Job]:
                 url=parse_infojobs_url(card, domain=domain),
                 posted_at=posted if posted is not None else datetime.now(UTC),
                 description=parse_infojobs_description(card),
+                source="infojobs",
             )
             jobs.append(job)
         except InfoJobsParseError as e:

@@ -200,6 +200,7 @@ def _make_indeed_sample_jobs() -> list[Job]:
             location="Madrid, Spain",
             url="https://es.indeed.com/viewjob?jk=100000001",
             posted_at=datetime(2026, 5, 1, tzinfo=UTC),
+            source="indeed",
         ),
         Job(
             id="100000002",
@@ -208,6 +209,7 @@ def _make_indeed_sample_jobs() -> list[Job]:
             location="Barcelona, Spain",
             url="https://es.indeed.com/viewjob?jk=100000002",
             posted_at=datetime(2026, 5, 2, tzinfo=UTC),
+            source="indeed",
         ),
         Job(
             id="100000003",
@@ -216,6 +218,7 @@ def _make_indeed_sample_jobs() -> list[Job]:
             location="Valencia, Spain",
             url="https://es.indeed.com/viewjob?jk=100000003",
             posted_at=datetime(2026, 5, 3, tzinfo=UTC),
+            source="indeed",
         ),
     ]
 
@@ -315,6 +318,7 @@ def _make_infojobs_sample_jobs() -> list[Job]:
             location="Madrid, Spain",
             url="https://www.infojobs.net/ofertas-trabajo/oferta-abc123def",
             posted_at=datetime(2026, 5, 1, tzinfo=UTC),
+            source="infojobs",
         ),
         Job(
             id="def456ghi",
@@ -323,6 +327,7 @@ def _make_infojobs_sample_jobs() -> list[Job]:
             location="Barcelona, Spain",
             url="https://www.infojobs.net/ofertas-trabajo/oferta-def456ghi",
             posted_at=datetime(2026, 5, 2, tzinfo=UTC),
+            source="infojobs",
         ),
         Job(
             id="ghi789jkl",
@@ -331,6 +336,7 @@ def _make_infojobs_sample_jobs() -> list[Job]:
             location="Valencia, Spain",
             url="https://www.infojobs.net/ofertas-trabajo/oferta-ghi789jkl",
             posted_at=datetime(2026, 5, 3, tzinfo=UTC),
+            source="infojobs",
         ),
     ]
 
