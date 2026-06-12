@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import random
 from datetime import UTC, datetime
+from typing import Callable
 
 import pytest
 
@@ -294,6 +295,58 @@ class TestBackgroundJobScheduler:
         # upsert_jobs should have been called with accumulated results
         assert len(repo.upsert_calls) >= 1, "Expected at least 1 upsert_jobs call"
 
+    # ── Phase 3: Empty-keyword queries (Spain location-only) ─────────────────
+
+    @pytest.mark.asyncio
+    async def test_empty_keywords_accepted_and_passed_to_search(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Scheduler accepts empty-keyword queries and passes them to search_fn without error.
+
+        Phase 3 of `scheduler-source-fix`: scraper URL builders all use `quote("")`
+        for keywords, which is a valid empty-string URL param. This test confirms
+        the scheduler path works end-to-end with empty keywords.
+        """
+        from jobs_finder.infrastructure import scheduler as scheduler_module
+
+        # Mock work-hours gate so the scheduler proceeds immediately
+        monkeypatch.setattr(scheduler_module, "_is_within_active_hours", lambda: True)
+
+        repo = FakeJobRepository()
+        search_calls: list[tuple[str, str]] = []
+
+        async def tracking_fn(keywords: str, location: str) -> list[Job]:
+            search_calls.append((keywords, location))
+            return [_make_job(f"{keywords}-{location}")]
+
+        scheduler = BackgroundJobScheduler(
+            search_fn=tracking_fn,
+            repo=repo,
+            queries=[
+                {"keywords": "", "location": "España"},
+                {"keywords": "", "location": "Madrid, España"},
+                {"keywords": "", "location": "Barcelona, España"},
+            ],
+            min_interval=0.01,
+            max_interval=0.02,
+        )
+
+        scheduler.start()
+        await asyncio.sleep(0.15)
+        await scheduler.stop()
+
+        # Empty-keyword queries must be accepted and passed to search_fn
+        empty_kw_calls = [(kw, loc) for (kw, loc) in search_calls if kw == ""]
+        assert len(empty_kw_calls) >= 3, (
+            f"Expected at least 3 empty-keyword calls, got {len(empty_kw_calls)}: {search_calls}"
+        )
+        # Verify the Spain locations were used
+        assert any(loc == "España" for _, loc in search_calls)
+        assert any(loc == "Madrid, España" for _, loc in search_calls)
+        assert any(loc == "Barcelona, España" for _, loc in search_calls)
+        # upsert_jobs must have been called
+        assert len(repo.upsert_calls) >= 1, "Expected at least 1 upsert_jobs call"
+
     # ── Sequential runs succeed (REQ-SCH-003 scenario 2) ────────────────────
 
     @pytest.mark.asyncio
@@ -536,3 +589,214 @@ def _make_job(id_suffix: str, source: str = "linkedin") -> Job:
         posted_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC),
         source=source,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TestWorkHours — REQ-HOURS-001..004: Madrid work-hours gate (09:00–22:00)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestIsWithinActiveHours:
+    """Unit tests for the `_is_within_active_hours()` helper.
+
+    REQ-HOURS-001: Returns True when Madrid local hour is 9–21 (inclusive).
+    REQ-HOURS-002: Returns False when Madrid local hour is outside 09:00–22:00.
+    """
+
+    @pytest.mark.parametrize(
+        "hour,expected",
+        [
+            (8, False),   # 08:59 — outside (one minute before opening)
+            (9, True),    # 09:00 — inside (boundary: opening)
+            (10, True),   # 10:00 — inside
+            (14, True),   # 14:00 — inside
+            (21, True),   # 21:59 — inside (one minute before closing)
+            (22, False),  # 22:00 — outside (boundary: closing)
+            (23, False),  # 23:00 — outside
+            (0, False),   # 00:00 — outside
+        ],
+    )
+    def test_boundary_cases(
+        self, hour: int, expected: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Madrid hour at boundary values returns expected True/False."""
+        from zoneinfo import ZoneInfo
+
+        # Fake datetime.now() that returns a Madrid time with the given hour
+        class FakeDatetime:
+            @staticmethod
+            def now(tz: ZoneInfo) -> "FakeDatetime":
+                return FakeDatetime()
+
+            def __init__(self) -> None:
+                self.hour = hour
+
+        import jobs_finder.infrastructure.scheduler as scheduler_module
+
+        monkeypatch.setattr(scheduler_module, "datetime", FakeDatetime())
+
+        # Import the function after patching so the module-level reference uses the mock
+        result = scheduler_module._is_within_active_hours()
+        assert result is expected
+
+
+class TestWorkHours:
+    """Integration tests for the scheduler's work-hours gate.
+
+    REQ-HOURS-003: Scheduler sleeps 300s when outside 09:00–22:00 Madrid time.
+    REQ-HOURS-004: Scheduler proceeds with lock acquisition when within active hours.
+    """
+
+    @pytest.mark.asyncio
+    async def test_outside_hours_sleeps(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When outside business hours, the loop sleeps 300s without acquiring lock."""
+        from jobs_finder.infrastructure import scheduler as scheduler_module
+
+        # Mock _is_within_active_hours to always return False
+        monkeypatch.setattr(
+            scheduler_module, "_is_within_active_hours", lambda: False
+        )
+
+        sleep_calls: list[tuple[float]] = []
+
+        async def tracking_sleep(delay: float) -> None:
+            sleep_calls.append((delay,))
+            # Don't actually sleep - we want tests to complete quickly
+
+        monkeypatch.setattr(asyncio, "sleep", tracking_sleep)
+
+        repo = FakeJobRepository()
+
+        async def dummy_fn(_kw: str, _loc: str) -> list[Job]:
+            return []
+
+        scheduler = BackgroundJobScheduler(
+            search_fn=dummy_fn,
+            repo=repo,
+            queries=[{"keywords": "python", "location": "Madrid"}],
+            min_interval=0.01,
+            max_interval=0.02,
+        )
+
+        scheduler.start()
+        # Let the outer while loop run once and hit the sleep
+        await asyncio.sleep(0.1)
+        await scheduler.stop()
+
+        # Should have slept for 300 seconds (outside hours guard)
+        assert len(sleep_calls) >= 1, "Expected at least one sleep call"
+        assert any(delay == 300.0 for delay, in sleep_calls), (
+            f"Expected sleep(300) when outside hours, got {sleep_calls}"
+        )
+        # Lock should NOT have been acquired (still in outer guard loop)
+        assert not scheduler._lock.locked()
+
+    @pytest.mark.asyncio
+    async def test_within_hours_proceeds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When within business hours, loop proceeds past the guard to lock acquisition."""
+        from jobs_finder.infrastructure import scheduler as scheduler_module
+
+        # Mock _is_within_active_hours to return True
+        monkeypatch.setattr(
+            scheduler_module, "_is_within_active_hours", lambda: True
+        )
+
+        sleep_calls: list[tuple[float]] = []
+
+        async def tracking_sleep(delay: float) -> None:
+            sleep_calls.append((delay,))
+            # Don't actually sleep - we want tests to complete quickly
+
+        monkeypatch.setattr(asyncio, "sleep", tracking_sleep)
+
+        repo = FakeJobRepository()
+        search_called = False
+
+        async def dummy_fn(_kw: str, _loc: str) -> list[Job]:
+            nonlocal search_called
+            search_called = True
+            return [_make_job("1")]
+
+        scheduler = BackgroundJobScheduler(
+            search_fn=dummy_fn,
+            repo=repo,
+            queries=[{"keywords": "python", "location": "Madrid"}],
+            min_interval=0.01,
+            max_interval=0.02,
+        )
+
+        scheduler.start()
+        await asyncio.sleep(0.15)
+        await scheduler.stop()
+
+        # Should NOT have slept 300 (guard was bypassed)
+        guard_sleeps = [d for d, in sleep_calls if d == 300.0]
+        assert len(guard_sleeps) == 0, (
+            f"Did not expect guard sleep(300) when within hours, got {sleep_calls}"
+        )
+        # search_fn should have been called (lock was acquired and cycle ran)
+        assert search_called, "Expected search_fn to be called when within hours"
+
+    @pytest.mark.asyncio
+    async def test_transition_to_active_hours(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Outer loop re-checks and eventually proceeds when hours become active."""
+        from jobs_finder.infrastructure import scheduler as scheduler_module
+
+        call_count = 0
+
+        def make_is_within_active_hours() -> Callable[[], bool]:
+            def is_within() -> bool:
+                nonlocal call_count
+                call_count += 1
+                # First 3 calls return False (outside hours), then True
+                return call_count > 3
+
+            return is_within
+
+        monkeypatch.setattr(
+            scheduler_module,
+            "_is_within_active_hours",
+            make_is_within_active_hours(),
+        )
+
+        sleep_calls: list[tuple[float]] = []
+
+        async def tracking_sleep(delay: float) -> None:
+            sleep_calls.append((delay,))
+            # Don't actually sleep - we want tests to complete quickly
+
+        monkeypatch.setattr(asyncio, "sleep", tracking_sleep)
+
+        repo = FakeJobRepository()
+        search_called = False
+
+        async def dummy_fn(_kw: str, _loc: str) -> list[Job]:
+            nonlocal search_called
+            search_called = True
+            return [_make_job("1")]
+
+        scheduler = BackgroundJobScheduler(
+            search_fn=dummy_fn,
+            repo=repo,
+            queries=[{"keywords": "python", "location": "Madrid"}],
+            min_interval=0.01,
+            max_interval=0.02,
+        )
+
+        scheduler.start()
+        await asyncio.sleep(0.2)
+        await scheduler.stop()
+
+        # Should have slept 300s for each of the first 3 iterations
+        guard_sleeps = [d for d, in sleep_calls if d == 300.0]
+        assert len(guard_sleeps) >= 3, (
+            f"Expected at least 3 guard sleeps (300s each), got {guard_sleeps}"
+        )
+        # Eventually should have proceeded to search
+        assert search_called, "Expected search_fn to be called after hours became active"

@@ -88,8 +88,8 @@ Chain strategy: pending
 
 ### Phase 3 Acceptance Criteria
 
-- [ ] `Settings().scheduler_queries == [{"keywords": "", "location": "Madrid"}, {"keywords": "", "location": "Barcelona"}, {"keywords": "", "location": "España"}]`
-- [ ] `.env.example` documents the empty-keywords format
+- [x] `Settings().scheduler_queries == [{"keywords": "", "location": "Madrid"}, {"keywords": "", "location": "Barcelona"}, {"keywords": "", "location": "España"}]`
+- [x] `.env.example` documents the empty-keywords format
 
 ---
 

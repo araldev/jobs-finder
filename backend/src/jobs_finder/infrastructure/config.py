@@ -1240,7 +1240,11 @@ class Settings(BaseSettings):
         gt=0.0,
     )
     scheduler_queries: list[dict[str, str]] = Field(
-        default_factory=lambda: [{"keywords": "desarrollador", "location": "España"}],
+        default_factory=lambda: [
+            {"keywords": "", "location": "España"},
+            {"keywords": "", "location": "Madrid, España"},
+            {"keywords": "", "location": "Barcelona, España"},
+        ],
         validation_alias=AliasChoices("SCHEDULER_QUERIES", "scheduler_queries"),
     )
 
@@ -1274,7 +1278,11 @@ class Settings(BaseSettings):
             return v
         if isinstance(v, str):
             if not v.strip():
-                return [{"keywords": "desarrollador", "location": "España"}]
+                return [
+                    {"keywords": "", "location": "España"},
+                    {"keywords": "", "location": "Madrid, España"},
+                    {"keywords": "", "location": "Barcelona, España"},
+                ]
             try:
                 parsed = json.loads(v)
             except json.JSONDecodeError as e:

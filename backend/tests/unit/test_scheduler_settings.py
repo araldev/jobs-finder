@@ -61,9 +61,17 @@ def test_scheduler_max_interval_default() -> None:
 
 
 def test_scheduler_queries_default() -> None:
-    """`scheduler_queries` defaults to a single query for 'desarrollador' in 'España'."""
+    """`scheduler_queries` defaults to 3 Spain location-only queries (empty keywords).
+
+    Phase 3 of `scheduler-source-fix`: scheduler queries with no keyword filtering,
+    only location. The 3 locations are España, Madrid, and Barcelona.
+    """
     s = Settings()
-    assert s.scheduler_queries == [{"keywords": "desarrollador", "location": "España"}]
+    assert s.scheduler_queries == [
+        {"keywords": "", "location": "España"},
+        {"keywords": "", "location": "Madrid, España"},
+        {"keywords": "", "location": "Barcelona, España"},
+    ]
 
 
 def test_scheduler_queries_from_json_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
