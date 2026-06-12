@@ -118,6 +118,7 @@ def _make_sample_jobs() -> list[Job]:
             location="Madrid, Spain",
             url="https://example.com/jobs/live_a",
             posted_at=datetime(2026, 6, 1, tzinfo=UTC),
+            source="linkedin",
         ),
         Job(
             id="live_b",
@@ -126,6 +127,7 @@ def _make_sample_jobs() -> list[Job]:
             location="Madrid, Spain",
             url="https://example.com/jobs/live_b",
             posted_at=datetime(2026, 6, 2, tzinfo=UTC),
+            source="linkedin",
         ),
         Job(
             id="live_c",
@@ -134,6 +136,7 @@ def _make_sample_jobs() -> list[Job]:
             location="Barcelona, Spain",
             url="https://example.com/jobs/live_c",
             posted_at=datetime(2026, 6, 3, tzinfo=UTC),
+            source="linkedin",
         ),
     ]
 

@@ -21,11 +21,27 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from jobs_finder.application.ports import JobRepositoryPort
 from jobs_finder.domain.job import Job
 
 _logger = logging.getLogger(__name__)
+
+# Madrid business hours: 09:00 (inclusive) to 22:00 (exclusive)
+_MADRID_ACTIVE_HOUR_START = 9
+_MADRID_ACTIVE_HOUR_END = 22
+
+
+def _get_madrid_time() -> datetime:
+    """Return current time in the Europe/Madrid timezone."""
+    return datetime.now(ZoneInfo("Europe/Madrid"))
+
+
+def _is_within_active_hours() -> bool:
+    """Return True if current Madrid time is between 09:00 and 22:00."""
+    madrid_now = _get_madrid_time()
+    return _MADRID_ACTIVE_HOUR_START <= madrid_now.hour < _MADRID_ACTIVE_HOUR_END
 
 
 @dataclass
@@ -107,17 +123,22 @@ class BackgroundJobScheduler:
             self._state.last_run_end = datetime.now(UTC)
 
     async def _loop(self) -> None:
-        """Lock-protected infinite loop with `random.uniform(min, max)` sleep.
+        """Lock-protected infinite loop with work-hours gate and `random.uniform(min, max)` sleep.
 
         Each cycle:
-          1. Checks the lock — if held, logs a WARNING and skips this cycle.
-          2. Acquires the lock and iterates all configured queries.
-          3. Calls `search_fn(keywords, location)` for each query.
-          4. Upserts ALL accumulated jobs to the repo with `source="aggregator"`
+          1. Guards: waits until Madrid time is within 09:00–22:00 (sleeps 300s otherwise).
+          2. Checks the lock — if held, logs a WARNING and skips this cycle.
+          3. Acquires the lock and iterates all configured queries.
+          4. Calls `search_fn(keywords, location)` for each query.
+          5. Upserts ALL accumulated jobs to the repo with `source="aggregator"`
              and the LAST query as the query_snapshot.
-          5. Sleeps `random.uniform(min_interval, max_interval)` seconds.
+          6. Sleeps `random.uniform(min_interval, max_interval)` seconds.
         """
         while True:
+            # Guard: wait until we're within Madrid business hours (09:00-22:00)
+            while not _is_within_active_hours():
+                await asyncio.sleep(300)  # 5 minutes
+
             if self._lock.locked():
                 _logger.warning("BackgroundJobScheduler: overlapping run detected — skipping cycle")
                 await asyncio.sleep(random.uniform(self._min_interval, self._max_interval))

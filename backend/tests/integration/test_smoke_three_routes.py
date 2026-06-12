@@ -118,6 +118,7 @@ def _three_sample_jobs() -> list[Job]:
             location="Madrid, Spain",
             url=f"https://example.com/job/{i}",
             posted_at=base,
+            source="linkedin",
         )
         for i in range(1, 4)
     ]

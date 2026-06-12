@@ -64,6 +64,7 @@ _HISTORY_JOBS = [
         location="Madrid, Spain",
         url="https://linkedin.com/jobs/view/1",
         posted_at=datetime(2026, 6, 1, tzinfo=UTC),
+        source="linkedin",
     ),
     Job(
         id="linkedin_2",
@@ -72,6 +73,7 @@ _HISTORY_JOBS = [
         location="Barcelona, Spain",
         url="https://linkedin.com/jobs/view/2",
         posted_at=datetime(2026, 5, 15, tzinfo=UTC),
+        source="linkedin",
     ),
     Job(
         id="indeed_1",
@@ -80,6 +82,7 @@ _HISTORY_JOBS = [
         location="Madrid, Spain",
         url="https://es.indeed.com/viewjob?jk=indeed_1",
         posted_at=datetime(2026, 6, 10, tzinfo=UTC),
+        source="indeed",
     ),
     Job(
         id="infojobs_1",
@@ -88,6 +91,7 @@ _HISTORY_JOBS = [
         location="Valencia, Spain",
         url="https://www.infojobs.net/oferta-ij_1",
         posted_at=datetime(2026, 4, 1, tzinfo=UTC),
+        source="infojobs",
     ),
 ]
 
@@ -108,10 +112,10 @@ async def _client_with_lifespan(app: Any) -> AsyncIterator[AsyncClient]:
 async def _insert_fixtures(app: Any) -> None:
     """Insert _HISTORY_JOBS into the repo."""
     repo: SqliteJobRepository = app.state.job_repository  # type: ignore[assignment]
-    await repo.upsert_jobs([_HISTORY_JOBS[0]], source="linkedin", query_snapshot={})
-    await repo.upsert_jobs([_HISTORY_JOBS[1]], source="linkedin", query_snapshot={})
-    await repo.upsert_jobs([_HISTORY_JOBS[2]], source="indeed", query_snapshot={})
-    await repo.upsert_jobs([_HISTORY_JOBS[3]], source="infojobs", query_snapshot={})
+    await repo.upsert_jobs([_HISTORY_JOBS[0]], query_snapshot={})
+    await repo.upsert_jobs([_HISTORY_JOBS[1]], query_snapshot={})
+    await repo.upsert_jobs([_HISTORY_JOBS[2]], query_snapshot={})
+    await repo.upsert_jobs([_HISTORY_JOBS[3]], query_snapshot={})
 
 
 def _make_app_with_empty_fakes(settings: Settings) -> Any:

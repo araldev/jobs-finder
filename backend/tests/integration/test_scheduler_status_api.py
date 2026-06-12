@@ -66,6 +66,7 @@ def _make_jobs(count: int) -> list[Job]:
             location="Madrid, Spain",
             url=f"https://example.com/job/{i}",
             posted_at=datetime(2026, 6, 1, tzinfo=UTC),
+            source="linkedin",
         )
         for i in range(count)
     ]
