@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, Self
 from urllib.parse import quote
@@ -591,7 +592,7 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         try:
             page = await ctx.new_page()
             try:
-                return await paginated_search(
+                jobs = await paginated_search(
                     page=page,
                     throttle=self._throttle,
                     fetch_one_page=self._make_fetch_one_page(
@@ -601,6 +602,39 @@ class LinkedInPlaywrightScraper(JobSearchPort):
                     max_pages=self._settings.max_pages,
                     inter_page_delay_seconds=self._settings.inter_page_delay_seconds,
                     timeout_exc_type=LinkedInTimeoutError,
+                )
+                # Camino 1 (full description extraction): the SERP
+                # card parser returns `None` because the full
+                # description lives in the detail page
+                # (`<section class="show-more-less-html">`), not
+                # in the search-result card. The detail page is
+                # reachable at `https://www.linkedin.com/jobs/view/<id>`.
+                #
+                # We visit each job's detail page (N+1 requests)
+                # using the same Playwright page (cookies are
+                # already injected on the context). This reuses
+                # the same auth that the SERP load needed — no
+                # extra login. The detail page is on the same
+                # domain so it does not trigger a fresh
+                # Cloudflare challenge (LinkedIn's bot
+                # detection is session-level, not per-request).
+                #
+                # Failure isolation: a per-job visit failure
+                # leaves `description=None` (v1 contract). The
+                # loop continues. We do NOT raise.
+                #
+                # Anti-block notes:
+                # - One visit at a time (serial) — no parallel
+                #   `.goto()` calls.
+                # - The throttle (acquired above for the SERP
+                #   loop) is released at this point; we do NOT
+                #   reacquire it (this is a different phase of
+                #   the request). The per-visit time (~2-4s)
+                #   provides natural pacing.
+                # - Visits are bounded by `len(jobs)`, so the
+                #   caller controls the cost via `limit`.
+                return await _enrich_with_detail_visits(
+                    page=page, jobs=jobs, timeout_ms=self._settings.timeout_ms,
                 )
             finally:
                 await page.close()
@@ -869,3 +903,88 @@ def _parse_cards(soup: BeautifulSoup, remaining: int) -> list[Job]:
                 details={"card_html": str(card)[:200], "cause": str(e)},
             ) from e
     return jobs
+
+
+async def _enrich_with_detail_visits(
+    *,
+    page: Any,
+    jobs: list[Job],
+    timeout_ms: int,
+) -> list[Job]:
+    """Visit each job's detail page and read the full description.
+
+    Spec: REQ-SCRAPER-LINKEDIN-DETAIL-001 (Camino 1, 2026-06-11).
+
+    LinkedIn's search-result cards do NOT contain the full job
+    description — the parser returns `None` for them. The
+    description lives in the detail page
+    `<section class="show-more-less-html">` that LinkedIn
+    renders at `https://www.linkedin.com/jobs/view/<id>`.
+
+    This helper visits each job's detail page (N+1 requests)
+    using the same Playwright page (the auth cookies are on
+    the context, not the page). For each job:
+
+    1. Navigate to the job's URL via `page.goto(url)`.
+    2. Wait for the panel via `wait_for_selector` with
+       `state="attached"` (5s timeout — the panel renders
+       server-side, not via an overlay, so visibility is not
+       blocked by the cookie-consent modal).
+    3. Read the panel's outerHTML and parse it with
+       `parse_description`.
+    4. Return a new `Job` with the description updated.
+
+    Failure isolation (the helper NEVER raises):
+    - Navigation fails: the job keeps `description=None`.
+      The loop continues.
+    - Panel does not appear within 5s: the job keeps
+      `description=None`. The loop continues.
+    - Panel parses to `None`: the job keeps
+      `description=None`. The loop continues.
+
+    Returns the same length list as the input (1:1
+    correspondence with the input jobs).
+
+    Anti-block notes:
+    - Visits are serial, one job at a time. No parallel
+      navigation — LinkedIn's bot detection is hostile to
+      concurrent requests from the same session.
+    - The auth cookies were just used successfully by the
+      SERP load (above), so the same session is valid.
+    - We do NOT acquire the throttle here — it was released
+      at the end of `paginated_search`. The natural visit
+      time (~2-4s per page) provides pacing.
+    - The caller's `limit` caps the total visit count.
+    """
+    if not jobs:
+        return jobs
+    enriched: list[Job] = []
+    panel_selector = "section.show-more-less-html"
+    for i, job in enumerate(jobs):
+        url = job.url
+        desc: str | None = None
+        try:
+            # If the URL doesn't look like a LinkedIn job URL,
+            # skip the visit (defensive: `parse_url` should
+            # always produce a valid LinkedIn URL, but a bad
+            # fixture could break this).
+            if "/jobs/view/" not in url:
+                enriched.append(job)
+                continue
+            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            await page.wait_for_selector(
+                panel_selector, state="attached", timeout=5000,
+            )
+            panel_html = await page.eval_on_selector(
+                panel_selector, "el => el.outerHTML"
+            )
+            panel_soup = BeautifulSoup(panel_html, "html.parser")
+            desc = parse_description(panel_soup)
+        except (PlaywrightTimeoutError, Exception):  # noqa: BLE001
+            # Catch-all: any failure leaves description=None.
+            desc = None
+        if desc:
+            enriched.append(replace(job, description=desc))
+        else:
+            enriched.append(job)
+    return enriched
