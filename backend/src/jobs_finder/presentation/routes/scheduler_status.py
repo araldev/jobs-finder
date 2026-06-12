@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
+from jobs_finder.application.ports import JobRepositoryPort
 from jobs_finder.infrastructure.scheduler import BackgroundJobScheduler
 from jobs_finder.presentation.schemas import SchedulerStatusResponse
 
@@ -23,6 +24,10 @@ async def scheduler_status(request: Request) -> SchedulerStatusResponse:
     Reads `app.state.scheduler` (may be `None` when scheduler is
     disabled). When `None`, returns graceful degradation response
     with `enabled=False`.
+
+    Also reads `app.state.job_repository` to populate DB-level stats
+    (`total_in_db`, `per_source`). When the repo is unavailable, those
+    fields default to `0` / `{}`.
     """
     scheduler: BackgroundJobScheduler | None = getattr(request.app.state, "scheduler", None)
 
@@ -30,6 +35,18 @@ async def scheduler_status(request: Request) -> SchedulerStatusResponse:
         return SchedulerStatusResponse(enabled=False)
 
     state = scheduler.state
+
+    # Populate DB stats from the repository when available.
+    repo: JobRepositoryPort | None = getattr(request.app.state, "job_repository", None)
+    total_in_db = 0
+    per_source: dict[str, int] = {}
+    if repo is not None:
+        total_in_db = await repo.count_jobs()
+        for source in ("linkedin", "indeed", "infojobs"):
+            count = await repo.count_jobs(sources=[source])
+            if count > 0:
+                per_source[source] = count
+
     return SchedulerStatusResponse(
         enabled=True,
         running=state.running,
@@ -38,10 +55,8 @@ async def scheduler_status(request: Request) -> SchedulerStatusResponse:
         last_error=state.last_error,
         cycle_count=state.cycle_count,
         total_jobs_collected=state.total_jobs_collected,
-        # total_in_db and per_source require repo stats which aren't
-        # available via `JobRepositoryPort` yet — default to 0 / {}.
-        total_in_db=0,
-        per_source={},
+        total_in_db=total_in_db,
+        per_source=per_source,
         queries=scheduler._queries,
         min_interval_seconds=scheduler._min_interval,
         max_interval_seconds=scheduler._max_interval,

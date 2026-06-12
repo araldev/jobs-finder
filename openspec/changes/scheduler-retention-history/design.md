@@ -91,7 +91,7 @@ GET /jobs/history?sources=linkedin,indeed&date_from=2026-01-01&limit=20&offset=0
 | `routes/scheduler_status.py` | **New**: `GET /scheduler/status` reads `app.state.scheduler`, returns JSON state |
 | `schemas.py` | **New**: `SchedulerStatusResponse(BaseModel)` |
 
-`SchedulerState` fields: `enabled`, `running`, `last_run_start`, `last_run_end`, `last_error: str | None`, `cycle_count`, `total_jobs_collected`, `total_in_db`, `total_per_source`, `queries`, `min_interval_seconds`, `max_interval_seconds`. Updated at each cycle boundary.
+`SchedulerState` fields: `running`, `last_run_start`, `last_run_end`, `last_error: str | None`, `cycle_count`, `total_jobs_collected`. Updated at each cycle boundary. The `SchedulerState` tracks only runtime cycle state; static/config fields (`enabled`, `queries`, `min_interval_seconds`, `max_interval_seconds`) and DB-level stats (`total_in_db`, `per_source`) are composed by `SchedulerStatusResponse` at route time from the scheduler's config attributes and the repository.
 
 ### Feature 3: Historical Jobs (REQ-HIST-001, REQ-HIST-002)
 

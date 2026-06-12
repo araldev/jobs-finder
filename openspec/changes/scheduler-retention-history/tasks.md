@@ -32,7 +32,7 @@ Chain strategy: pending
 
 ## Phase 3: Scheduler Status (TDD)
 
-- [x] 3.1 **RED**: Add `test_scheduler_state_tracks_cycle` — start scheduler, run one cycle, assert `cycle_count==1`, `last_run_end` set, `last_error` is None, `running` is false after cycle. **GREEN**: Add `SchedulerState` dataclass to `scheduler.py` with fields: `enabled`, `running`, `last_run_start`, `last_run_end`, `last_error`, `cycle_count`, `total_jobs_collected`, `total_in_db`, `total_per_source`, `queries`, `min_interval_seconds`, `max_interval_seconds`. Instrument `_loop()` to update fields at cycle entry/exit/error
+- [x] 3.1 **RED**: Add `test_scheduler_state_tracks_cycle` — start scheduler, run one cycle, assert `cycle_count==1`, `last_run_end` set, `last_error` is None, `running` is false after cycle. **GREEN**: Add `SchedulerState` dataclass to `scheduler.py` with fields: `running`, `last_run_start`, `last_run_end`, `last_error`, `cycle_count`, `total_jobs_collected`. Static/config fields (`enabled`, `queries`, `min_interval_seconds`, `max_interval_seconds`) and DB stats (`total_in_db`, `per_source`) live in `SchedulerStatusResponse` schema. Instrument `_loop()` to update fields at cycle entry/exit/error
 - [x] 3.2 **RED**: Integration test `test_scheduler_status_api.py` — `GET /scheduler/status` returns 200 with all state fields when scheduler exists, returns `{"enabled": false}` when scheduler is None (disabled). **GREEN**: Create `routes/scheduler_status.py` with `GET /scheduler/status` reading `app.state.scheduler`. Add `SchedulerStatusResponse(BaseModel)` to `schemas.py`. Expose `app.state.scheduler` in `app_factory` lifespan
 
 ## Phase 4: Historical Jobs — Repo (TDD)
