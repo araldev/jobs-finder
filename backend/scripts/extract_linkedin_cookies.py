@@ -3,6 +3,10 @@ Matches the exact browser fingerprint the scraper uses.
 
 Usage:
     DISPLAY=:99 uv run python scripts/extract_linkedin_cookies.py
+
+Credentials are read from environment variables:
+    LINKEDIN_EMAIL    - LinkedIn login email
+    LINKEDIN_PASSWORD - LinkedIn login password
 """
 
 import asyncio
@@ -14,8 +18,8 @@ from datetime import datetime
 from playwright.async_api import async_playwright
 
 
-LINKEDIN_EMAIL = "raul.rodriguez.raul.80@gmail.com"
-LINKEDIN_PASSWORD = r"%{>7+3$oBTycQ42}/')l"
+LINKEDIN_EMAIL = os.environ.get("LINKEDIN_EMAIL")
+LINKEDIN_PASSWORD = os.environ.get("LINKEDIN_PASSWORD")
 COOKIES_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "linkedin_cookies.json",
@@ -23,6 +27,13 @@ COOKIES_PATH = os.path.join(
 
 
 async def main() -> None:
+    if not LINKEDIN_EMAIL or not LINKEDIN_PASSWORD:
+        print("❌ Error: LINKEDIN_EMAIL and LINKEDIN_PASSWORD must be set in environment")
+        print("   Set them in backend/.env or export before running:")
+        print("     export LINKEDIN_EMAIL='your@email.com'")
+        print("     export LINKEDIN_PASSWORD='your_password'")
+        sys.exit(1)
+
     display = os.environ.get("DISPLAY", ":99")
     print(f"[*] DISPLAY={display}")
     print(f"[*] Channel: chromium (system chromium-browser)")

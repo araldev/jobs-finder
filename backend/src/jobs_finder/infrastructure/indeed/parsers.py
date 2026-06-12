@@ -117,6 +117,31 @@ _DESCRIPTION_SELECTOR = '[data-testid="belowJobSnippet"]'
 _MOSAIC_ANCHOR = "mosaic-provider-jobcards"
 
 
+# Camino 1, snippet extraction from the SERP-side JSON (REQ-PARSER-INDEED-SNIPPET-001):
+# Indeed embeds the search-result data in a `<script>` tag as:
+#     window.mosaic.providerData["mosaic-provider-jobcards"] = { ... };
+# The JSON inside is ~150KB on a 15-job page. Each job has a
+# `snippet` field with a short description (263-370 chars on
+# average) rendered as `<ul><li>...</li></ul>` HTML.
+#
+# This avoids the click-en-card that triggers Cloudflare's
+# bot-detection on rapid clicks (the SERP-side `belowJobSnippet`
+# block is also EMPTY in the new layout, so we have to fall back
+# to the JSON-embedded snippet).
+#
+# The shape is: `window.mosaic.providerData["<KEY>"]={JSON};`
+# (no spaces around `=` and `{`, observed 2026-06-12 on a real
+# es.indeed.com SERP). The JSON object can be very large
+# (~150KB on a 15-job page) and contain nested arrays of job
+# entries, each with a `jobkey` and `snippet` field.
+_PROVIDER_DATA_ANCHOR = 'window.mosaic.providerData["mosaic-provider-jobcards"]={'
+# Field name in the JSON: Indeed uses `jobkey` (NOT `jk`) in the
+# providerData payload — the `jk` alias only appears in the HTML's
+# `data-jk` attribute, but the canonical field in the JSON is
+# `jobkey`. Pinned by the live capture on 2026-06-12.
+_PROVIDER_DATA_JOBKEY = "jobkey"
+_PROVIDER_DATA_SNIPPET = "snippet"
+
 def _to_tag(fragment: str | Tag) -> Tag:
     """Coerce an HTML fragment string to a `Tag`, or return the Tag as-is.
 
@@ -427,6 +452,167 @@ def parse_indeed_description(card: str | Tag) -> str | None:
         return None
     parts = [item.get_text(strip=True) for item in items]
     joined = " | ".join(parts)
+    return joined.strip() or None
+
+
+def extract_indeed_snippets_from_provider_data(
+    page_html: str | None,
+) -> dict[str, str]:
+    """Return `{jobkey: snippet_text}` parsed from the providerData JSON.
+
+    Spec: REQ-PARSER-INDEED-SNIPPET-001 (Camino 1, 2026-06-12).
+
+    Indeed embeds the search-result data in a `<script>` tag as:
+
+        window.mosaic.providerData["mosaic-provider-jobcards"] = { ... };
+
+    The JSON inside is ~150KB on a 15-job page. Each job
+    entry has two relevant fields:
+        - `jobkey` (canonical field name in the providerData
+          payload; the HTML's `data-jk` and the
+          `mosaic-provider-jobcards` jobcards JSON use
+          `jk` / `data-jk` instead — different surface, same
+          value)
+        - `snippet` (HTML string with a `<ul><li>...</li></ul>`
+          containing a short description preview, typically
+          263-370 chars, 100% coverage on observed SERPs)
+
+    The snippet is ALSO rendered on the SERP card in a
+    separate `[data-testid="belowJobSnippet"]` block — but
+    the actual `<ul>` inside it is EMPTY in the current
+    Indeed layout (observed 2026-06-02). The providerData
+    JSON still carries the snippet, so we can extract it
+    without clicking (which would trigger Cloudflare's
+    click-bot detector).
+
+    Contract:
+    - Returns `{jobkey: snippet_text}` keyed by the Indeed
+      `jobkey` (the same value the `parse_indeed_job_id`
+      parser surfaces as the `Job.id`).
+    - The snippet text is the concatenation of all `<li>`
+      children of the snippet's `<ul>`, joined with " | "
+      (same shape as `parse_indeed_description`).
+    - Returns an empty dict if `page_html` is `None` or empty,
+      if the `providerData` script is absent, if the JSON
+      is malformed, or if no jobs in the JSON have a
+      `snippet` field.
+    - Does NOT raise. The scraper is defensive about
+      `mosaic.providerData` shape changes (Indeed refactors
+      frequently); a failure here means the v1 contract
+      (`description=None`) is preserved for the call site.
+    """
+    if not page_html:
+        return {}
+    # Find the providerData assignment for the jobcards provider.
+    # The anchor is `window.mosaic.providerData["..."]={...};`
+    # — a single string we can locate with `find`. The anchor
+    # ends with `{`, so the very next `{` is the start of the
+    # nested JSON we want to capture, and the depth tracker
+    # is initialized to 1 (we're already inside one `{` from
+    # the anchor itself).
+    idx = page_html.find(_PROVIDER_DATA_ANCHOR)
+    if idx < 0:
+        return {}
+    start = idx + len(_PROVIDER_DATA_ANCHOR)
+    # Find the matching closing brace by counting depth.
+    # Indeed's JSON is properly nested; the closing `};`
+    # always matches the opening `{` from the assignment.
+    depth = 1  # we're already inside the { from the anchor
+    end = start
+    in_string = False
+    escape = False
+    for i in range(start, len(page_html)):
+        ch = page_html[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if end <= start:
+        return {}
+    raw_json = "{" + page_html[start:end]
+    # The JSON is HTML-escaped (the `<script>` tag content is
+    # HTML-escaped, so `"` becomes `\"` and `<` becomes `\u003C`).
+    # `json.loads` handles both escapes; the script tag is a
+    # text node, not an attribute value, so we don't need to
+    # unescape HTML entities before parsing.
+    try:
+        data = json.loads(raw_json)
+    except (ValueError, TypeError):
+        return {}
+    # Walk the JSON looking for `{jobkey, snippet}` dicts. The
+    # structure is a `jobListings` array nested 2-3 levels deep.
+    # A recursive walk that finds ANY `jobkey`/`snippet` pair
+    # at the same level is more resilient to refactors than
+    # pinning a specific path.
+    result: dict[str, str] = {}
+    _walk_for_snippet_pairs(data, result)
+    return result
+
+
+def _walk_for_snippet_pairs(node: Any, out: dict[str, str]) -> None:
+    """Recursive walk that finds `{jobkey, snippet}` dicts anywhere in the tree.
+
+    Bounded depth to avoid pathological inputs. The walk stops
+    at depth 8 (Indeed's `providerData` is shallow — top-level
+    object, `jobListings` array, items).
+    """
+    _walk_for_snippet_pairs_impl(node, out, depth=0)
+
+
+def _walk_for_snippet_pairs_impl(
+    node: Any, out: dict[str, str], depth: int
+) -> None:
+    if depth > 8:
+        return
+    if isinstance(node, dict):
+        jk = node.get(_PROVIDER_DATA_JOBKEY)
+        snip = node.get(_PROVIDER_DATA_SNIPPET)
+        if (
+            isinstance(jk, str)
+            and isinstance(snip, str)
+            and jk
+            and snip
+        ):
+            text = _snippet_html_to_text(snip)
+            if text:
+                # Last write wins on duplicate jk (rare; defensive).
+                out[jk] = text
+        for v in node.values():
+            _walk_for_snippet_pairs_impl(v, out, depth + 1)
+    elif isinstance(node, list):
+        for item in node:
+            _walk_for_snippet_pairs_impl(item, out, depth + 1)
+
+
+def _snippet_html_to_text(snippet_html: str) -> str | None:
+    """Convert the snippet's HTML (`<ul><li>...</li>...</ul>`) to a single string.
+
+    Each `<li>` becomes a stripped text fragment, joined with " | "
+    (the same shape `parse_indeed_description` returns, so
+    downstream consumers can treat both paths uniformly).
+    Returns `None` when no `<li>` is present or the resulting
+    text is empty.
+    """
+    soup = BeautifulSoup(snippet_html, "html.parser")
+    items = soup.find_all("li")
+    if not items:
+        return None
+    parts = [item.get_text(" ", strip=True) for item in items]
+    joined = " | ".join(p for p in parts if p)
     return joined.strip() or None
 
 
