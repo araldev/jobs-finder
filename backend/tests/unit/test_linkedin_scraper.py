@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import pytest
 
+from jobs_finder.domain.job import Job
 from jobs_finder.infrastructure.linkedin.scraper import LinkedInPlaywrightScraper
 
 # ---------------------------------------------------------------------------
@@ -979,15 +980,28 @@ class _LinkedInFakePage:
         self._html = html
         self.goto_calls: list[str] = []
         self.wait_calls: list[tuple[str, int]] = []
+        self.eval_calls: list[tuple[str, str]] = []
         self.closed = False
 
-    async def goto(self, url: str) -> None:
+    async def goto(self, url: str, **kwargs: object) -> None:
         self.goto_calls.append(url)
 
     async def wait_for_selector(self, selector: str, *, timeout: int = 0, **kwargs: object) -> None:
         self.wait_calls.append((selector, timeout))
 
     async def content(self) -> str:
+        return self._html
+
+    async def eval_on_selector(self, selector: str, expression: str) -> str:
+        """Return `self._html` for any selector (Camino 1 fake).
+
+        The test passes the panel HTML via the constructor;
+        the scraper reads it back via `eval_on_selector` and
+        feeds it through `parse_description`. Returning the
+        same HTML regardless of the selector is enough for
+        the enrichment-helper contract test.
+        """
+        self.eval_calls.append((selector, expression))
         return self._html
 
     async def close(self) -> None:
@@ -1557,6 +1571,122 @@ async def test_chromium_launch_xvfb_display_respects_headless_true() -> None:
         args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
         env={"DISPLAY": ":99"},
     )
+
+
+# --- Camino 1: full description via N+1 detail visits (REQ-SCRAPER-LINKEDIN-DETAIL-001) ---
+
+
+async def test_enrich_with_detail_visits_populates_description() -> None:
+    """Each job's detail page is visited; the panel text replaces description.
+
+    Uses the captured real panel fixture
+    (`tests/fixtures/linkedin_detail_panel.py`) as the HTML
+    the fake `page.eval_on_selector` returns. The test
+    asserts that:
+    - exactly one `goto` per job is issued
+    - the `wait_for_selector` targets `section.show-more-less-html`
+    - the jobs returned have `description` populated with a
+      non-empty string >= 1000 chars (it's a full description)
+    """
+    from datetime import UTC, datetime
+
+    from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+        _enrich_with_detail_visits,
+    )
+    from tests.fixtures.linkedin_detail_panel import PANEL_HTML  # noqa: PLC0415
+
+    page = _LinkedInFakePage(PANEL_HTML)
+    jobs = [
+        Job(
+            id="4304525450",
+            title="Desarrollador Python Junior",
+            company="Sigma AI",
+            location="Madrid",
+            url="https://es.linkedin.com/jobs/view/desarrollador-python-junior-4304525450",
+            posted_at=datetime(2026, 4, 23, tzinfo=UTC),
+            description=None,
+        ),
+    ]
+    enriched = await _enrich_with_detail_visits(page=page, jobs=jobs, timeout_ms=10_000)
+    assert len(enriched) == 1
+    assert enriched[0].description is not None
+    assert len(enriched[0].description) >= 1000, (
+        f"expected full description, got {len(enriched[0].description)} chars"
+    )
+    assert "Sigma" in enriched[0].description
+    # Exactly one goto for the one job.
+    assert page.goto_calls == [
+        "https://es.linkedin.com/jobs/view/desarrollador-python-junior-4304525450",
+    ]
+
+
+async def test_enrich_with_detail_visits_keeps_none_on_panel_missing() -> None:
+    """When the panel HTML is empty, the job keeps `description=None`.
+
+    Simulates LinkedIn returning a page that does NOT contain
+    the panel (anti-bot, auth wall, etc.). The helper must
+    NOT raise and the job must keep its v1 `description=None`.
+    """
+    from datetime import UTC, datetime
+
+    from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+        _enrich_with_detail_visits,
+    )
+
+    page = _LinkedInFakePage("")  # empty → parse_description returns None
+    jobs = [
+        Job(
+            id="1234567890",
+            title="Test",
+            company="Test Co",
+            location="Madrid",
+            url="https://es.linkedin.com/jobs/view/1234567890",
+            posted_at=datetime(2026, 1, 1, tzinfo=UTC),
+            description=None,
+        ),
+    ]
+    enriched = await _enrich_with_detail_visits(page=page, jobs=jobs, timeout_ms=10_000)
+    assert len(enriched) == 1
+    assert enriched[0].description is None
+    assert page.goto_calls == ["https://es.linkedin.com/jobs/view/1234567890"]
+
+
+async def test_enrich_with_detail_visits_skips_non_linkedin_urls() -> None:
+    """A job whose URL does NOT contain `/jobs/view/` is skipped (defensive)."""
+    from datetime import UTC, datetime
+
+    from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+        _enrich_with_detail_visits,
+    )
+
+    page = _LinkedInFakePage("<section class='show-more-less-html'>x</section>")
+    jobs = [
+        Job(
+            id="abc",
+            title="X",
+            company="X",
+            location="X",
+            url="https://example.com/not-linkedin",
+            posted_at=datetime(2026, 1, 1, tzinfo=UTC),
+            description=None,
+        ),
+    ]
+    enriched = await _enrich_with_detail_visits(page=page, jobs=jobs, timeout_ms=10_000)
+    assert enriched[0].description is None
+    assert page.goto_calls == [], "non-LinkedIn URLs must NOT be visited"
+
+
+async def test_enrich_with_detail_visits_empty_jobs_returns_empty() -> None:
+    """An empty `jobs` list returns an empty list without touching the page."""
+    from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+        _enrich_with_detail_visits,
+    )
+
+    page = _LinkedInFakePage("")
+    enriched = await _enrich_with_detail_visits(page=page, jobs=[], timeout_ms=10_000)
+    assert enriched == []
+    assert page.goto_calls == []
+
 
 
 async def test_chromium_launch_xvfb_display_overrides_headless_false() -> None:
