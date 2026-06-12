@@ -111,6 +111,26 @@ class SqliteJobRepository:
         await self._connection.commit()
         return rows
 
+    async def delete_older_than(
+        self,
+        *,
+        days: int,
+        limit: int = 1000,
+    ) -> int:
+        """Delete rows with `last_seen_at` older than `days` days.
+
+        SQL: DELETE FROM jobs WHERE last_seen_at < datetime('now', '-' || ? || ' days') LIMIT ?
+        Returns the number of deleted rows.
+        """
+        assert self._connection is not None, "repository not opened; use 'async with repo:'"
+
+        cursor = await self._connection.execute(
+            "DELETE FROM jobs WHERE last_seen_at < datetime('now', '-' || ? || ' days') LIMIT ?",
+            (days, limit),
+        )
+        await self._connection.commit()
+        return cursor.rowcount
+
     async def search_jobs(
         self,
         keywords: str | None = None,
@@ -148,11 +168,98 @@ class SqliteJobRepository:
 
         return [_row_to_job(row) for row in rows]
 
+    async def search_jobs_history(
+        self,
+        *,
+        sources: list[str] | None = None,
+        keywords: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Job]:
+        """SELECT with optional filters on source, keyword, and date range."""
+        assert self._connection is not None, "repository not opened; use 'async with repo:'"
+
+        clauses, params = _build_history_clauses(sources, keywords, date_from, date_to)
+        where_clause = ""
+        if clauses:
+            where_clause = "WHERE " + " AND ".join(clauses)
+
+        sql = f"SELECT * FROM jobs {where_clause} ORDER BY posted_at DESC LIMIT ? OFFSET ?"
+        params = [*params, limit, offset]
+
+        async with self._connection.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
+
+        return [_row_to_job(row) for row in rows]
+
+    async def count_jobs(
+        self,
+        *,
+        sources: list[str] | None = None,
+        keywords: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> int:
+        """SELECT count(*) with the same optional filters."""
+        assert self._connection is not None, "repository not opened; use 'async with repo:'"
+
+        clauses, params = _build_history_clauses(sources, keywords, date_from, date_to)
+        where_clause = ""
+        if clauses:
+            where_clause = "WHERE " + " AND ".join(clauses)
+
+        sql = f"SELECT count(*) FROM jobs {where_clause}"
+
+        async with self._connection.execute(sql, params) as cursor:
+            row = await cursor.fetchone()
+
+        assert row is not None
+        return int(row[0])
+
     async def close(self) -> None:
         """Close the DB connection. Idempotent."""
         if self._connection is not None:
             await self._connection.close()
             self._connection = None
+
+
+def _build_history_clauses(
+    sources: list[str] | None,
+    keywords: str | None,
+    date_from: str | None,
+    date_to: str | None,
+) -> tuple[list[str], list[Any]]:
+    """Build WHERE-clause fragments and params for history queries.
+
+    Returns a ``(clauses, params)`` tuple suitable for ``AND``-joining
+    into a ``WHERE`` expression. Shared by ``search_jobs_history`` and
+    ``count_jobs``.
+    """
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    if sources is not None:
+        placeholders = ", ".join("?" for _ in sources)
+        clauses.append(f"source IN ({placeholders})")
+        params.extend(sources)
+
+    if keywords is not None:
+        clauses.append("(title LIKE ? OR company LIKE ?)")
+        like_pattern = f"%{keywords}%"
+        params.append(like_pattern)
+        params.append(like_pattern)
+
+    if date_from is not None:
+        clauses.append("posted_at >= ?")
+        params.append(date_from)
+
+    if date_to is not None:
+        clauses.append("posted_at <= ?")
+        params.append(date_to)
+
+    return clauses, params
 
 
 def _row_to_job(row: aiosqlite.Row) -> Job:

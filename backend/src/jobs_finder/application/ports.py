@@ -378,9 +378,9 @@ class RateLimitPort(Protocol):
 class JobRepositoryPort(Protocol):
     """Persistent job storage. No @runtime_checkable — structural only.
 
-    Spec: REQ-DB-001. Three async methods: upsert_jobs (returns
-    row count), search_jobs (returns list[Job] with optional
-    filters), close (idempotent).
+    Spec: REQ-DB-001 (MODIFIED). Five async methods: upsert_jobs,
+    search_jobs, delete_older_than, search_jobs_history, count_jobs,
+    close (idempotent). Structural subtyping only.
     """
 
     async def upsert_jobs(
@@ -400,6 +400,69 @@ class JobRepositoryPort(Protocol):
         offset: int = 0,
     ) -> list[Job]:
         """SELECT with optional WHERE filters on keywords and source."""
+        ...
+
+    async def delete_older_than(
+        self,
+        *,
+        days: int,
+        limit: int = 1000,
+    ) -> int:
+        """Delete rows with `last_seen_at` older than `days`. Returns deleted count.
+
+        Args:
+            days: Delete rows where `last_seen_at < now - days`.
+            limit: Maximum rows to delete (default 1000).
+
+        Returns:
+            The number of deleted rows.
+        """
+        ...
+
+    async def search_jobs_history(
+        self,
+        *,
+        sources: list[str] | None = None,
+        keywords: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Job]:
+        """Search job history with optional filters: source, keyword, date range.
+
+        Args:
+            sources: Optional list of source names to filter by.
+            keywords: Optional string to match against title or company.
+            date_from: Optional ISO date string (inclusive) for `posted_at >=`.
+            date_to: Optional ISO date string (inclusive) for `posted_at <=`.
+            limit: Max results to return (default 50).
+            offset: Number of results to skip for pagination.
+
+        Returns:
+            Matching `Job` domain objects ordered by `posted_at DESC`.
+        """
+        ...
+
+    async def count_jobs(
+        self,
+        *,
+        sources: list[str] | None = None,
+        keywords: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> int:
+        """Count jobs matching the given filters.
+
+        Args:
+            sources: Optional list of source names to filter by.
+            keywords: Optional string to match against title or company.
+            date_from: Optional ISO date string (inclusive) for `posted_at >=`.
+            date_to: Optional ISO date string (inclusive) for `posted_at <=`.
+
+        Returns:
+            The count of matching rows.
+        """
         ...
 
     async def close(self) -> None:

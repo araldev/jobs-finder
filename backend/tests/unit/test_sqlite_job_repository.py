@@ -188,6 +188,151 @@ async def test_upsert_multiple_jobs(repo: SqliteJobRepository) -> None:
     assert row[0] == 2
 
 
+# ── delete_older_than ───────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_delete_older_than_deletes_old_jobs(repo: SqliteJobRepository) -> None:
+    """Jobs with `last_seen_at` older than `days` are deleted."""
+    # Insert an old job and a recent one
+    await repo._connection.execute(
+        "INSERT INTO jobs (source, source_id, title, company, location, url, "
+        "posted_at, query_snapshot, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "linkedin",
+            "old1",
+            "Old Job",
+            "Co",
+            "L",
+            "https://ex.com/old1",
+            "2024-01-01T00:00:00Z",
+            "{}",
+            "2024-01-01T00:00:00Z",
+        ),
+    )
+    await repo._connection.execute(
+        "INSERT INTO jobs (source, source_id, title, company, location, url, "
+        "posted_at, query_snapshot, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "linkedin",
+            "new1",
+            "New Job",
+            "Co",
+            "L",
+            "https://ex.com/new1",
+            datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "{}",
+            datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        ),
+    )
+    await repo._connection.commit()
+
+    deleted = await repo.delete_older_than(days=30)
+    assert deleted == 1
+
+    # Only the new job should remain
+    async with repo._connection.execute("SELECT source_id FROM jobs") as cursor:
+        remaining = await cursor.fetchall()
+    assert [r[0] for r in remaining] == ["new1"]
+
+
+@pytest.mark.asyncio
+async def test_delete_older_than_respects_limit(repo: SqliteJobRepository) -> None:
+    """When more old rows exist than `limit`, only `limit` are deleted."""
+    for i in range(5):
+        await repo._connection.execute(
+            "INSERT INTO jobs (source, source_id, title, company, location, url, "
+            "posted_at, query_snapshot, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "linkedin",
+                f"old{i}",
+                f"Old Job {i}",
+                "Co",
+                "L",
+                f"https://ex.com/old{i}",
+                "2024-01-01T00:00:00Z",
+                "{}",
+                "2024-01-01T00:00:00Z",
+            ),
+        )
+    await repo._connection.commit()
+
+    deleted = await repo.delete_older_than(days=30, limit=2)
+    assert deleted == 2
+
+    # Count remaining old rows
+    async with repo._connection.execute(
+        "SELECT count(*) FROM jobs WHERE last_seen_at < '2024-06-01T00:00:00Z'"
+    ) as cursor:
+        row = await cursor.fetchone()
+    assert row is not None
+    assert row[0] == 3
+
+
+@pytest.mark.asyncio
+async def test_delete_older_than_no_matching_rows(repo: SqliteJobRepository) -> None:
+    """When no rows are old enough, returns 0."""
+    await repo._connection.execute(
+        "INSERT INTO jobs (source, source_id, title, company, location, url, "
+        "posted_at, query_snapshot, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "linkedin",
+            "fresh1",
+            "Fresh Job",
+            "Co",
+            "L",
+            "https://ex.com/fresh1",
+            datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "{}",
+            datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        ),
+    )
+    await repo._connection.commit()
+
+    deleted = await repo.delete_older_than(days=1)  # 1 day ago — fresh row is newer
+    assert deleted == 0
+
+    async with repo._connection.execute("SELECT count(*) FROM jobs") as cursor:
+        row = await cursor.fetchone()
+    assert row is not None
+    assert row[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_delete_older_than_double_delete(repo: SqliteJobRepository) -> None:
+    """First delete removes old rows, second delete removes 0."""
+    for i in range(3):
+        await repo._connection.execute(
+            "INSERT INTO jobs (source, source_id, title, company, location, url, "
+            "posted_at, query_snapshot, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "linkedin",
+                f"old{i}",
+                f"Old Job {i}",
+                "Co",
+                "L",
+                f"https://ex.com/old{i}",
+                "2024-01-01T00:00:00Z",
+                "{}",
+                "2024-01-01T00:00:00Z",
+            ),
+        )
+    await repo._connection.commit()
+
+    deleted1 = await repo.delete_older_than(days=30)
+    assert deleted1 == 3
+
+    deleted2 = await repo.delete_older_than(days=30)
+    assert deleted2 == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_older_than_empty_db(repo: SqliteJobRepository) -> None:
+    """Empty database returns 0."""
+    deleted = await repo.delete_older_than(days=30)
+    assert deleted == 0
+
+
 # ── search_jobs ────────────────────────────────────────────────────────────
 
 
@@ -277,6 +422,216 @@ async def test_search_jobs_limit_offset(repo: SqliteJobRepository) -> None:
     results_page2 = await repo.search_jobs(limit=3, offset=3)
     assert len(results_page2) == 3
     assert results_page2[0].id != results[0].id
+
+
+# ── search_jobs_history ───────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_search_jobs_history_empty(repo: SqliteJobRepository) -> None:
+    """Empty database returns empty list."""
+    jobs = await repo.search_jobs_history()
+    assert jobs == []
+
+
+@pytest.mark.asyncio
+async def test_search_jobs_history_all(repo: SqliteJobRepository) -> None:
+    """Without filters, returns all jobs ordered by posted_at DESC."""
+    await repo.upsert_jobs([_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY)
+    j2 = Job(
+        id="456",
+        title="Java Developer",
+        company="Java Co",
+        location="Barcelona",
+        url="https://ex.com/456",
+        posted_at=datetime(2026, 6, 2, tzinfo=UTC),
+    )
+    await repo.upsert_jobs([j2], source="indeed", query_snapshot=_SAMPLE_QUERY)
+
+    jobs = await repo.search_jobs_history()
+    assert len(jobs) == 2
+
+
+@pytest.mark.asyncio
+async def test_search_jobs_history_filter_by_source(repo: SqliteJobRepository) -> None:
+    """Filtering by single source returns only jobs from that source."""
+    await repo.upsert_jobs([_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY)
+    j2 = Job(
+        id="456",
+        title="Java Developer",
+        company="Java Co",
+        location="Barcelona",
+        url="https://ex.com/456",
+        posted_at=datetime(2026, 6, 2, tzinfo=UTC),
+    )
+    await repo.upsert_jobs([j2], source="indeed", query_snapshot=_SAMPLE_QUERY)
+
+    jobs = await repo.search_jobs_history(sources=["linkedin"])
+    assert len(jobs) == 1
+    assert jobs[0].id == "123"
+
+
+@pytest.mark.asyncio
+async def test_search_jobs_history_filter_by_multiple_sources(
+    repo: SqliteJobRepository,
+) -> None:
+    """Filtering by multiple sources returns jobs from all specified sources."""
+    await repo.upsert_jobs([_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY)
+    j2 = Job(
+        id="456",
+        title="Java Developer",
+        company="Java Co",
+        location="Barcelona",
+        url="https://ex.com/456",
+        posted_at=datetime(2026, 6, 2, tzinfo=UTC),
+    )
+    await repo.upsert_jobs([j2], source="indeed", query_snapshot=_SAMPLE_QUERY)
+    j3 = Job(
+        id="789",
+        title="Rust Engineer",
+        company="Rust Co",
+        location="Madrid",
+        url="https://ex.com/789",
+        posted_at=datetime(2026, 6, 3, tzinfo=UTC),
+    )
+    await repo.upsert_jobs([j3], source="infojobs", query_snapshot=_SAMPLE_QUERY)
+
+    jobs = await repo.search_jobs_history(sources=["linkedin", "indeed"])
+    assert len(jobs) == 2
+    assert {j.id for j in jobs} == {"123", "456"}
+
+
+@pytest.mark.asyncio
+async def test_search_jobs_history_filter_by_keywords_title(
+    repo: SqliteJobRepository,
+) -> None:
+    """Keyword filter matches on title."""
+    await repo.upsert_jobs([_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY)
+    j2 = Job(
+        id="456",
+        title="Java Developer",
+        company="Java Co",
+        location="Barcelona",
+        url="https://ex.com/456",
+        posted_at=datetime(2026, 6, 2, tzinfo=UTC),
+    )
+    await repo.upsert_jobs([j2], source="indeed", query_snapshot=_SAMPLE_QUERY)
+
+    jobs = await repo.search_jobs_history(keywords="Python")
+    assert len(jobs) == 1
+    assert jobs[0].id == "123"
+
+
+@pytest.mark.asyncio
+async def test_search_jobs_history_filter_by_keywords_company(
+    repo: SqliteJobRepository,
+) -> None:
+    """Keyword filter matches on company."""
+    await repo.upsert_jobs([_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY)
+    j2 = Job(
+        id="456",
+        title="Junior Developer",
+        company="Python Labs",
+        location="Barcelona",
+        url="https://ex.com/456",
+        posted_at=datetime(2026, 6, 2, tzinfo=UTC),
+    )
+    await repo.upsert_jobs([j2], source="indeed", query_snapshot=_SAMPLE_QUERY)
+
+    jobs = await repo.search_jobs_history(keywords="Python")
+    assert len(jobs) == 2  # Both match: title (Python Developer) + company (Python Labs)
+
+
+@pytest.mark.asyncio
+async def test_search_jobs_history_filter_by_date_range(
+    repo: SqliteJobRepository,
+) -> None:
+    """Date range filter returns jobs within [date_from, date_to]."""
+    await repo.upsert_jobs([_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY)
+    j2 = Job(
+        id="456",
+        title="Old Job",
+        company="Old Co",
+        location="L",
+        url="https://ex.com/456",
+        posted_at=datetime(2025, 1, 1, tzinfo=UTC),
+    )
+    await repo.upsert_jobs([j2], source="indeed", query_snapshot=_SAMPLE_QUERY)
+
+    jobs = await repo.search_jobs_history(date_from="2026-05-01", date_to="2026-07-01")
+    assert len(jobs) == 1
+    assert jobs[0].id == "123"
+
+
+@pytest.mark.asyncio
+async def test_search_jobs_history_pagination(repo: SqliteJobRepository) -> None:
+    """Search respects limit and offset."""
+    batch = []
+    for i in range(10):
+        batch.append(
+            Job(
+                id=str(i),
+                title=f"Job {i}",
+                company="C",
+                location="L",
+                url=f"https://ex.com/{i}",
+                posted_at=datetime(2026, 1, i + 1, tzinfo=UTC),
+            )
+        )
+    await repo.upsert_jobs(batch, source="linkedin", query_snapshot=_SAMPLE_QUERY)
+
+    page1 = await repo.search_jobs_history(limit=3, offset=0)
+    assert len(page1) == 3
+
+    page2 = await repo.search_jobs_history(limit=3, offset=3)
+    assert len(page2) == 3
+    assert page2[0].id != page1[0].id
+
+
+# ── count_jobs ─────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_count_jobs_empty(repo: SqliteJobRepository) -> None:
+    """Empty database returns 0."""
+    count = await repo.count_jobs()
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_count_jobs_total(repo: SqliteJobRepository) -> None:
+    """Count without filters returns total row count."""
+    await repo.upsert_jobs([_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY)
+    j2 = Job(
+        id="456",
+        title="Java Developer",
+        company="Java Co",
+        location="Barcelona",
+        url="https://ex.com/456",
+        posted_at=datetime(2026, 6, 2, tzinfo=UTC),
+    )
+    await repo.upsert_jobs([j2], source="indeed", query_snapshot=_SAMPLE_QUERY)
+
+    count = await repo.count_jobs()
+    assert count == 2
+
+
+@pytest.mark.asyncio
+async def test_count_jobs_with_filters(repo: SqliteJobRepository) -> None:
+    """Count with source filter returns filtered row count."""
+    await repo.upsert_jobs([_SAMPLE_JOB], source="linkedin", query_snapshot=_SAMPLE_QUERY)
+    j2 = Job(
+        id="456",
+        title="Java Developer",
+        company="Java Co",
+        location="Barcelona",
+        url="https://ex.com/456",
+        posted_at=datetime(2026, 6, 2, tzinfo=UTC),
+    )
+    await repo.upsert_jobs([j2], source="indeed", query_snapshot=_SAMPLE_QUERY)
+
+    count = await repo.count_jobs(sources=["linkedin"])
+    assert count == 1
 
 
 # ── Protocol conformance ────────────────────────────────────────────────────
