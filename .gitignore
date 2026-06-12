@@ -68,3 +68,6 @@ capture_log.txt
 
 # LinkedIn cookies (exported session tokens; never commit)
 linkedin_cookies.json
+
+# Playwright user data directory (browser profile with session cookies)
+.linkedin_profile/
