@@ -125,6 +125,24 @@ def _reject_short_linkedin_optional_cookie(
     return v
 
 
+def _validate_str_dict_list(items: list[object], name: str) -> None:
+    """Validate each element is a `dict[str, str]`. Raises `ValueError` on mismatch.
+
+    Shared helper for validators that parse JSON lists of `{string_key: string_value}`.
+    """
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"{name} items must be dicts, got {type(item).__name__}"
+            )
+        for key, val in item.items():
+            if not isinstance(key, str) or not isinstance(val, str):
+                raise ValueError(
+                    f"{name} dict keys and values must be strings: "
+                    f"{key!r}: {val!r}"
+                )
+
+
 class Settings(BaseSettings):
     """Env-overridable runtime configuration.
 
@@ -1186,6 +1204,81 @@ class Settings(BaseSettings):
         ge=0.0,
         le=60.0,
     )
+
+    # ------------------------------------------------------------------
+    # Scheduler & Persistence settings (background-scheduler-persistence change)
+    #
+    # 5 new fields that configure the background job scheduler and the
+    # SQLite job repository. Each field declares its own
+    # `validation_alias` (same pattern as every other field group
+    # above). The model-level `env_prefix="LINKEDIN_"` does not apply
+    # to these fields because each declares its own alias.
+    #
+    # - `db_path`: path to the SQLite database file. Default `"jobs.db"`.
+    # - `scheduler_enabled`: master switch. `False` (default) means zero
+    #   behavioral change — no task, no DB init.
+    # - `scheduler_min_interval_seconds`: minimum sleep between cycles.
+    #   Default 1500.0 (25 min).
+    # - `scheduler_max_interval_seconds`: maximum sleep between cycles.
+    #   Default 2100.0 (35 min).
+    # - `scheduler_queries`: JSON list of `{"keywords": ..., "location": ...}`
+    #   dicts to run each cycle. Parsed via a `mode="before"` validator
+    #   (same pattern as `_parse_exempt_paths` and `_parse_aggregator_priority_map`).
+    # ------------------------------------------------------------------
+
+    db_path: str = Field(
+        default="jobs.db",
+        validation_alias=AliasChoices("DB_PATH", "db_path"),
+    )
+    scheduler_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("SCHEDULER_ENABLED", "scheduler_enabled"),
+    )
+    scheduler_min_interval_seconds: float = Field(
+        default=1500.0,
+        validation_alias=AliasChoices(
+            "SCHEDULER_MIN_INTERVAL_SECONDS", "scheduler_min_interval_seconds"
+        ),
+        gt=0.0,
+    )
+    scheduler_max_interval_seconds: float = Field(
+        default=2100.0,
+        validation_alias=AliasChoices(
+            "SCHEDULER_MAX_INTERVAL_SECONDS", "scheduler_max_interval_seconds"
+        ),
+        gt=0.0,
+    )
+    scheduler_queries: list[dict[str, str]] = Field(
+        default_factory=lambda: [{"keywords": "desarrollador", "location": "España"}],
+        validation_alias=AliasChoices("SCHEDULER_QUERIES", "scheduler_queries"),
+    )
+
+    @field_validator("scheduler_queries", mode="before")
+    @classmethod
+    def _parse_scheduler_queries(cls, v: object) -> list[dict[str, str]]:
+        """Parse `SCHEDULER_QUERIES` as a JSON list of `{keywords, location}` objects.
+
+        Mirrors the `_parse_exempt_paths` and `_parse_aggregator_priority_map`
+        patterns: accepts a pre-parsed list (programmatic construction) or a
+        JSON string (env var). An empty / None value yields the default.
+        """
+        if isinstance(v, list):
+            _validate_str_dict_list(v, "SCHEDULER_QUERIES")
+            return v
+        if isinstance(v, str):
+            if not v.strip():
+                return [{"keywords": "desarrollador", "location": "España"}]
+            try:
+                parsed = json.loads(v)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"SCHEDULER_QUERIES must be JSON: {e}") from e
+            if not isinstance(parsed, list):
+                raise ValueError(
+                    f"SCHEDULER_QUERIES must be a JSON list, got {type(parsed).__name__}"
+                )
+            _validate_str_dict_list(parsed, "SCHEDULER_QUERIES")
+            return parsed
+        raise ValueError(f"unparseable SCHEDULER_QUERIES: {v!r}")
 
 
 def load_settings() -> Settings:

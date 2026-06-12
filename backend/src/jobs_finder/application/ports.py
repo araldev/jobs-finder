@@ -359,6 +359,55 @@ class RateLimitPort(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Job repository (background-scheduler-persistence change)
+#
+# `JobRepositoryPort` is the application layer's seam for "any
+# persistent job storage". The infrastructure layer
+# (`infrastructure/persistence/sqlite_job_repository.py`)
+# implements it; the background scheduler depends on the
+# Protocol only, never on the concrete class.
+#
+# The Protocol is NOT `@runtime_checkable` (mirrors the
+# `JobSearchPort`, `CachePort`, and `RateLimitPort` patterns
+# in this file). Structural conformance is enforced at
+# mypy --strict time. A fake repository with the right method
+# signatures satisfies the Protocol structurally.
+# ---------------------------------------------------------------------------
+
+
+class JobRepositoryPort(Protocol):
+    """Persistent job storage. No @runtime_checkable — structural only.
+
+    Spec: REQ-DB-001. Three async methods: upsert_jobs (returns
+    row count), search_jobs (returns list[Job] with optional
+    filters), close (idempotent).
+    """
+
+    async def upsert_jobs(
+        self,
+        jobs: list[Job],
+        source: str,
+        query_snapshot: dict[str, str],
+    ) -> int:
+        """Upsert via ON CONFLICT(source, source_id) DO UPDATE. Returns row count."""
+        ...
+
+    async def search_jobs(
+        self,
+        keywords: str | None = None,
+        sources: list[str] | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Job]:
+        """SELECT with optional WHERE filters on keywords and source."""
+        ...
+
+    async def close(self) -> None:
+        """Close the DB connection. Idempotent."""
+        ...
+
+
+# ---------------------------------------------------------------------------
 # LLM intent extraction (REQ-CHAT-INT-001, REQ-LLM-SEC-002,
 # `chat-filter-2stage` change T-002)
 #
