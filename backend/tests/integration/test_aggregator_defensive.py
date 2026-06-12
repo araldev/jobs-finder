@@ -44,7 +44,7 @@ from jobs_finder.infrastructure.linkedin.exceptions import LinkedInBlockedError
 # ---------------------------------------------------------------------------
 
 
-def _job(idx: int, title: str = "Title", source_id: str = "j") -> Job:
+def _job(idx: int, title: str = "Title", source_id: str = "j", source: str = "linkedin") -> Job:
     """Build a deterministic `Job` for tests.
 
     `posted_at` is tz-aware UTC to satisfy the `Job.__post_init__`
@@ -60,6 +60,7 @@ def _job(idx: int, title: str = "Title", source_id: str = "j") -> Job:
         location="Madrid",
         url=f"https://example.com/{source_id}{idx}",
         posted_at=datetime(2026, 6, idx, tzinfo=UTC),
+        source=source,
     )
 
 

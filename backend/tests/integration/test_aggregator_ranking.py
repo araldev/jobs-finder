@@ -511,4 +511,5 @@ def _custom_job(
         location="Madrid, Spain",
         url=f"https://example.com/{source}/{job_id}",
         posted_at=posted_at,
+        source=source,
     )

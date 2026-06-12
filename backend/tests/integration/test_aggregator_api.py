@@ -104,6 +104,7 @@ def _job(
     company: str = "Co",
     location: str = "Madrid",
     source_id: str = "j",
+    source: str = "linkedin",
 ) -> Job:
     """Build a deterministic `Job` for tests.
 
@@ -118,6 +119,7 @@ def _job(
         location=location,
         url=f"https://example.com/{source_id}{idx}",
         posted_at=datetime(2026, 6, idx, tzinfo=UTC),
+        source=source,
     )
 
 

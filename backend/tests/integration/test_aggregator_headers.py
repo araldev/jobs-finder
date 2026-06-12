@@ -81,7 +81,7 @@ def _build_app_with_ports(
     )
 
 
-def _job(idx: int, source_id: str = "j") -> Job:
+def _job(idx: int, source_id: str = "j", source: str = "linkedin") -> Job:
     """A deterministic `Job` for tests."""
     return Job(
         id=f"{source_id}{idx}",
@@ -90,6 +90,7 @@ def _job(idx: int, source_id: str = "j") -> Job:
         location="Madrid",
         url=f"https://example.com/{source_id}{idx}",
         posted_at=datetime(2026, 6, idx, tzinfo=UTC),
+        source=source,
     )
 
 

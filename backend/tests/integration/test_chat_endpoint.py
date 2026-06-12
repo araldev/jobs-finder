@@ -81,6 +81,7 @@ def _make_job(job_id: str, title: str = "Software Engineer") -> Job:
         location="Madrid",
         url=f"https://example.com/jobs/{job_id}",
         posted_at=datetime(2026, 1, 1, tzinfo=UTC),
+        source="linkedin",
     )
 
 
