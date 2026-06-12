@@ -140,7 +140,6 @@ class BackgroundJobScheduler:
                     if all_jobs:
                         await self._repo.upsert_jobs(
                             all_jobs,
-                            source="aggregator",
                             query_snapshot=last_query,
                         )
 

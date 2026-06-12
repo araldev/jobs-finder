@@ -386,7 +386,6 @@ class JobRepositoryPort(Protocol):
     async def upsert_jobs(
         self,
         jobs: list[Job],
-        source: str,
         query_snapshot: dict[str, str],
     ) -> int:
         """Upsert via ON CONFLICT(source, source_id) DO UPDATE. Returns row count."""

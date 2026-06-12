@@ -84,30 +84,34 @@ class SqliteJobRepository:
     async def upsert_jobs(
         self,
         jobs: list[Job],
-        source: str,
         query_snapshot: dict[str, str],
     ) -> int:
         """Upsert via ON CONFLICT(source, source_id) DO UPDATE. Returns row count."""
         assert self._connection is not None, "repository not opened; use 'async with repo:'"
 
-        query_json = json.dumps(query_snapshot)
-        rows = 0
+        by_source: dict[str, list[Job]] = {}
         for job in jobs:
-            cursor = await self._connection.execute(
-                _UPSERT_SQL,
-                (
-                    source,
-                    job.id,
-                    job.title,
-                    job.company,
-                    job.location,
-                    job.url,
-                    job.description,
-                    job.posted_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    query_json,
-                ),
-            )
-            rows += cursor.rowcount
+            by_source.setdefault(job.source, []).append(job)
+
+        rows = 0
+        for _source, group in by_source.items():
+            query_json = json.dumps(query_snapshot)
+            for job in group:
+                cursor = await self._connection.execute(
+                    _UPSERT_SQL,
+                    (
+                        job.source,
+                        job.id,
+                        job.title,
+                        job.company,
+                        job.location,
+                        job.url,
+                        job.description,
+                        job.posted_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        query_json,
+                    ),
+                )
+                rows += cursor.rowcount
         await self._connection.commit()
         return rows
 
@@ -277,4 +281,5 @@ def _row_to_job(row: aiosqlite.Row) -> Job:
         url=row["url"],
         posted_at=posted_at_dt,
         description=row["description"],
+        source=row["source"],
     )
