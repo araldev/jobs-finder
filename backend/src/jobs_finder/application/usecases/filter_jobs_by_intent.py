@@ -448,6 +448,7 @@ class FilterJobsByIntentUseCase:
         location: str,
         limit: int,
         sources: Sequence[str] | None = None,
+        exclude_ids: Sequence[str] | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Stream-execute the chat-filter flow, yielding `StreamEvent*` per token.
 
@@ -538,6 +539,7 @@ class FilterJobsByIntentUseCase:
                     location=stage2_location,
                     sources=resolved_sources,
                     limit=self._intent_max_results,
+                    exclude_ids=list(exclude_ids) if exclude_ids else None,
                 )
             else:
                 flat_jobs = await self._job_repository.search_jobs_history(
@@ -545,6 +547,7 @@ class FilterJobsByIntentUseCase:
                     location=location,
                     sources=resolved_sources,
                     limit=limit,
+                    exclude_ids=list(exclude_ids) if exclude_ids else None,
                 )
         else:
             # Fallback to aggregator (live scraping) when no repository is configured.

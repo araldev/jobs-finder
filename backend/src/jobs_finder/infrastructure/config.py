@@ -1142,7 +1142,7 @@ class Settings(BaseSettings):
         le=1.0,
     )
     intent_max_results: int = Field(
-        default=20,
+        default=100,
         validation_alias=AliasChoices("INTENT_MAX_RESULTS", "intent_max_results"),
         ge=1,
         le=500,
@@ -1244,6 +1244,12 @@ class Settings(BaseSettings):
             {"keywords": "", "location": "Madrid"},
             {"keywords": "", "location": "Barcelona"},
             {"keywords": "", "location": "Málaga"},
+            {"keywords": "", "location": "Valencia"},
+            {"keywords": "", "location": "Sevilla"},
+            {"keywords": "", "location": "Bilbao"},
+            {"keywords": "", "location": "Zaragoza"},
+            {"keywords": "", "location": "Granada"},
+            {"keywords": "", "location": "Santiago de Compostela"},
         ],
         validation_alias=AliasChoices("SCHEDULER_QUERIES", "scheduler_queries"),
     )

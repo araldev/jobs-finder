@@ -267,10 +267,10 @@ def test_app_factory_wires_intent_extractor_when_2stage_enabled() -> None:
     # The dispatcher flag is on by default.
     assert use_case._intent_extraction_enabled is True  # noqa: SLF001
     # The default threshold / max_results match the spec.
-    # Note: intent_max_results was changed from 100 to 20 to make chat faster
-    # by reducing the number of jobs fetched from the repository.
+    # Note: intent_max_results was changed back to 100 to give the LLM
+    # more jobs to score for better relevance matching.
     assert use_case._intent_extraction_confidence_threshold == 0.7  # noqa: SLF001
-    assert use_case._intent_max_results == 20  # noqa: SLF001
+    assert use_case._intent_max_results == 100  # noqa: SLF001
 
 
 def test_app_factory_does_not_wire_intent_extractor_when_2stage_disabled() -> None:

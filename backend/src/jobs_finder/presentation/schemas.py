@@ -293,6 +293,10 @@ class ChatRequest(BaseModel):
     """
 
     message: str = Field(..., min_length=1)
+    exclude_ids: list[str] | None = Field(
+        default=None,
+        description="Job IDs to exclude from results (previously seen jobs).",
+    )
 
 
 class ChatResponse(BaseModel):

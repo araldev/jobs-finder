@@ -96,6 +96,7 @@ export interface UseChatReturn {
   status: ChatStatus;
   sendMessage: (text: string) => void;
   reset: () => void;
+  seenJobIds: Set<string>;
 }
 
 const decoder = new TextDecoder();
@@ -103,6 +104,7 @@ const decoder = new TextDecoder();
 export function useChat(): UseChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatStatus>("idle");
+  const [seenJobIds, setSeenJobIds] = useState<Set<string>>(new Set());
   const abortRef = useRef<AbortController | null>(null);
 
   const sendMessage = useCallback((text: string) => {
@@ -126,7 +128,10 @@ export function useChat(): UseChatReturn {
     fetch("/api/jobs/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify({
+        message: text,
+        exclude_ids: Array.from(seenJobIds),
+      }),
       signal: controller.signal,
     })
       .then(async (response) => {
@@ -221,6 +226,16 @@ export function useChat(): UseChatReturn {
                         : m,
                     ),
                   );
+                  // Track seen job IDs for "visto" filtering
+                  if (typed.data.jobs && Array.isArray(typed.data.jobs)) {
+                    setSeenJobIds((prev) => {
+                      const next = new Set(prev);
+                      for (const job of typed.data.jobs) {
+                        if (job && job.id) next.add(job.id);
+                      }
+                      return next;
+                    });
+                  }
                   break;
 
                 case "error":
@@ -324,7 +339,8 @@ export function useChat(): UseChatReturn {
     abortRef.current = null;
     setMessages([]);
     setStatus("idle");
+    setSeenJobIds(new Set());
   }, []);
 
-  return { messages, status, sendMessage, reset };
+  return { messages, status, sendMessage, reset, seenJobIds };
 }

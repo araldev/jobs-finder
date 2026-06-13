@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { useChat } from "@/hooks/useChat";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ChatMessages } from "./ChatMessages";
@@ -7,6 +8,17 @@ import { ChatInput } from "./ChatInput";
 
 export function ChatPanel() {
   const { messages, status, sendMessage, reset } = useChat();
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom when messages change or streaming
+  useEffect(() => {
+    if (scrollRef.current) {
+      const viewport = scrollRef.current.querySelector("[data-radix-scroll-area-viewport]");
+      if (viewport) {
+        viewport.scrollTop = viewport.scrollHeight;
+      }
+    }
+  }, [messages, status]);
 
   return (
     <div className="flex h-full flex-col">
@@ -47,7 +59,7 @@ export function ChatPanel() {
         </button>
       </div>
 
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1" ref={scrollRef}>
         <ChatMessages messages={messages} status={status} />
       </ScrollArea>
 
