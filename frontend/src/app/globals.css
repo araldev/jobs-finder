@@ -1,157 +1,111 @@
-@import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
-/* Soft/Modern Glass: dark mode follows the OS prefers-color-scheme
-   automatically — there is no manual toggle in v1. */
-@custom-variant dark (&:is(.dark *));
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
-  --color-sidebar: var(--sidebar);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-ring: var(--sidebar-ring);
-
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-geist-sans);
-
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
-}
-
-/* Light mode — Soft/Modern Glass palette.
-   The accent is a pastel lavender (#A78BFA) over bone-white surfaces,
-   with ink-black text and translucent borders. The lavender is the
-   SINGLE saturated hue in the palette; every other color is neutral. */
 :root {
-  --background: #fafaf9;
-  --foreground: #0a0a0f;
-  --card: #ffffff;
-  --card-foreground: #0a0a0f;
-  --popover: #ffffff;
-  --popover-foreground: #0a0a0f;
-  --primary: #0a0a0f;
-  --primary-foreground: #fafaf9;
-  --secondary: #f4f4f5;
-  --secondary-foreground: #0a0a0f;
-  --muted: #f4f4f5;
-  --muted-foreground: #71717a;
-  --accent: #a78bfa;
-  --accent-foreground: #ffffff;
-  --destructive: #dc2626;
-  --border: rgba(10, 10, 15, 0.08);
-  --input: rgba(10, 10, 15, 0.08);
-  --ring: #a78bfa;
-  --chart-1: #a78bfa;
-  --chart-2: #818cf8;
-  --chart-3: #c4b5fd;
-  --chart-4: #ddd6fe;
-  --chart-5: #ede9fe;
-  --sidebar: #fafaf9;
-  --sidebar-foreground: #0a0a0f;
-  --sidebar-primary: #a78bfa;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #f4f4f5;
-  --sidebar-accent-foreground: #0a0a0f;
-  --sidebar-border: rgba(10, 10, 15, 0.08);
-  --sidebar-ring: #a78bfa;
-  --radius: 0.75rem;
+  --background: 0 0% 98%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --primary: 221 83% 53%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 152 76% 40%;
+  --secondary-foreground: 0 0% 100%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+  --accent: 24 95% 53%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 214 32% 91%;
+  --input: 214 32% 91%;
+  --ring: 221 83% 53%;
+  --radius: 0.625rem;
+
+  --linkedin: 210 90% 40%;
+  --indeed: 220 15% 45%;
+  --infojobs: 24 95% 53%;
 }
 
-/* Dark mode — same lavender accent, slightly desaturated and lifted
-   to #C4B5FD so it still passes contrast over an ink-black surface. */
 .dark {
-  --background: #0a0a0f;
-  --foreground: #fafaf9;
-  --card: #1a1a1f;
-  --card-foreground: #fafaf9;
-  --popover: #1a1a1f;
-  --popover-foreground: #fafaf9;
-  --primary: #fafaf9;
-  --primary-foreground: #0a0a0f;
-  --secondary: #27272a;
-  --secondary-foreground: #fafaf9;
-  --muted: #27272a;
-  --muted-foreground: #a1a1aa;
-  --accent: #c4b5fd;
-  --accent-foreground: #0a0a0f;
-  --destructive: #f87171;
-  --border: rgba(255, 255, 255, 0.08);
-  --input: rgba(255, 255, 255, 0.08);
-  --ring: #c4b5fd;
-  --chart-1: #c4b5fd;
-  --chart-2: #a5b4fc;
-  --chart-3: #ddd6fe;
-  --chart-4: #818cf8;
-  --chart-5: #6366f1;
-  --sidebar: #0a0a0f;
-  --sidebar-foreground: #fafaf9;
-  --sidebar-primary: #c4b5fd;
-  --sidebar-primary-foreground: #0a0a0f;
-  --sidebar-accent: #1a1a1f;
-  --sidebar-accent-foreground: #fafaf9;
-  --sidebar-border: rgba(255, 255, 255, 0.08);
-  --sidebar-ring: #c4b5fd;
+  --background: 222 47% 8%;
+  --foreground: 210 40% 98%;
+  --card: 222 47% 11%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222 47% 11%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 217 92% 60%;
+  --primary-foreground: 222 47% 11%;
+  --secondary: 152 70% 45%;
+  --secondary-foreground: 0 0% 100%;
+  --muted: 217 33% 17%;
+  --muted-foreground: 215 20% 65%;
+  --accent: 24 95% 53%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 62% 50%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 217 33% 17%;
+  --input: 217 33% 17%;
+  --ring: 224 76% 48%;
+
+  --linkedin: 210 80% 55%;
+  --indeed: 220 15% 55%;
+  --infojobs: 24 95% 55%;
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
   }
   body {
     @apply bg-background text-foreground;
-    font-family: var(--font-geist-sans), system-ui, sans-serif;
+    font-feature-settings: "ss01", "ss02", "cv01", "cv02";
   }
-  html {
-    @apply font-sans;
-  }
-  code,
-  pre,
-  kbd {
-    font-family: var(--font-geist-mono), ui-monospace, monospace;
+  ::selection {
+    background-color: hsl(var(--primary) / 0.2);
+    color: hsl(var(--foreground));
   }
 }
 
-/* Soft/Modern Glass utility — used only on the topbar and the chat
-   panel. Applied conservatively because the spec calls for measured
-   glassmorphism, not a fully-frosted interface. */
-@layer utilities {
-  .glass {
-    @apply border backdrop-blur-md;
-    background-color: color-mix(in oklch, var(--card) 80%, transparent);
-    border-color: color-mix(in oklch, var(--border) 50%, transparent);
-  }
+.skeleton-shimmer {
+  @apply animate-shimmer bg-gradient-to-r from-muted via-muted/80 to-muted bg-[length:200%_100%];
+}
+
+/* Markdown prose styles for job descriptions */
+.markdown-prose h1 {
+  @apply mb-2 font-display text-lg font-bold;
+}
+.markdown-prose h2 {
+  @apply mb-2 font-display text-base font-semibold;
+}
+.markdown-prose h3 {
+  @apply mb-1 font-display text-sm font-semibold;
+}
+.markdown-prose p {
+  @apply mb-3 text-sm leading-relaxed text-muted-foreground;
+}
+.markdown-prose ul {
+  @apply mb-3 list-disc space-y-1 pl-5;
+}
+.markdown-prose ol {
+  @apply mb-3 list-decimal space-y-1 pl-5;
+}
+.markdown-prose li {
+  @apply text-sm text-muted-foreground;
+}
+.markdown-prose a {
+  @apply text-primary underline underline-offset-2 hover:text-primary/80;
+}
+.markdown-prose code {
+  @apply rounded bg-muted px-1.5 py-0.5 text-xs font-mono;
+}
+.markdown-prose pre {
+  @apply mb-3 overflow-x-auto rounded-xl bg-muted p-4;
+}
+.markdown-prose strong {
+  @apply font-semibold text-foreground;
 }

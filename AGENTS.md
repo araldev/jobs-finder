@@ -13,7 +13,7 @@ acts on a workspace is run from **inside that workspace** (usually
 | Workspace   | Stack                    | Tooling entry point        |
 | ----------- | ------------------------ | -------------------------- |
 | `backend/`  | Python 3.12 · FastAPI    | `backend/pyproject.toml`   |
-| `frontend/` | Next.js 15 · React 19 · TypeScript · Tailwind v4 · shadcn/ui (nova) | `frontend/package.json` |
+| `frontend/` | Next.js 15 · React 19 · TypeScript · Tailwind 3.4 · shadcn/ui (slate) | `frontend/package.json` |
 
 ## Stack (backend)
 
@@ -47,26 +47,34 @@ backend's "no floating versions" convention.
 
 | Tool                          | Version  | Purpose                                       |
 | ----------------------------- | -------- | --------------------------------------------- |
-| Node                          | >= 20    | Runtime (create-next-app assumes Node 20+).   |
+| Node                          | >= 20    | Runtime.                                      |
 | npm                           | >= 10    | Package manager.                              |
 | Next.js                       | 15.5.19  | App Router, RSC, Route Handlers.              |
 | React                         | 19.1.0   | UI runtime.                                   |
 | TypeScript                    | 5.9.2    | Strict + `noUncheckedIndexedAccess`.          |
-| Tailwind CSS                  | 4.1.13   | CSS-only v4 config (no `tailwind.config.ts`). |
-| shadcn/ui (base / nova)       | 4.11.0   | Components copied to `src/components/ui/`.    |
-| @tanstack/react-query         | 5.101.0  | Server-state cache for the search.            |
-| motion                        | 12.40.0  | Successor to framer-motion.                   |
-| sonner                        | 2.0.7    | Toasts.                                       |
-| lucide-react                  | 1.17.0   | Icons.                                        |
-| vitest                        | 4.1.8    | Test runner.                                  |
+| Tailwind CSS                  | 3.4.17   | PostCSS-based config (`tailwind.config.ts`).  |
+| tailwindcss-animate           | 1.0.7    | Tailwind animation utilities (shadcn needs).  |
+| shadcn/ui (slate / default)   | —        | Radix-based components in `src/components/ui/`. |
+| class-variance-authority      | 0.7.1    | Variant-driven component classes.             |
+| clsx                          | 2.1.1    | Conditional class merging.                    |
+| tailwind-merge                | 3.6.0    | Tailwind class conflict resolution (`cn()`).  |
+| @tanstack/react-query         | 5.101.0  | Server-state cache (GET only — 5min staleTime).|
+| framer-motion                 | 11.15.0  | Page transitions, spring animations.          |
+| next-themes                   | 0.4.6    | Dark/light mode with `class` strategy.        |
+| sonner                        | 2.0.7    | Toasts (`bottom-right`, `richColors`).        |
+| lucide-react                  | 1.17.0   | ONLY icon set.                                |
+| date-fns                      | 4.1.0    | Relative time formatting.                     |
+| Radix UI (via shadcn)         | —        | dialog, dropdown-menu, popover, select, separator, switch, tooltip, avatar, scroll-area |
+| vitest                        | 4.1.8    | Test runner with `@testing-library/react`.    |
 | @testing-library/react        | 16.3.2   | React component-test utilities.               |
-| jsdom                         | 29.1.1   | Test environment for hooks and DOM logic.     |
-| eslint-config-next            | 15.5.19  | Wraps `next/core-web-vitals` + TS rules.      |
+| @testing-library/jest-dom     | 6.6.3    | DOM matchers for vitest.                      |
+| jsdom                         | 26.0.0   | Test environment for hooks and DOM logic.     |
+| @playwright/test              | —        | E2E tests (config only, no tests yet).        |
 
 The frontend talks to the backend **only** through Next.js Route
 Handlers in `src/app/api/`. The browser never calls
-`BACKEND_URL` directly. See `frontend/README.md` "How to consume
-the backend API" for the full contract.
+`BACKEND_URL` directly. See the project layout below for the
+contract.
 
 ## Project layout
 
@@ -102,33 +110,54 @@ jobs-finder/
 │   │   └── integration/                # FastAPI app + composition root + X-Cache headers
 │   ├── uv.lock
 │   └── README.md        # full backend documentation
-└── frontend/            # Next.js 15, React 19, shadcn/ui (nova)
-    ├── .env.example     # template — copy to `frontend/.env.local` for local dev
-    ├── components.json  # shadcn config (style: base-nova, base: base)
+└── frontend/                # Next.js 15, React 19, shadcn/ui (slate)
+    ├── .env.example         # template — copy to `frontend/.env.local`
+    ├── .gitignore
+    ├── components.json      # shadcn config (style: default, baseColor: slate)
+    ├── e2e/                 # Playwright E2E (config only, no tests yet)
     ├── eslint.config.mjs
+    ├── next-env.d.ts
     ├── next.config.ts
     ├── package.json
+    ├── playwright.config.ts
     ├── postcss.config.mjs
+    ├── tailwind.config.ts
     ├── tsconfig.json
     ├── vitest.config.ts
     ├── vitest.setup.ts
-    ├── public/          # create-next-app default assets
-    ├── src/
-    │   ├── app/         # App Router (RSC + Route Handlers)
-    │   │   ├── api/     # server-side proxies (jobs, chat/stream, health)
-    │   │   ├── globals.css
-    │   │   ├── layout.tsx
-    │   │   ├── page.tsx
-    │   │   └── providers.tsx
-    │   ├── components/
-    │   │   ├── chat/    # ChatPanel, ChatMessage, ChatInput, ChatStreamBanner, …
-    │   │   ├── layout/  # Topbar, OnboardingOverlay, PageEntry, Workbench
-    │   │   ├── search/  # SearchBar, ResultsGrid, JobCard, EmptyState, …
-    │   │   └── ui/      # 15 shadcn primitives (button, input, card, …)
-    │   ├── hooks/       # useDebouncedValue, useDebouncedJobsSearch, useChatStream
-    │   └── lib/         # types, api, backend, format, chat-stream-forwarder
-    │       └── __tests__/   # 3 unit test files (test-after policy)
-    └── README.md        # full frontend documentation
+    ├── public/
+    └── src/
+        ├── app/             # App Router (RSC + Route Handlers)
+        │   ├── api/         # server-side proxies (jobs, jobs/[id], stats, health)
+        │   ├── globals.css  # Tailwind + CSS vars (light/dark) + Google Fonts + shimmer
+        │   ├── layout.tsx   # Root layout with Providers + AppShell
+        │   ├── loading.tsx  # Root loading skeleton
+        │   ├── error.tsx    # Global error boundary
+        │   ├── not-found.tsx
+        │   ├── page.tsx     # Dashboard (stats + search + job list + right sidebar)
+        │   ├── providers.tsx  # ThemeProvider > QueryClientProvider > Toaster
+        │   ├── jobs/
+        │   │   ├── page.tsx          # Jobs listing
+        │   │   └── [id]/
+        │   │       ├── page.tsx      # Job detail (2-col layout)
+        │   │       └── loading.tsx
+        │   ├── search/
+        │   │   ├── page.tsx          # Search with filters + results grid
+        │   │   └── loading.tsx
+        │   └── settings/
+        │       ├── page.tsx          # Platform config + notification prefs
+        │       └── loading.tsx
+        ├── components/
+        │   ├── ui/           # shadcn primitives (button, card, input, badge, …)
+        │   ├── layout/       # AppShell, Sidebar, Header, ThemeToggle, PageTransition
+        │   ├── dashboard/    # StatCard, StatsCardsRow, PlatformDistribution, RightSidebar
+        │   ├── jobs/         # JobCard, JobList, JobDetailContent, JobDetailAside, PlatformBadge, SalaryBadge
+        │   ├── search/       # SearchBar, FilterPanel
+        │   ├── settings/     # PlatformConfigCard, NotificationSettings
+        │   └── shared/       # EmptyState, ErrorState, ExportButton
+        ├── hooks/            # useStats, useJobs, useJobsInfinite, useJobDetail, useDebounce
+        ├── lib/              # utils (cn), api-client (server-only), formatters, types
+        └── types/            # job.ts, stats.ts, settings.ts
 ```
 
 ### Workspace-local `.env` files
@@ -158,7 +187,7 @@ mirrored by per-source fixtures under `tests/fixtures/`.
 
 For the frontend, the rule is
 `app (server) ← lib (server-only) | app (client) ← lib (browser-safe)`.
-`src/lib/backend.ts` carries `import "server-only"` so any
+`src/lib/api-client.ts` carries `import "server-only"` so any
 accidental client import fails the build. The browser always
 talks to the same-origin `/api/*` endpoints, never to
 `BACKEND_URL` directly.
@@ -388,3 +417,13 @@ CI runs the same commands. Do not commit if any check fails.
     backend traffic goes through a Next.js Route Handler in
     `frontend/src/app/api/`. Adding `fetch(${BACKEND_URL}…)` to a
     client component is a build-time architectural violation.
+13. **No bg-white or pure black.** Always use `bg-background` (which resolves via CSS variables for light/dark mode). Cards use `bg-card`.
+14. **No hardcoded colors.** Use CSS variable tokens: `text-muted-foreground` (never `text-gray-500`), `border-border`, `bg-muted`, etc.
+15. **Typography rules:** headings use `font-display` (DM Sans via `font-feature-settings`), body uses `font-sans` (Inter), important numbers use `font-mono` (JetBrains Mono).
+16. **Shadows:** `shadow-sm` base, `shadow-md` hover. Never `shadow-lg` or heavier.
+17. **Borders:** always 1px `border-border`. Never 2px.
+18. **Border radius:** `rounded-xl` for cards/panels, `rounded-lg` for buttons/inputs/badges. Never `rounded-md` or `rounded-sm` for containers.
+19. **Loading states:** per-component skeletons with `skeleton-shimmer` class. NEVER a global spinner.
+20. **Page transitions:** framer-motion `AnimatePresence` via `PageTransition` wrapper, keyed by `usePathname`.
+21. **Job card animations:** spring `bounce:0.1`, delay `index * 0.06s`, `layout` enabled.
+22. **Data fetching:** React Query with `staleTime: 5 * 60 * 1000`, `refetchOnWindowFocus: true`. Use `useInfiniteQuery` for paginated lists (IntersectionObserver-based infinite scroll).
