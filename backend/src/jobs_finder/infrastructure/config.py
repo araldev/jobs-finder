@@ -228,9 +228,24 @@ class Settings(BaseSettings):
     headless: bool = True
     request_timeout_ms: int = 10_000
 
-    # REQ-006 — CORS allowlist. `*` is the dev default; production must
-    # override via `LINKEDIN_CORS_ALLOW_ORIGINS=https://app.example.com`.
-    cors_allow_origins: list[str] = Field(default_factory=lambda: ["*"])
+    # REQ-006 — CORS allowlist. Defaults to a sentinel `["*"]` that the
+    # model_validator replaces with a safe localhost list in development
+    # (auto-discovery). In production, a ValueError is raised if CORS is
+    # not explicitly overridden via LINKEDIN_CORS_ALLOW_ORIGINS.
+    cors_allow_origins: list[str] = Field(
+        default_factory=lambda: ["*"],
+        validation_alias=AliasChoices(
+            "LINKEDIN_CORS_ALLOW_ORIGINS", "cors_allow_origins"
+        ),
+    )
+
+    # Auto-detect deployment environment. Set ENVIRONMENT=production for prod.
+    # In development mode, CORS is auto-set to localhost; in production,
+    # CORS must be explicitly configured.
+    deployment_environment: Literal["development", "production"] = Field(
+        default="development",
+        validation_alias=AliasChoices("ENVIRONMENT", "deployment_environment"),
+    )
 
     # REQ-006 — structured logging controls.
     log_level: str = "INFO"
@@ -1324,6 +1339,30 @@ class Settings(BaseSettings):
             _validate_str_dict_list(parsed, "SCHEDULER_QUERIES")
             return parsed
         raise ValueError(f"unparseable SCHEDULER_QUERIES: {v!r}")
+
+    @model_validator(mode="after")
+    def _auto_cors_for_development(self) -> "Settings":
+        """Auto-configure CORS origins based on deployment environment.
+
+        - development (ENVIRONMENT=development or unset): set CORS to
+          localhost-only allowlist so local frontend can call the API.
+        - production (ENVIRONMENT=production): require explicit CORS config;
+          raise ValueError if still at the sentinel default ["*"].
+        """
+        if self.deployment_environment == "development":
+            # Override the bare "*" sentinel with a safe localhost list.
+            self.cors_allow_origins = [
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+            ]
+        elif self.cors_allow_origins == ["*"]:
+            # production but CORS was not explicitly set
+            raise ValueError(
+                "CORS not configured: set LINKEDIN_CORS_ALLOW_ORIGINS to your "
+                "production frontend origin (e.g. https://jobsfinder.example.com) "
+                "or set ENVIRONMENT=development for local dev."
+            )
+        return self
 
 
 def load_settings() -> Settings:
