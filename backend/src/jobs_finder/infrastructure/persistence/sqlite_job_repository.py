@@ -190,7 +190,24 @@ class SqliteJobRepository:
         if clauses:
             where_clause = "WHERE " + " AND ".join(clauses)
 
-        sql = f"SELECT * FROM jobs {where_clause} ORDER BY posted_at DESC LIMIT ? OFFSET ?"
+        # Prioritize Spain locations (all Spanish cities and regions)
+        spain_terms = [
+            "Spain", "España", "Madrid", "Barcelona", "Málaga", "Malaga",
+            "Valencia", "Sevilla", "Zaragoza", "Murcia", "Bilbao",
+            "Galicia", "Cataluña", "Andalucía", "Castilla", "Asturias",
+            "Cantabria", "Rioja", "Navarra", "Extremadura", "Baleares",
+            "Canarias", "Santiago", "Vigo", "Gijón", "Granada", "Córdoba",
+            "Valladolid", "País Vasco", "Aragón", "La Rioja", "Navarra",
+            "Asturias", "Melilla", "Ceuta",
+        ]
+        spain_clauses = " OR ".join(f"location LIKE '%{t}%'" for t in spain_terms)
+        sql = (
+            f"SELECT * FROM jobs {where_clause} "
+            f"ORDER BY "
+            f"CASE WHEN {spain_clauses} THEN 0 ELSE 1 END, "
+            f"posted_at DESC "
+            f"LIMIT ? OFFSET ?"
+        )
         params = [*params, limit, offset]
 
         async with self._connection.execute(sql, params) as cursor:

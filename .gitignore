@@ -71,3 +71,5 @@ linkedin_cookies.json
 
 # Playwright user data directory (browser profile with session cookies)
 .linkedin_profile/
+
+jobs.db

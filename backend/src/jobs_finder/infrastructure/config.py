@@ -1241,9 +1241,9 @@ class Settings(BaseSettings):
     )
     scheduler_queries: list[dict[str, str]] = Field(
         default_factory=lambda: [
-            {"keywords": "", "location": "España"},
-            {"keywords": "", "location": "Madrid, España"},
-            {"keywords": "", "location": "Barcelona, España"},
+            {"keywords": "", "location": "Madrid"},
+            {"keywords": "", "location": "Barcelona"},
+            {"keywords": "", "location": "Málaga"},
         ],
         validation_alias=AliasChoices("SCHEDULER_QUERIES", "scheduler_queries"),
     )
