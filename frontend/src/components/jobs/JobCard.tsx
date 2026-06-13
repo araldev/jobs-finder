@@ -64,17 +64,19 @@ export function JobCard({ job, index = 0, openedJobIds }: JobCardProps) {
           <FavoriteButton job={job} size="sm" />
           <div className="flex items-center gap-2">
             {job.url && (
-              <a
-                href={job.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  window.open(job.url, "_blank", "noopener,noreferrer");
+                }}
                 className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground hover:bg-muted"
                 title="Open original posting"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
                 Apply
-              </a>
+              </button>
             )}
             <div className="flex items-center gap-1 text-xs text-muted-foreground">
               <Calendar className="h-3 w-3" />
