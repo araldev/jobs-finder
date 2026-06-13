@@ -478,6 +478,16 @@ class JobsHistoryQuery(BaseModel):
         description="Comma-separated list of sources to filter by",
     )
     keywords: str | None = Field(default=None, max_length=200)
+    location: str | None = Field(
+        default=None,
+        max_length=200,
+        description="Substring match against job location field",
+    )
+    description: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Substring match against job description field",
+    )
     date_from: str | None = Field(
         default=None,
         description="Inclusive ISO date string for posted_at >= filter",

@@ -57,6 +57,8 @@ async def jobs_history(
     jobs = await repo.search_jobs_history(
         sources=source_list,
         keywords=query.keywords,
+        location=query.location,
+        description=query.description,
         date_from=query.date_from,
         date_to=query.date_to,
         limit=query.limit,
@@ -65,6 +67,8 @@ async def jobs_history(
     total = await repo.count_jobs(
         sources=source_list,
         keywords=query.keywords,
+        location=query.location,
+        description=query.description,
         date_from=query.date_from,
         date_to=query.date_to,
     )

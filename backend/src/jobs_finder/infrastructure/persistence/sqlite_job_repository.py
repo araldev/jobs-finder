@@ -177,15 +177,19 @@ class SqliteJobRepository:
         *,
         sources: list[str] | None = None,
         keywords: str | None = None,
+        location: str | None = None,
+        description: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[Job]:
-        """SELECT with optional filters on source, keyword, and date range."""
+        """SELECT with optional filters on source, keyword, location, description, and date range."""
         assert self._connection is not None, "repository not opened; use 'async with repo:'"
 
-        clauses, params = _build_history_clauses(sources, keywords, date_from, date_to)
+        clauses, params = _build_history_clauses(
+            sources, keywords, location, description, date_from, date_to
+        )
         where_clause = ""
         if clauses:
             where_clause = "WHERE " + " AND ".join(clauses)
@@ -220,13 +224,17 @@ class SqliteJobRepository:
         *,
         sources: list[str] | None = None,
         keywords: str | None = None,
+        location: str | None = None,
+        description: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
     ) -> int:
         """SELECT count(*) with the same optional filters."""
         assert self._connection is not None, "repository not opened; use 'async with repo:'"
 
-        clauses, params = _build_history_clauses(sources, keywords, date_from, date_to)
+        clauses, params = _build_history_clauses(
+            sources, keywords, location, description, date_from, date_to
+        )
         where_clause = ""
         if clauses:
             where_clause = "WHERE " + " AND ".join(clauses)
@@ -249,6 +257,8 @@ class SqliteJobRepository:
 def _build_history_clauses(
     sources: list[str] | None,
     keywords: str | None,
+    location: str | None,
+    description: str | None,
     date_from: str | None,
     date_to: str | None,
 ) -> tuple[list[str], list[Any]]:
@@ -271,6 +281,14 @@ def _build_history_clauses(
         like_pattern = f"%{keywords}%"
         params.append(like_pattern)
         params.append(like_pattern)
+
+    if location is not None:
+        clauses.append("location LIKE ?")
+        params.append(f"%{location}%")
+
+    if description is not None:
+        clauses.append("description LIKE ?")
+        params.append(f"%{description}%")
 
     if date_from is not None:
         clauses.append("posted_at >= ?")
