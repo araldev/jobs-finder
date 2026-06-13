@@ -40,6 +40,18 @@ describe("useChat", () => {
 
     // Mock global fetch
     vi.stubGlobal("fetch", vi.fn());
+
+    // Mock localStorage for chat persistence
+    const store: Record<string, string> = {};
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation((key) => {
+      return store[key] ?? null;
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation((key, value) => {
+      store[key] = value as string;
+    });
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation((key) => {
+      delete store[key];
+    });
   });
 
   afterEach(() => {

@@ -4,6 +4,12 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import type { ChatMessage, ChatStatus, SSEParsedEvent } from "@/types/chat";
 import type { SSEMessage } from "@/types/chat";
 import type { Job } from "@/types/job";
+import {
+  CHAT_STORAGE_KEY,
+  loadChatStorage,
+  saveChatStorage,
+  clearChatStorage,
+} from "@/lib/chat-storage";
 
 // ── SSE Parser (pure, no React dependencies) ────────────────────────
 
@@ -96,7 +102,8 @@ export interface UseChatReturn {
   status: ChatStatus;
   sendMessage: (text: string) => void;
   reset: () => void;
-  seenJobIds: Set<string>;
+  openedJobIds: Set<string>;
+  markJobAsOpened: (jobId: string) => void;
 }
 
 export interface UseChatOptions {
@@ -106,53 +113,25 @@ export interface UseChatOptions {
 
 const decoder = new TextDecoder();
 
-function loadFromStorage(key: string): { messages: ChatMessage[]; seenJobIds: string[] } | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return null;
-    return JSON.parse(raw) as { messages: ChatMessage[]; seenJobIds: string[] };
-  } catch {
-    return null;
-  }
-}
-
-function saveToStorage(key: string, messages: ChatMessage[], seenJobIds: Set<string>): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(key, JSON.stringify({ messages, seenJobIds: Array.from(seenJobIds) }));
-  } catch {
-    // localStorage unavailable or quota exceeded — ignore
-  }
-}
-
-function clearStorage(key: string): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.removeItem(key);
-  } catch {
-    // ignore
-  }
-}
-
 export function useChat(options: UseChatOptions = {}): UseChatReturn {
   const { storageKey } = options;
+  const effectiveKey = storageKey ?? CHAT_STORAGE_KEY;
 
   // Load persisted state from localStorage on init
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
-    if (storageKey) {
-      const saved = loadFromStorage(storageKey);
-      return saved?.messages ?? [];
+    if (effectiveKey) {
+      const saved = loadChatStorage();
+      return (saved?.messages as ChatMessage[]) ?? [];
     }
     return [];
   });
 
   const [status, setStatus] = useState<ChatStatus>("idle");
 
-  const [seenJobIds, setSeenJobIds] = useState<Set<string>>(() => {
-    if (storageKey) {
-      const saved = loadFromStorage(storageKey);
-      return new Set(saved?.seenJobIds ?? []);
+  const [openedJobIds, setOpenedJobIds] = useState<Set<string>>(() => {
+    if (effectiveKey) {
+      const saved = loadChatStorage();
+      return new Set(saved?.openedJobIds ?? []);
     }
     return new Set();
   });
@@ -161,10 +140,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
   // Persist state to localStorage on every change
   useEffect(() => {
-    if (storageKey) {
-      saveToStorage(storageKey, messages, seenJobIds);
+    if (effectiveKey) {
+      saveChatStorage({ messages, openedJobIds: Array.from(openedJobIds) });
     }
-  }, [storageKey, messages, seenJobIds]);
+  }, [effectiveKey, messages, openedJobIds]);
 
   const sendMessage = useCallback((text: string) => {
     if (!text.trim()) return;
@@ -187,10 +166,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     fetch("/api/jobs/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: text,
-        exclude_ids: Array.from(seenJobIds),
-      }),
+      body: JSON.stringify({ message: text }),
       signal: controller.signal,
     })
       .then(async (response) => {
@@ -285,16 +261,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
                         : m,
                     ),
                   );
-                  // Track seen job IDs for "visto" filtering
-                  if (typed.data.jobs && Array.isArray(typed.data.jobs)) {
-                    setSeenJobIds((prev) => {
-                      const next = new Set(prev);
-                      for (const job of typed.data.jobs) {
-                        if (job && job.id) next.add(job.id);
-                      }
-                      return next;
-                    });
-                  }
                   break;
 
                 case "error":
@@ -398,11 +364,19 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     abortRef.current = null;
     setMessages([]);
     setStatus("idle");
-    setSeenJobIds(new Set());
-    if (storageKey) {
-      clearStorage(storageKey);
+    setOpenedJobIds(new Set());
+    if (effectiveKey) {
+      clearChatStorage();
     }
-  }, [storageKey]);
+  }, [effectiveKey]);
 
-  return { messages, status, sendMessage, reset, seenJobIds };
+  const markJobAsOpened = useCallback((jobId: string) => {
+    setOpenedJobIds((prev) => {
+      const next = new Set(prev);
+      next.add(jobId);
+      return next;
+    });
+  }, []);
+
+  return { messages, status, sendMessage, reset, openedJobIds, markJobAsOpened };
 }

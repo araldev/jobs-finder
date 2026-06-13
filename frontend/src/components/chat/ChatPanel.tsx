@@ -7,7 +7,7 @@ import { ChatMessages } from "./ChatMessages";
 import { ChatInput } from "./ChatInput";
 
 export function ChatPanel() {
-  const { messages, status, sendMessage, reset } = useChat({ storageKey: "jobs-finder-chat-v1" });
+  const { messages, status, sendMessage, reset, openedJobIds } = useChat({ storageKey: "jobs-finder-chat-v1" });
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom when messages change or streaming
@@ -60,7 +60,7 @@ export function ChatPanel() {
       </div>
 
       <ScrollArea className="flex-1" ref={scrollRef}>
-        <ChatMessages messages={messages} status={status} />
+        <ChatMessages messages={messages} status={status} openedJobIds={openedJobIds} />
       </ScrollArea>
 
       <ChatInput

@@ -10,11 +10,20 @@ import { useJobDetail } from "@/hooks/useJobDetail";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState } from "@/components/shared/ErrorState";
 import { Button } from "@/components/ui/button";
+import { useEffect } from "react";
+import { markJobAsOpened } from "@/lib/chat-storage";
 
 export default function JobDetailPage() {
   const params = useParams();
   const id = typeof params.id === "string" ? params.id : "";
   const { data: job, isLoading, isError, refetch } = useJobDetail(id);
+
+  // Mark job as opened when detail page loads
+  useEffect(() => {
+    if (job?.id) {
+      markJobAsOpened(job.id);
+    }
+  }, [job?.id]);
 
   return (
     <PageTransition>

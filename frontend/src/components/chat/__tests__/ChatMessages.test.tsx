@@ -23,7 +23,7 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="done" />,
+      <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
     );
 
     expect(screen.getByText("remote jobs")).toBeInTheDocument();
@@ -40,7 +40,7 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="done" />,
+      <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
     );
 
     expect(
@@ -55,7 +55,7 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="streaming" />,
+      <ChatMessages messages={messages} status="streaming" openedJobIds={new Set()} />,
     );
 
     expect(screen.getByTestId("typing-indicator")).toBeInTheDocument();
@@ -68,7 +68,7 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="done" />,
+      <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
     );
 
     expect(
@@ -88,7 +88,7 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="done" />,
+      <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
     );
 
     expect(screen.getByText("Found matches:")).toBeInTheDocument();
@@ -113,7 +113,7 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="error" />,
+      <ChatMessages messages={messages} status="error" openedJobIds={new Set()} />,
     );
 
     expect(
@@ -122,7 +122,7 @@ describe("ChatMessages", () => {
   });
 
   it("shows empty state when no messages", () => {
-    render(<ChatMessages messages={[]} status="idle" />);
+    render(<ChatMessages messages={[]} status="idle" openedJobIds={new Set()} />);
 
     expect(
       screen.getByText(

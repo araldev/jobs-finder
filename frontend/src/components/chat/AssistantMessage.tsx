@@ -1,18 +1,21 @@
 "use client";
 
 import Link from "next/link";
+import { Check } from "lucide-react";
 import type { ChatMessage } from "@/types/chat";
 
 interface AssistantMessageProps {
   message: ChatMessage;
   isStreaming: boolean;
   statusLabel?: string;
+  openedJobIds: Set<string>;
 }
 
 export function AssistantMessage({
   message,
   isStreaming,
   statusLabel,
+  openedJobIds,
 }: AssistantMessageProps) {
   // Show the status indicator while connecting / before first token
   const showStatus = isStreaming && !message.content && !message.extractedQuery;
@@ -67,26 +70,35 @@ export function AssistantMessage({
             Matching jobs ({message.jobs.length})
           </p>
           <ul className="space-y-1">
-            {message.jobs.map((job, idx) => (
-              <li key={`${job.id}-${idx}`}>
-                <Link
-                  href={`/jobs/${job.id}`}
-                  className="block rounded-md border border-border bg-card px-3 py-2.5 text-sm transition-colors hover:bg-accent"
-                >
-                  <span className="font-medium text-foreground">
-                    {job.title}
-                  </span>
-                  <span className="ml-2 text-muted-foreground">
-                    @ {job.company}
-                  </span>
-                  {job.location && (
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      {job.location}
+            {message.jobs.map((job, idx) => {
+              const isOpened = openedJobIds.has(job.id);
+              return (
+                <li key={`${job.id}-${idx}`}>
+                  <Link
+                    href={`/jobs/${job.id}`}
+                    className="block rounded-md border border-border bg-card px-3 py-2.5 text-sm transition-colors hover:bg-accent"
+                  >
+                    <span className="mr-2 font-medium text-foreground">
+                      {job.title}
                     </span>
-                  )}
-                </Link>
-              </li>
-            ))}
+                    {isOpened && (
+                      <span className="inline-flex items-center gap-1 rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-700">
+                        <Check className="h-3 w-3" />
+                        Abierta
+                      </span>
+                    )}
+                    <span className="ml-2 text-muted-foreground">
+                      @ {job.company}
+                    </span>
+                    {job.location && (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {job.location}
+                      </span>
+                    )}
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

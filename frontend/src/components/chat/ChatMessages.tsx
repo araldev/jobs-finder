@@ -6,9 +6,10 @@ import { AssistantMessage } from "./AssistantMessage";
 interface ChatMessagesProps {
   messages: ChatMessage[];
   status: ChatStatus;
+  openedJobIds: Set<string>;
 }
 
-export function ChatMessages({ messages, status }: ChatMessagesProps) {
+export function ChatMessages({ messages, status, openedJobIds }: ChatMessagesProps) {
   if (messages.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center px-4">
@@ -54,6 +55,7 @@ export function ChatMessages({ messages, status }: ChatMessagesProps) {
                 message={msg}
                 isStreaming={isLastAssistant && isStreaming}
                 statusLabel={isLastAssistant ? statusLabel : undefined}
+                openedJobIds={openedJobIds}
               />
             </div>
           </div>

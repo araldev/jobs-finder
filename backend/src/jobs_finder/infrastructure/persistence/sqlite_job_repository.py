@@ -183,7 +183,6 @@ class SqliteJobRepository:
         date_to: str | None = None,
         limit: int = 50,
         offset: int = 0,
-        exclude_ids: list[str] | None = None,
     ) -> list[Job]:
         """SELECT with optional filters on source, keyword, location, description, and date range."""
         assert self._connection is not None, "repository not opened; use 'async with repo:'"
@@ -191,13 +190,6 @@ class SqliteJobRepository:
         clauses, params = _build_history_clauses(
             sources, keywords, location, description, date_from, date_to
         )
-
-        # Exclude previously seen job IDs (for "visto" tracking)
-        if exclude_ids:
-            placeholders = ", ".join("?" for _ in exclude_ids)
-            clauses.append(f"id NOT IN ({placeholders})")
-            params.extend(exclude_ids)
-
         where_clause = ""
         if clauses:
             where_clause = "WHERE " + " AND ".join(clauses)

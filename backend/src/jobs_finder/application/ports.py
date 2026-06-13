@@ -429,7 +429,6 @@ class JobRepositoryPort(Protocol):
         date_to: str | None = None,
         limit: int = 50,
         offset: int = 0,
-        exclude_ids: list[str] | None = None,
     ) -> list[Job]:
         """Search job history with optional filters: source, keyword, location, description, date range.
 
@@ -442,7 +441,6 @@ class JobRepositoryPort(Protocol):
             date_to: Optional ISO date string (inclusive) for `posted_at <=`.
             limit: Max results to return (default 50).
             offset: Number of results to skip for pagination.
-            exclude_ids: Optional list of job IDs to exclude from results.
 
         Returns:
             Matching `Job` domain objects ordered by `posted_at DESC`.

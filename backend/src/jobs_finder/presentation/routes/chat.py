@@ -333,11 +333,7 @@ def build_chat_stream_router(
         async def producer() -> None:
             try:
                 async for event in use_case.stream_execute(
-                    message=normalized,
-                    q="",
-                    location="",
-                    limit=20,
-                    exclude_ids=body.exclude_ids,
+                    message=normalized, q="", location="", limit=20
                 ):
                     await q.put(_serialize_event(event, request_id))
             except BaseException as exc:  # noqa: BLE001
