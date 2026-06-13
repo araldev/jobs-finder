@@ -548,9 +548,13 @@ with default values (graceful degradation — never crashes).
   "last_error": null,
   "cycle_count": 3,
   "total_jobs_collected": 147,
-  "total_in_db": 0,
-  "per_source": {},
-  "queries": [{"keywords": "desarrollador", "location": "España"}],
+  "total_in_db": 165,
+  "per_source": {"linkedin": 75, "indeed": 71, "infojobs": 19},
+  "queries": [
+    {"keywords": "", "location": "Madrid"},
+    {"keywords": "", "location": "Barcelona"},
+    {"keywords": "", "location": "Málaga"}
+  ],
   "min_interval_seconds": 1500.0,
   "max_interval_seconds": 2100.0
 }
@@ -565,9 +569,9 @@ with default values (graceful degradation — never crashes).
 | `last_error` | str \| null | Traceback of the last error, if any. |
 | `cycle_count` | int | Number of completed cycles. |
 | `total_jobs_collected` | int | Cumulative jobs collected across cycles. |
-| `total_in_db` | int | Total jobs in the database (currently `0` — requires a follow-up change to wire repository stats through the Protocol). |
-| `per_source` | object | Per-source job counts (currently `{}` — same limitation). |
-| `queries` | list | The search queries the scheduler iterates over. |
+| `total_in_db` | int | Total jobs currently stored in the database. |
+| `per_source` | object | Per-source job counts (e.g. `{"linkedin": 75, "indeed": 71, "infojobs": 19}`). |
+| `queries` | list | The search queries the scheduler iterates over (default: 3 Spain cities with empty keywords). |
 | `min_interval_seconds` | float | Minimum sleep between cycles. |
 | `max_interval_seconds` | float | Maximum sleep between cycles. |
 
@@ -591,7 +595,11 @@ Response with scheduler enabled:
   "total_jobs_collected": 0,
   "total_in_db": 0,
   "per_source": {},
-  "queries": [{"keywords": "desarrollador", "location": "España"}],
+  "queries": [
+    {"keywords": "", "location": "Madrid"},
+    {"keywords": "", "location": "Barcelona"},
+    {"keywords": "", "location": "Málaga"}
+  ],
   "min_interval_seconds": 1500.0,
   "max_interval_seconds": 2100.0,
   "last_run_start": null,
@@ -621,6 +629,8 @@ always queryable.
 | --- | --- | --- | --- |
 | `sources` | str | `linkedin,indeed,infojobs` | Comma-separated list of source names to filter by. |
 | `keywords` | str | — | Optional string to match against job title or company (case-insensitive). |
+| `location` | str | — | Optional substring match against job location field (case-insensitive). |
+| `description` | str | — | Optional substring match against job description field (case-insensitive). |
 | `date_from` | str | — | Inclusive ISO date string for `posted_at >=` filter (e.g. `2026-01-01`). |
 | `date_to` | str | — | Inclusive ISO date string for `posted_at <=` filter (e.g. `2026-06-01`). |
 | `limit` | int | `50` | Max results per page (max `200`). |
@@ -678,6 +688,21 @@ curl -s "http://localhost:8000/jobs/history?limit=1" | jq '.total'
 When no database is configured (`DB_PATH` empty or unset), the endpoint
 returns `{"items": [], "total": 0, "limit": 50, "offset": 0}` —
 graceful degradation, never a 500.
+
+#### Result ordering
+
+Results are ordered by **Spain-first priority**: jobs whose `location` field
+contains any Spanish city, region, or country name (Madrid, Barcelona, Málaga,
+Galicia, Sevilla, etc.) appear before jobs from other countries. Within each
+group, results are sorted by `posted_at DESC` (most recent first).
+
+#### Database deduplication
+
+The database uses `ON CONFLICT(source, source_id)` as the upsert key. A job
+is considered a duplicate only when the **same source reports the same
+external ID** — a LinkedIn job and an Indeed job with identical title/company
+are stored as separate rows (different `source`). The aggregator endpoint
+(`/jobs`) applies its own cross-source dedup heuristic on top.
 
 ## Stack
 

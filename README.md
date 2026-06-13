@@ -8,7 +8,7 @@
 | Path | Stack | Status |
 | --- | --- | --- |
 | [`backend/`](backend/) | Python 3.12 · FastAPI · Playwright · uv | **Active.** On-demand LinkedIn + Indeed + InfoJobs job search HTTP endpoints. |
-| [`frontend/`](frontend/) | _not chosen yet_ | **Empty placeholder.** Will host the web client that consumes the backend API. |
+| [`frontend/`](frontend/) | Next.js 15 · React 19 · TypeScript · Tailwind v4 · shadcn/ui | **Active.** Web client that consumes the backend API through Next.js Route Handlers. |
 
 See each workspace's own `README.md` for setup, scripts, and per-workspace
 documentation. The backend README is the source of truth for the HTTP API
