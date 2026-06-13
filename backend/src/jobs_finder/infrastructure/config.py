@@ -788,6 +788,51 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("RATE_LIMIT_TRUSTED_PROXIES", "rate_limit_trusted_proxies"),
     )
 
+    # ------------------------------------------------------------------
+    # API Key authentication (api-key-auth change)
+    #
+    # - `api_keys`: comma-separated list of valid API keys. If empty,
+    #   API key authentication is DISABLED (all requests allowed).
+    #   If non-empty, all requests must have a valid X-API-Key header.
+    # - `api_key_rate_limit`: requests per minute per API key (when auth is enabled).
+    #   Uses the same rate limiter instance but with a "key:<api_key>" prefix.
+    # ------------------------------------------------------------------
+
+    api_keys: frozenset[str] = Field(
+        default_factory=frozenset,
+        validation_alias=AliasChoices("API_KEYS", "api_keys"),
+    )
+
+    api_key_rate_limit: int = Field(
+        default=60,
+        validation_alias=AliasChoices("API_KEY_RATE_LIMIT", "api_key_rate_limit"),
+        ge=1,
+    )
+
+    @field_validator("api_keys", mode="before")
+    @classmethod
+    def _parse_api_keys(cls, v: object) -> frozenset[str]:
+        """Parse `API_KEYS` as a JSON list of strings (same pattern as
+        `rate_limit_exempt_paths` and `aggregator_priority_map`).
+
+        Also accepts a pre-parsed list / tuple / set for programmatic
+        construction. An empty / None / "[]" value yields an empty
+        frozenset (auth DISABLED).
+        """
+        if isinstance(v, (frozenset, set, list, tuple)):
+            return frozenset(str(k) for k in v if k)
+        if isinstance(v, str) and v.strip():
+            if v.strip().startswith("["):
+                # JSON list format: '["key1","key2"]'
+                parsed = json.loads(v)
+                if not isinstance(parsed, list):
+                    raise ValueError("API_KEYS must be a JSON list of strings")
+                return frozenset(str(k) for k in parsed if k)
+            else:
+                # Fallback: comma-separated for convenience in dev
+                return frozenset(k.strip() for k in v.split(",") if k.strip())
+        return frozenset()
+
     @field_validator("rate_limit_exempt_paths", mode="before")
     @classmethod
     def _parse_exempt_paths(cls, v: object) -> frozenset[str]:

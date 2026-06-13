@@ -125,6 +125,7 @@ from jobs_finder.presentation.exception_handlers import (
 )
 from jobs_finder.presentation.logging_config import configure_logging
 from jobs_finder.presentation.middleware import (
+    ApiKeyAuthMiddleware,
     ChatRateLimitMiddleware,
     LogOnRequestMiddleware,
     RateLimitMiddleware,
@@ -882,6 +883,15 @@ def build_app(  # noqa: PLR0915, PLR0912
     )
 
     app.add_middleware(LogOnRequestMiddleware)
+    # API Key authentication middleware. Runs BEFORE RateLimitMiddleware
+    # so the rate limiter can use the validated API key for per-key
+    # rate limiting (the API key is stored in request.state.api_key
+    # by this middleware).
+    if effective_settings.api_keys:
+        app.add_middleware(
+            ApiKeyAuthMiddleware,
+            valid_keys=effective_settings.api_keys,
+        )
     if effective_settings.rate_limit_enabled:
         # Added BEFORE `RequestId` in nesting order so it runs AFTER
         # `RequestId` in execution order — the 429 body reads

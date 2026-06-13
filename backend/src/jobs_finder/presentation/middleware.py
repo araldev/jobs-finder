@@ -333,7 +333,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         #    not the raw IP. Both `InMemoryTokenBucket._buckets`
         #    and the `RedisTokenBucket._key()` use the hash; raw
         #    IPs NEVER reach storage.
-        client_id = hash_client_id(resolved_client_id) if resolved_client_id else "unknown"
+        #    If an API key is present (set by ApiKeyAuthMiddleware),
+        #    prepend it to the client_id so each key gets its own
+        #    rate limit bucket.
+        api_key: str | None = getattr(request.state, "api_key", None)  # type: ignore[attr-defined]
+        if api_key:
+            # Prefix with "key:" so API-key buckets are distinct from IP buckets.
+            client_id = f"key:{hash_client_id(api_key)}"
+        else:
+            client_id = hash_client_id(resolved_client_id) if resolved_client_id else "unknown"
 
         # 6. Acquire a token. The limiter NEVER raises (the Redis
         #    impl catches `redis.exceptions.RedisError` and returns
@@ -513,3 +521,86 @@ class ChatRateLimitMiddleware(BaseHTTPMiddleware):
         response.headers[RATE_LIMIT_HEADERS["remaining"]] = str(int(math.floor(decision.remaining)))
         response.headers[RATE_LIMIT_HEADERS["reset"]] = str(int(math.ceil(decision.reset_after)))
         return response
+
+
+# ---------------------------------------------------------------------------
+# API Key authentication middleware (api-key-auth change)
+#
+# Validates X-API-Key header against the configured set of valid keys.
+# If api_keys is empty, authentication is DISABLED (all requests pass).
+# If api_keys is non-empty, requests without a valid key return 401.
+#
+# Exempt paths (no auth required regardless of api_keys config):
+#   /health          — k8s liveness probe
+#   /docs            — API documentation
+#   /openapi.json    — OpenAPI spec
+#   /redoc           — ReDoc documentation
+# ---------------------------------------------------------------------------
+
+API_KEY_HEADER = "X-API-Key"
+
+# Paths that do NOT require API key authentication, regardless of config.
+API_KEY_EXEMPT_PATHS: frozenset[str] = frozenset({
+    "/health",
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+})
+
+
+class ApiKeyAuthMiddleware(BaseHTTPMiddleware):
+    """Validate X-API-Key header against configured keys.
+
+    When no API keys are configured, the middleware is a no-op (all
+    requests pass). When keys are configured, requests without a valid
+    X-API-Key header receive a 401 response.
+
+    The validated key (if any) is stored in `request.state.api_key`
+    so downstream code (e.g. the per-key rate limiter) can access it.
+    """
+
+    __slots__ = ("_valid_keys",)
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        valid_keys: frozenset[str],
+    ) -> None:
+        super().__init__(app)
+        # Store as frozenset for O(1) lookup. An empty frozenset
+        # means auth is DISABLED.
+        self._valid_keys: frozenset[str] = valid_keys
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        # If auth is disabled (no keys configured), pass all requests.
+        if not self._valid_keys:
+            return await call_next(request)
+
+        # Exempt paths always pass without auth check.
+        if request.url.path in API_KEY_EXEMPT_PATHS:
+            return await call_next(request)
+
+        # Extract and validate the API key.
+        raw_key = request.headers.get(API_KEY_HEADER, "")
+        request.state.api_key = raw_key  # type: ignore[attr-defined]
+
+        if raw_key not in self._valid_keys:
+            request_id = str(getattr(request.state, "request_id", "") or "")
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": "Invalid or missing API key. Provide a valid X-API-Key header.",
+                    "request_id": request_id,
+                },
+                headers={
+                    "WWW-Authenticate": "ApiKey",
+                    REQUEST_ID_HEADER: request_id,
+                },
+            )
+
+        return await call_next(request)
