@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import type { ChatMessage, ChatStatus, SSEParsedEvent } from "@/types/chat";
 import type { SSEMessage } from "@/types/chat";
 import type { Job } from "@/types/job";
@@ -99,13 +99,72 @@ export interface UseChatReturn {
   seenJobIds: Set<string>;
 }
 
+export interface UseChatOptions {
+  /** localStorage key to persist/retrieve chat state across sessions. */
+  storageKey?: string;
+}
+
 const decoder = new TextDecoder();
 
-export function useChat(): UseChatReturn {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+function loadFromStorage(key: string): { messages: ChatMessage[]; seenJobIds: string[] } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw) as { messages: ChatMessage[]; seenJobIds: string[] };
+  } catch {
+    return null;
+  }
+}
+
+function saveToStorage(key: string, messages: ChatMessage[], seenJobIds: Set<string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(key, JSON.stringify({ messages, seenJobIds: Array.from(seenJobIds) }));
+  } catch {
+    // localStorage unavailable or quota exceeded — ignore
+  }
+}
+
+function clearStorage(key: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
+
+export function useChat(options: UseChatOptions = {}): UseChatReturn {
+  const { storageKey } = options;
+
+  // Load persisted state from localStorage on init
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    if (storageKey) {
+      const saved = loadFromStorage(storageKey);
+      return saved?.messages ?? [];
+    }
+    return [];
+  });
+
   const [status, setStatus] = useState<ChatStatus>("idle");
-  const [seenJobIds, setSeenJobIds] = useState<Set<string>>(new Set());
+
+  const [seenJobIds, setSeenJobIds] = useState<Set<string>>(() => {
+    if (storageKey) {
+      const saved = loadFromStorage(storageKey);
+      return new Set(saved?.seenJobIds ?? []);
+    }
+    return new Set();
+  });
+
   const abortRef = useRef<AbortController | null>(null);
+
+  // Persist state to localStorage on every change
+  useEffect(() => {
+    if (storageKey) {
+      saveToStorage(storageKey, messages, seenJobIds);
+    }
+  }, [storageKey, messages, seenJobIds]);
 
   const sendMessage = useCallback((text: string) => {
     if (!text.trim()) return;
@@ -340,7 +399,10 @@ export function useChat(): UseChatReturn {
     setMessages([]);
     setStatus("idle");
     setSeenJobIds(new Set());
-  }, []);
+    if (storageKey) {
+      clearStorage(storageKey);
+    }
+  }, [storageKey]);
 
   return { messages, status, sendMessage, reset, seenJobIds };
 }
