@@ -2,6 +2,13 @@ import "server-only";
 import type { HistoryResponse, SchedulerStatus } from "@/types/job";
 
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8000";
+const BACKEND_API_KEY = process.env.BACKEND_API_KEY;
+
+function _headers() {
+  const h: Record<string, string> = { Accept: "application/json" };
+  if (BACKEND_API_KEY) h["X-API-Key"] = BACKEND_API_KEY;
+  return h;
+}
 
 export interface FetchJobsHistoryArgs {
   readonly keywords?: string;
@@ -20,7 +27,7 @@ export async function fetchJobsHistory(args: FetchJobsHistoryArgs = {}): Promise
   if (args.offset) params.set("offset", String(args.offset));
   const qs = params.toString();
   const res = await fetch(`${BACKEND_URL}/jobs/history${qs ? `?${qs}` : ""}`, {
-    headers: { Accept: "application/json" },
+    headers: _headers(),
     next: { revalidate: 0 },
   });
   if (!res.ok) throw new Error(`Backend error: ${res.status}`);
@@ -29,7 +36,7 @@ export async function fetchJobsHistory(args: FetchJobsHistoryArgs = {}): Promise
 
 export async function fetchSchedulerStatus(): Promise<SchedulerStatus> {
   const res = await fetch(`${BACKEND_URL}/scheduler/status`, {
-    headers: { Accept: "application/json" },
+    headers: _headers(),
     next: { revalidate: 0 },
   });
   if (!res.ok) throw new Error(`Backend error: ${res.status}`);
