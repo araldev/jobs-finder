@@ -15,7 +15,12 @@ function _loadStorage(): ChatStorage {
   try {
     const raw = localStorage.getItem(CHAT_STORAGE_KEY);
     if (!raw) return { messages: [], openedJobIds: [] };
-    return JSON.parse(raw) as ChatStorage;
+    const parsed = JSON.parse(raw) as ChatStorage;
+    // Ensure openedJobIds is always an array (backward compat with old seenJobIds data)
+    return {
+      messages: parsed.messages ?? [],
+      openedJobIds: Array.isArray(parsed.openedJobIds) ? parsed.openedJobIds : [],
+    };
   } catch {
     return { messages: [], openedJobIds: [] };
   }
