@@ -11,11 +11,13 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { useJobsInfinite } from "@/hooks/useJobsInfinite";
 import { usePlatformConfig } from "@/hooks/usePlatformConfig";
 import { useDebounce } from "@/hooks/useDebounce";
+import { useOpenedJobs } from "@/lib/chat-storage";
 
 export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedQuery = useDebounce(searchQuery, 400);
   const { enabledSources, allEnabled } = usePlatformConfig();
+  const openedJobIds = useOpenedJobs();
 
   const sourcesParam = allEnabled ? undefined : enabledSources.join(",");
 
@@ -103,7 +105,7 @@ export default function DashboardPage() {
               <>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                   {allJobs.map((job, i) => (
-                    <CompactJobCard key={job.id} job={job} index={i} />
+                    <CompactJobCard key={job.id} job={job} index={i} openedJobIds={openedJobIds} />
                   ))}
                 </div>
 

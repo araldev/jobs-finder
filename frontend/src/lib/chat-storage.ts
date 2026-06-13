@@ -1,7 +1,12 @@
 /**
  * Shared localStorage utilities for chat state persistence.
- * Used by useChat hook (ChatPanel) and job detail page (to mark jobs as opened).
+ * Used by useChat hook (ChatPanel), job detail page (to mark jobs as opened),
+ * and any component that needs to show "opened" badges on job cards.
  */
+
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
 
 export const CHAT_STORAGE_KEY = "jobs-finder-chat-v1";
 
@@ -67,4 +72,36 @@ export function clearChatStorage(): void {
   } catch {
     // ignore
   }
+}
+
+/**
+ * React hook to subscribe to opened job IDs.
+ * Returns the set of job IDs that have been marked as opened.
+ * Components can use this to show a "Abierta" badge on job cards.
+ */
+export function useOpenedJobs(): Set<string> {
+  const [openedJobIds, setOpenedJobIds] = useState<Set<string>>(() => new Set(getOpenedJobIds()));
+
+  useEffect(() => {
+    // Sync with storage on mount (handles updates from other tabs/pages)
+    const storage = _loadStorage();
+    setOpenedJobIds(new Set(storage.openedJobIds));
+
+    // Poll for storage changes from other tabs
+    const interval = setInterval(() => {
+      const current = _loadStorage();
+      setOpenedJobIds((prev) => {
+        const newIds = current.openedJobIds;
+        if (newIds.length !== prev.size) return new Set(newIds);
+        for (const id of newIds) {
+          if (!prev.has(id)) return new Set(newIds);
+        }
+        return prev;
+      });
+    }, 500);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  return openedJobIds;
 }

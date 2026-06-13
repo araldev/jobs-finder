@@ -10,6 +10,7 @@ import { usePlatformConfig } from "@/hooks/usePlatformConfig";
 import { useDebounce } from "@/hooks/useDebounce";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useOpenedJobs } from "@/lib/chat-storage";
 
 export default function SearchPage() {
   const [query, setQuery] = useState("");
@@ -19,6 +20,7 @@ export default function SearchPage() {
   const { enabledSources, allEnabled } = usePlatformConfig();
 
   const debouncedQuery = useDebounce(query, 400);
+  const openedJobIds = useOpenedJobs();
 
   const effectiveSources =
     filters.sources.length > 0
@@ -67,7 +69,7 @@ export default function SearchPage() {
       ) : filteredJobs.length > 0 ? (
         <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
           {filteredJobs.map((job, i) => (
-            <JobCard key={job.id} job={job} index={i} />
+            <JobCard key={job.id} job={job} index={i} openedJobIds={openedJobIds} />
           ))}
         </div>
       ) : (

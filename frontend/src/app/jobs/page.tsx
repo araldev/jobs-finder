@@ -6,10 +6,12 @@ import { SearchBar } from "@/components/search/SearchBar";
 import { CompactJobCard } from "@/components/jobs/CompactJobCard";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { useFavorites } from "@/hooks/useFavorites";
+import { useOpenedJobs } from "@/lib/chat-storage";
 
 export default function FavoritesPage() {
   const { favorites, favoriteCount } = useFavorites();
   const [search, setSearch] = useState("");
+  const openedJobIds = useOpenedJobs();
 
   const filteredFavorites = useMemo(() => {
     if (!search.trim()) return favorites;
@@ -43,7 +45,7 @@ export default function FavoritesPage() {
       {filteredFavorites.length > 0 ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {filteredFavorites.map((job, i) => (
-            <CompactJobCard key={job.id} job={job} index={i} />
+            <CompactJobCard key={job.id} job={job} index={i} openedJobIds={openedJobIds} />
           ))}
         </div>
       ) : favorites.length > 0 ? (

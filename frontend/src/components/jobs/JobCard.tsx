@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { ExternalLink, MapPin, Calendar } from "lucide-react";
+import { ExternalLink, MapPin, Calendar, Check } from "lucide-react";
 import type { Job } from "@/types/job";
 import { PlatformBadge } from "./PlatformBadge";
 import { FavoriteButton } from "./FavoriteButton";
@@ -11,9 +11,11 @@ import { formatRelativeDate } from "@/lib/formatters";
 interface JobCardProps {
   job: Job;
   index?: number;
+  openedJobIds?: Set<string>;
 }
 
-export function JobCard({ job, index = 0 }: JobCardProps) {
+export function JobCard({ job, index = 0, openedJobIds }: JobCardProps) {
+  const isOpened = openedJobIds?.has(job.id);
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
@@ -33,6 +35,12 @@ export function JobCard({ job, index = 0 }: JobCardProps) {
         {/* Badges row */}
         <div className="mb-2 flex flex-wrap items-center gap-2">
           {job.source && <PlatformBadge platform={job.source} />}
+          {isOpened && (
+            <span className="inline-flex items-center gap-1 rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-700">
+              <Check className="h-3 w-3" />
+              Abierta
+            </span>
+          )}
         </div>
 
         {/* Title */}
