@@ -423,16 +423,20 @@ class JobRepositoryPort(Protocol):
         *,
         sources: list[str] | None = None,
         keywords: str | None = None,
+        location: str | None = None,
+        description: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[Job]:
-        """Search job history with optional filters: source, keyword, date range.
+        """Search job history with optional filters: source, keyword, location, description, date range.
 
         Args:
             sources: Optional list of source names to filter by.
             keywords: Optional string to match against title or company.
+            location: Optional string to match against location field.
+            description: Optional string to match against description field.
             date_from: Optional ISO date string (inclusive) for `posted_at >=`.
             date_to: Optional ISO date string (inclusive) for `posted_at <=`.
             limit: Max results to return (default 50).

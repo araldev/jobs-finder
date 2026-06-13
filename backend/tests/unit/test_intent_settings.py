@@ -71,16 +71,16 @@ def test_settings_intent_extraction_confidence_threshold_default_is_0_7() -> Non
     assert settings.intent_extraction_confidence_threshold == 0.7
 
 
-def test_settings_intent_max_results_default_is_100() -> None:
-    """`intent_max_results` defaults to `100`.
+def test_settings_intent_max_results_default_is_20() -> None:
+    """`intent_max_results` defaults to `20`.
 
-    The per-source cap for the stage-2 aggregator scrape.
-    Higher than the v1 `limit=20` to give the LLM more
-    recall (stage 3 then filters down to the user-relevant
-    subset).
+    The per-source cap for the stage-2 repository query.
+    Changed from 100 to 20 to make chat faster by reducing
+    the number of jobs fetched from the repository (the LLM
+    scoring stage then filters down to the user-relevant subset).
     """
     settings = Settings()
-    assert settings.intent_max_results == 100
+    assert settings.intent_max_results == 20
 
 
 def test_settings_llm_stage1_max_tokens_default_is_256() -> None:

@@ -1142,7 +1142,7 @@ class Settings(BaseSettings):
         le=1.0,
     )
     intent_max_results: int = Field(
-        default=100,
+        default=20,
         validation_alias=AliasChoices("INTENT_MAX_RESULTS", "intent_max_results"),
         ge=1,
         le=500,

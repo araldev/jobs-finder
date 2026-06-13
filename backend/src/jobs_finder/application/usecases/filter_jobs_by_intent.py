@@ -70,6 +70,7 @@ from jobs_finder.application.aggregator import SearchAllSourcesUseCase
 from jobs_finder.application.ports import (
     Intent,
     IntentExtractorPort,
+    JobRepositoryPort,
     LLMClientPort,
     LocationResolverPort,
 )
@@ -248,9 +249,17 @@ class FilterJobsByIntentUseCase:
             confidence, the use case falls back to v1
             (REQ-CHAT-INT-004). Defaults to `0.7`.
         intent_max_results: Per-source cap for the stage-2
-            aggregator scrape. Defaults to `100` (higher than
-            the v1 `limit=20` to give the LLM more recall).
-            The v1 path always uses `_V1_DEFAULT_LIMIT = 20`
+            repository query. Defaults to `20` (matching the
+            scheduler's fresh results). The v1 path always uses
+            `_V1_DEFAULT_LIMIT = 20` regardless of this setting.
+        job_repository: Optional `JobRepositoryPort`. When provided,
+            the use case reads cached jobs from the DB instead of
+            running live scrapers via the aggregator. This makes
+            the chat reliable (no scraper failures) at the cost
+            of slightly stale data. The scheduler's periodic
+            scraping keeps the DB fresh (25-35min intervals).
+            When `None`, the use case falls back to the aggregator
+            (live scraping) for backward compatibility.
             regardless of this setting.
     """
 
@@ -265,6 +274,7 @@ class FilterJobsByIntentUseCase:
         intent_extraction_confidence_threshold: float = 0.7,
         intent_max_results: int = 100,
         location_resolver: LocationResolverPort | None = None,
+        job_repository: JobRepositoryPort | None = None,
     ) -> None:
         """..."""
         self._aggregator = aggregator
@@ -275,6 +285,7 @@ class FilterJobsByIntentUseCase:
         self._intent_extraction_confidence_threshold = intent_extraction_confidence_threshold
         self._intent_max_results = intent_max_results
         self._location_resolver = location_resolver
+        self._job_repository = job_repository
 
     async def execute(
         self,
@@ -509,39 +520,60 @@ class FilterJobsByIntentUseCase:
         if intent is not None and intent.confidence < self._intent_extraction_confidence_threshold:
             intent = None  # v1 path: no meta
 
-        # Stage 2: aggregator scrape. The `q` / `location` /
-        # `limit` selection mirrors the v1 dispatch:
-        #   - 2-stage: `intent.q` / `intent.location` / `intent_max_results`
-        #   - v1: the caller's `q` / `location` / `limit`
-        if intent is not None:
-            stage2_q = intent.q if intent.q is not None else ""
-            stage2_location = intent.location if intent.location is not None else ""
-            used_fallback = False
-            # Emit the `meta` event FIRST (2-stage path).
-            yield StreamEventMeta(intent=intent)
-            # Resolve the geo_id for the LinkedIn scraper
-            # (same logic as `_execute_2stage`).
-            linkedin_geo_id: int | None = None
-            if intent.location is not None and self._location_resolver is not None:
-                try:
-                    linkedin_geo_id = self._location_resolver.resolve(intent.location)
-                except Exception:  # noqa: BLE001
-                    linkedin_geo_id = None
-            aggregated = await self._aggregator.search(
-                keywords=stage2_q,
-                location=stage2_location,
-                limit=self._intent_max_results,
-                sources=resolved_sources,
-                linkedin_geo_id=linkedin_geo_id,
-            )
+        # Stage 2: repository query (cached jobs from scheduler).
+        # When `job_repository` is available, use it instead of the
+        # aggregator to avoid live scraper failures (TargetClosedError
+        # from Playwright browser instability). The scheduler keeps
+        # the DB fresh (25-35min intervals), so cached data is
+        # fresh enough for the LLM scoring stage.
+        if self._job_repository is not None:
+            if intent is not None:
+                stage2_q = intent.q if intent.q is not None else ""
+                stage2_location = intent.location if intent.location is not None else ""
+                used_fallback = False
+                # Emit the `meta` event FIRST (2-stage path).
+                yield StreamEventMeta(intent=intent)
+                flat_jobs = await self._job_repository.search_jobs_history(
+                    keywords=stage2_q,
+                    location=stage2_location,
+                    sources=resolved_sources,
+                    limit=self._intent_max_results,
+                )
+            else:
+                flat_jobs = await self._job_repository.search_jobs_history(
+                    keywords=q,
+                    location=location,
+                    sources=resolved_sources,
+                    limit=limit,
+                )
         else:
-            aggregated = await self._aggregator.search(
-                keywords=q,
-                location=location,
-                limit=limit,
-                sources=resolved_sources,
-            )
-        flat_jobs: list[Job] = [agg.job for agg in aggregated.jobs]
+            # Fallback to aggregator (live scraping) when no repository is configured.
+            if intent is not None:
+                stage2_q = intent.q if intent.q is not None else ""
+                stage2_location = intent.location if intent.location is not None else ""
+                used_fallback = False
+                yield StreamEventMeta(intent=intent)
+                linkedin_geo_id: int | None = None
+                if intent.location is not None and self._location_resolver is not None:
+                    try:
+                        linkedin_geo_id = self._location_resolver.resolve(intent.location)
+                    except Exception:  # noqa: BLE001
+                        linkedin_geo_id = None
+                aggregated = await self._aggregator.search(
+                    keywords=stage2_q,
+                    location=stage2_location,
+                    limit=self._intent_max_results,
+                    sources=resolved_sources,
+                    linkedin_geo_id=linkedin_geo_id,
+                )
+            else:
+                aggregated = await self._aggregator.search(
+                    keywords=q,
+                    location=location,
+                    limit=limit,
+                    sources=resolved_sources,
+                )
+            flat_jobs = [agg.job for agg in aggregated.jobs]
 
         # Empty-aggregator short-circuit: emit a single `done`
         # and return. The LLM is NEVER called.

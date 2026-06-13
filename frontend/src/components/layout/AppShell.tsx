@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
+import { ChatDialog } from "@/components/chat/ChatDialog";
 
 interface AppShellProps {
   children: ReactNode;
@@ -16,6 +17,7 @@ export function AppShell({ children }: AppShellProps) {
           {children}
         </main>
       </div>
+      <ChatDialog />
     </div>
   );
 }

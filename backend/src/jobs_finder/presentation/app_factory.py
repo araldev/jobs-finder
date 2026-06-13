@@ -834,6 +834,7 @@ def build_app(  # noqa: PLR0915, PLR0912
             ),
             intent_max_results=effective_settings.intent_max_results,
             location_resolver=location_resolver,
+            job_repository=_scheduler_repo,
         )
     # Expose the use case on `app.state` regardless of the
     # flag (a future caller that constructs the use case
