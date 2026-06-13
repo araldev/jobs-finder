@@ -59,10 +59,14 @@ export function JobCard({ job, index = 0, openedJobIds }: JobCardProps) {
           )}
         </div>
 
-        {/* Footer: favorite + external link + date */}
+        {/* Footer: date + favorite + external link */}
         <div className="mt-3 flex items-center justify-between border-t pt-3">
-          <FavoriteButton job={job} size="sm" />
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Calendar className="h-3 w-3" />
+            {job.posted_at ? formatRelativeDate(job.posted_at) : "Unknown"}
+          </div>
+          <div className="flex items-center gap-1">
+            <FavoriteButton job={job} size="sm" />
             {job.url && (
               <button
                 type="button"
@@ -78,10 +82,6 @@ export function JobCard({ job, index = 0, openedJobIds }: JobCardProps) {
                 Apply
               </button>
             )}
-            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-              <Calendar className="h-3 w-3" />
-              {job.posted_at ? formatRelativeDate(job.posted_at) : "Unknown"}
-            </div>
           </div>
         </div>
       </Link>

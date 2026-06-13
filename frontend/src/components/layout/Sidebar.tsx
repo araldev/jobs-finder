@@ -9,6 +9,7 @@ import {
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Logo } from "./Logo";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -24,11 +25,9 @@ export function Sidebar() {
     <aside className="flex w-64 flex-col border-r bg-card">
       {/* Logo */}
       <div className="flex h-14 items-center gap-3 border-b px-6">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">
-          J
-        </div>
+        <Logo size="md" />
         <span className="font-display text-lg font-semibold tracking-tight">
-          JobsBoard
+          Jobs Finder
         </span>
       </div>
 

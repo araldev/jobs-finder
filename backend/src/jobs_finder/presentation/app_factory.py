@@ -744,7 +744,7 @@ def build_app(  # noqa: PLR0915, PLR0912
             result = await aggregator_use_case.search(
                 keywords=keywords,
                 location=location,
-                limit=20,
+                limit=150,  # 50 per platform × 3 sources
                 sources=["linkedin", "indeed", "infojobs"],
             )
             return [aj.job for aj in result.jobs]

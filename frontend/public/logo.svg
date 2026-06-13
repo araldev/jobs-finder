@@ -1,0 +1,30 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle -->
+  <circle cx="64" cy="64" r="60" fill="#0F172A"/>
+
+  <!-- Outer ring -->
+  <circle cx="64" cy="64" r="52" stroke="#0D9488" stroke-width="3"/>
+
+  <!-- Inner compass star - 4 directional arrows -->
+  <!-- North -->
+  <path d="M64 20L70 52H58L64 20Z" fill="#0D9488"/>
+  <!-- South -->
+  <path d="M64 108L58 76H70L64 108Z" fill="#F97316"/>
+  <!-- East -->
+  <path d="M108 64L76 70V58L108 64Z" fill="#0D9488"/>
+  <!-- West -->
+  <path d="M20 64L52 58V70L20 64Z" fill="#F97316"/>
+
+  <!-- Center diamond -->
+  <rect x="56" y="56" width="16" height="16" rx="2" transform="rotate(45 64 64)" fill="#14B8A6"/>
+
+  <!-- Small center dot -->
+  <circle cx="64" cy="64" r="4" fill="#0F172A"/>
+  <circle cx="64" cy="64" r="2" fill="#5EEAD4"/>
+
+  <!-- Decorative ticks -->
+  <circle cx="64" cy="18" r="2" fill="#0D9488"/>
+  <circle cx="64" cy="110" r="2" fill="#F97316"/>
+  <circle cx="18" cy="64" r="2" fill="#F97316"/>
+  <circle cx="110" cy="64" r="2" fill="#0D9488"/>
+</svg>

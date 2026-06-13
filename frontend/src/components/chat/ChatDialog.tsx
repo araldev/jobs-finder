@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Bot, X } from "lucide-react";
+import { X } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -9,6 +9,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { ChatPanel } from "./ChatPanel";
+import { Logo } from "@/components/layout/Logo";
 
 export function ChatDialog() {
   const [open, setOpen] = useState(false);
@@ -23,7 +24,7 @@ export function ChatDialog() {
           {open ? (
             <X className="h-6 w-6" />
           ) : (
-            <Bot className="h-6 w-6" />
+            <Logo size="lg" className="rounded-full" />
           )}
         </button>
       </DialogTrigger>

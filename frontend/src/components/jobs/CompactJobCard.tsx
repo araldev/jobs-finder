@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { MapPin, ExternalLink, Check } from "lucide-react";
+import { MapPin, ExternalLink, Check, Calendar } from "lucide-react";
 import type { Job } from "@/types/job";
 import { PlatformBadge } from "./PlatformBadge";
 import { FavoriteButton } from "./FavoriteButton";
@@ -59,27 +59,28 @@ export function CompactJobCard({ job, index = 0, openedJobIds }: CompactJobCardP
           )}
         </div>
 
-        {/* Date - no Calendar icon, no divider */}
-        <div className="mt-1.5 text-xs text-muted-foreground">
-          {job.posted_at ? formatRelativeDate(job.posted_at) : "Unknown"}
-        </div>
-
-        {/* Footer row: FavoriteButton + ExternalLink */}
-        <div className="mt-2 flex items-center justify-end gap-1">
-          <FavoriteButton job={job} size="sm" />
-          <button
-            type="button"
-            aria-label="Open job posting"
-            title="Open job posting"
-            onClick={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              window.open(job.url, "_blank", "noopener,noreferrer");
-            }}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            <ExternalLink className="h-4 w-4" />
-          </button>
+        {/* Footer: date + favorite + external link */}
+        <div className="mt-3 flex items-center justify-between border-t pt-3">
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Calendar className="h-3 w-3" />
+            {job.posted_at ? formatRelativeDate(job.posted_at) : "Unknown"}
+          </div>
+          <div className="flex items-center gap-1">
+            <FavoriteButton job={job} size="sm" />
+            <button
+              type="button"
+              aria-label="Open job posting"
+              title="Open job posting"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                window.open(job.url, "_blank", "noopener,noreferrer");
+              }}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <ExternalLink className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </Link>
     </motion.div>
