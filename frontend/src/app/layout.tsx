@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "./providers";
-import { AppShell } from "@/components/layout/AppShell";
 
 export const metadata: Metadata = {
   title: "Jobs Finder",
@@ -18,7 +17,7 @@ export default function RootLayout({
     <html lang="es" suppressHydrationWarning>
       <body className="font-sans antialiased">
         <Providers>
-          <AppShell>{children}</AppShell>
+          {children}
         </Providers>
       </body>
     </html>
