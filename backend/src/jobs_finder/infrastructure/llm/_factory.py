@@ -77,9 +77,5 @@ def build_minimax_llm_client(
         max_tokens=settings.llm_max_tokens,
         timeout_seconds=settings.llm_request_timeout_seconds,
         http_client=http_client,
-        # `thinking_disabled=True` is the preflight D2 default.
-        # Only MiniMax-M3 honors this flag (M2.x models cannot
-        # disable thinking); the Settings.llm_model field
-        # defaults to "MiniMax-M3" for the same reason.
         thinking_disabled=True,
     )

@@ -69,6 +69,9 @@ from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCa
 from jobs_finder.application.usecases.filter_jobs_by_intent import (
     FilterJobsByIntentUseCase,
 )
+from jobs_finder.application.usecases.generate_adapted_cv import (
+    GenerateAdaptedCVUseCase,
+)
 from jobs_finder.application.usecases.search_indeed_jobs import (
     RawSearchJobsUseCase as RawIndeedJobsUseCase,
 )
@@ -133,6 +136,7 @@ from jobs_finder.presentation.middleware import (
 )
 from jobs_finder.presentation.routes import aggregator as aggregator_routes
 from jobs_finder.presentation.routes import chat as chat_routes
+from jobs_finder.presentation.routes import cv as cv_routes
 from jobs_finder.presentation.routes import health as health_routes
 from jobs_finder.presentation.routes import history as history_routes
 from jobs_finder.presentation.routes import indeed as indeed_routes
@@ -843,6 +847,12 @@ def build_app(  # noqa: PLR0915, PLR0912
     # registered conditionally below).
     app.state.filter_use_case = chat_use_case
 
+    # CV adaptation use case — uses the same LLM client as the chat filter.
+    # Enabled when chat is enabled (same LLM dependency).
+    cv_use_case: GenerateAdaptedCVUseCase | None = None
+    if chat_enabled:
+        cv_use_case = GenerateAdaptedCVUseCase(llm_client=llm_client)
+
     # Middleware — order matters. Starlette runs middlewares outermost
     # first; the LAST `add_middleware` call wraps everything else.
     # 1. `LogOnRequest` is innermost: it runs inside `RequestId` so
@@ -994,6 +1004,12 @@ def build_app(  # noqa: PLR0915, PLR0912
                 max_message_chars=effective_settings.llm_max_message_chars,
                 sse_keepalive_seconds=effective_settings.sse_keepalive_seconds,
             )
+        )
+
+    # CV adaptation route — enabled when LLM is available (same gate as chat).
+    if cv_use_case is not None:
+        app.include_router(
+            cv_routes.build_cv_router(generate_adapted_cv_use_case=cv_use_case)
         )
 
     return app

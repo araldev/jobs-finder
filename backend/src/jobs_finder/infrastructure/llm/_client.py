@@ -139,6 +139,8 @@ class MiniMaxLLMClient:
         }
         if self._thinking_disabled:
             body["thinking"] = {"type": "disabled"}
+        # Request JSON mode so the model returns a JSON object
+        body["response_format"] = {"type": "json_object"}
         return body
 
     def _build_headers(self) -> dict[str, str]:

@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { ThemeToggle } from "./ThemeToggle";
+import { AuthStatus } from "@/components/auth/AuthStatus";
 
 const routeLabels: Record<string, string> = {
   "/": "Dashboard",
@@ -19,7 +20,10 @@ export function Header() {
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <span className="font-medium text-foreground">{label}</span>
       </div>
-      <ThemeToggle />
+      <div className="flex items-center gap-4">
+        <AuthStatus />
+        <ThemeToggle />
+      </div>
     </header>
   );
 }

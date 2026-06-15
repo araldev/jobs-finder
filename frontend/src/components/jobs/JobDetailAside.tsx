@@ -1,11 +1,12 @@
 "use client";
 
-import { Calendar, ExternalLink, MapPin } from "lucide-react";
+import { Calendar, ExternalLink, MapPin, FileText } from "lucide-react";
 import type { Job } from "@/types/job";
 import { PlatformBadge } from "./PlatformBadge";
 import { formatRelativeDate } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { GenerateCVModal } from "./GenerateCVModal";
 
 interface JobDetailAsideProps {
   job: Job;
@@ -59,6 +60,18 @@ export function JobDetailAside({ job }: JobDetailAsideProps) {
             View Original
           </a>
         </Button>
+
+        <Separator />
+
+        <GenerateCVModal
+          job={job}
+          trigger={
+            <Button variant="default" className="w-full" type="button">
+              <FileText className="mr-2 h-4 w-4" />
+              Generar CV adaptado
+            </Button>
+          }
+        />
       </div>
     </aside>
   );

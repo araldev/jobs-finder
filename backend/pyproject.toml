@@ -27,6 +27,10 @@ dependencies = [
     "beautifulsoup4>=4.12,<5.0",
     "httpx>=0.27,<1.0",
     "redis>=5.0,<6.0",
+    "pdfplumber>=0.11,<1.0",
+    "weasyprint>=60.0,<62.0",
+    "pydyf>=0.8.0,<0.11.0",  # pydyf >= 0.11 breaks weasyprint PDF generation (GitHub #2620)
+    "python-multipart>=0.0.32",
 ]
 
 [project.optional-dependencies]
