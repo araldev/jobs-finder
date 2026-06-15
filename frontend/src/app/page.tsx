@@ -108,14 +108,11 @@ export default function CVLandingPage() {
       return;
     }
 
-    const { error: dbError } = await supabase.from("user_csv").upsert(
-      {
-        user_id: sessionData.session.user.id,
-        original_filename: file.name,
-        storage_path: storagePath,
-      },
-      { onConflict: "user_id" },
-    );
+    const { error: dbError } = await supabase.from("user_csv").upsert({
+      user_id: sessionData.session.user.id,
+      original_filename: file.name,
+      storage_path: storagePath,
+    });
 
     if (dbError) {
       setError(`Error guardando referencia: ${dbError.message}`);
@@ -147,16 +144,14 @@ export default function CVLandingPage() {
       <nav className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container mx-auto flex h-16 items-center justify-between px-4">
           <Link href="/" className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
-              <FileText className="h-5 w-5 text-primary-foreground" />
-            </div>
-            <span className="font-display text-xl font-bold">jobs.finder</span>
+            <img src="/favicon.svg" alt="Jobs Finder" className="h-9 w-9" />
+            <span className="font-display text-xl font-bold">Jobs Finder</span>
           </Link>
 
           {/* Desktop nav */}
           <div className="hidden items-center gap-6 md:flex">
             <Link
-              href="/"
+              href="/search"
               className="text-sm text-muted-foreground transition-colors hover:text-foreground"
             >
               Buscar empleos
@@ -206,7 +201,7 @@ export default function CVLandingPage() {
           <div className="border-t md:hidden">
             <div className="container mx-auto space-y-4 px-4 py-4">
               <Link
-                href="/"
+                href="/search"
                 className="block text-sm text-muted-foreground"
                 onClick={() => setMobileMenuOpen(false)}
               >
@@ -278,7 +273,7 @@ export default function CVLandingPage() {
                   />
                   <p className="text-sm text-muted-foreground">
                     Una vez guardado, úsalo desde{" "}
-                    <Link href="/jobs" className="text-primary hover:underline">
+                    <Link href="/search" className="text-primary hover:underline">
                       cualquier oferta de empleo
                     </Link>{" "}
                     para generar tu CV adaptado
@@ -629,16 +624,20 @@ export default function CVLandingPage() {
         <div className="container mx-auto px-4 py-8">
           <div className="flex flex-col items-center justify-between gap-4 md:flex-row">
             <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-                <FileText className="h-4 w-4 text-primary-foreground" />
-              </div>
+              <img src="/favicon.svg" alt="Jobs Finder" className="h-8 w-8" />
               <span className="font-display text-lg font-bold">
-                jobs.finder
+                Jobs Finder
               </span>
             </div>
-            <p className="text-sm text-muted-foreground">
-              © 2024 jobs.finder. Todos los derechos reservados.
-            </p>
+            <div className="flex items-center gap-6 text-sm text-muted-foreground">
+              <Link
+                href="/privacidad"
+                className="hover:text-foreground transition-colors"
+              >
+                Política de Privacidad
+              </Link>
+              <p>© 2024 Jobs Finder. Todos los derechos reservados.</p>
+            </div>
           </div>
         </div>
       </footer>

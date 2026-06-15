@@ -1,7 +1,8 @@
-"""PDF text and image extraction using pdfplumber.
+"""PDF text and image extraction using PyMuPDF.
 
-pdfplumber is a BSD-licensed library for extracting text and images
-from PDFs, built on top of PDFMiner.
+PyMuPDF (fitz) is used for both text and image extraction because it
+preserves PDF reading order better than pdfplumber for complex layouts
+(multi-column, tables, mixed content).
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import io
 import re
 from dataclasses import dataclass
 
-import pdfplumber
+import pymupdf
 
 
 @dataclass
@@ -35,54 +36,68 @@ def extract_cv_text(pdf_bytes: bytes) -> CVData:
     Returns:
         CVData with full text and any detected contact info.
     """
-    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        pages = pdf.pages
-        full_text_parts: list[str] = []
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    full_text_parts: list[str] = []
 
-        for page in pages:
-            text = page.extract_text()
-            if text:
-                full_text_parts.append(text)
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        text = page.get_text()
+        if text:
+            full_text_parts.append(text)
 
-        full_text = "\n\n".join(full_text_parts)
+    doc.close()
+    full_text = "\n\n".join(full_text_parts)
 
-        name = _extract_name(full_text)
-        email = _extract_email(full_text)
-        phone = _extract_phone(full_text)
-        location = _extract_location(full_text)
+    name = _extract_name(full_text)
+    email = _extract_email(full_text)
+    phone = _extract_phone(full_text)
+    location = _extract_location(full_text)
 
-        return CVData(
-            full_text=full_text,
-            name=name,
-            email=email,
-            phone=phone,
-            location=location,
-        )
+    return CVData(
+        full_text=full_text,
+        name=name,
+        email=email,
+        phone=phone,
+        location=location,
+    )
 
 
 def extract_cv_image(pdf_bytes: bytes) -> str | None:
-    """Extract the first image from a CV PDF as base64.
+    """Extract the first photo/image from a CV PDF as base64 PNG.
 
-    Returns the image as a base64-encoded PNG data URL, or None if
-    no image is found.
+    Uses PyMuPDF (fitz) which handles more PDF image formats than
+    pdfplumber.  Returns the image as a base64-encoded PNG data URL,
+    or None if no image is found.
     """
-    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        for page in pdf.pages:
-            images = page.images
-            if not images:
-                continue
+    import pymupdf
 
-            # Use the first (largest?) image found on the page
-            for img_info in images:
-                try:
-                    raw_data = img_info.get("rawdata")
-                    if raw_data is None:
-                        continue
+    try:
+        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    except Exception:
+        return None
 
-                    b64 = base64.b64encode(raw_data).decode("utf-8")
-                    return f"data:image/png;base64,{b64}"
-                except Exception:
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        # Get all images on this page
+        image_list = page.get_images(full=True)
+        for img_index, img in enumerate(image_list):
+            try:
+                xref = img[0]
+                base_image = doc.extract_image(xref)
+                image_bytes = base_image["image"]
+                image_ext = base_image["ext"]
+                # Filter out tiny images (likely icons/logos, not a photo)
+                if len(image_bytes) < 10_000:
                     continue
+                b64 = base64.b64encode(image_bytes).decode("utf-8")
+                mime = f"image/{image_ext}"
+                if image_ext in ("jpeg", "jpg"):
+                    mime = "image/jpeg"
+                elif image_ext == "png":
+                    mime = "image/png"
+                return f"data:{mime};base64,{b64}"
+            except Exception:
+                continue
 
     return None
 

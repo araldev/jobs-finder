@@ -338,6 +338,25 @@ class Settings(BaseSettings):
             "INFOJOBS_INTER_PAGE_DELAY_SECONDS", "infojobs_inter_page_delay_seconds"
         ),
     )
+    # INFOJOBS_LAUNCH_CHANNEL: same pattern as LINKEDIN_LAUNCH_CHANNEL.
+    # When set (e.g. "chrome"), Playwright uses the system Chrome
+    # binary instead of the bundled Chromium, giving InfoJobs the
+    # same TLS/HTTP-2 fingerprint as a real browser session.
+    infojobs_launch_channel: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("INFOJOBS_LAUNCH_CHANNEL", "infojobs_launch_channel"),
+    )
+    # INFOJOBS_CHROMIUM_PATH: absolute path to the Chromium executable.
+    # When set, this is passed as `executable_path` to
+    # `chromium.launch()`, bypassing Playwright's channel/binary search.
+    # This is needed when the system Chromium is not at the path
+    # Playwright's `channel` option expects (e.g. snap Chromium on Linux).
+    # Common snap path: /snap/chromium/3459/usr/lib/chromium-browser/chrome
+    # (the revision may change after system updates).
+    infojobs_chromium_path: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("INFOJOBS_CHROMIUM_PATH", "infojobs_chromium_path"),
+    )
 
     # ------------------------------------------------------------------
     # Cache TTL (REQ-C-002)
@@ -1150,6 +1169,12 @@ class Settings(BaseSettings):
         default=20,
         validation_alias=AliasChoices("LLM_FILTER_RATE_LIMIT_RPM", "llm_filter_rate_limit_rpm"),
         ge=1,
+    )
+    # Whether the LLM provider supports the `thinking: {"type": "disabled"}`
+    # parameter. MiniMax M3 does (default True). Groq does NOT (set to False).
+    llm_supports_thinking: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("LLM_SUPPORTS_THINKING", "llm_supports_thinking"),
     )
 
     # ------------------------------------------------------------------

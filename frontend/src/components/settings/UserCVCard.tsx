@@ -85,7 +85,7 @@ export function UserCVCard() {
       user_id: user.id,
       original_filename: file.name,
       storage_path: storagePath,
-    }, { onConflict: "user_id" });
+    });
 
     if (dbError) {
       setError(`Error guardando referencia: ${dbError.message}`);

@@ -12,9 +12,9 @@ import { cn } from "@/lib/utils";
 import { Logo } from "./Logo";
 
 const navItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/jobs", label: "Jobs", icon: Briefcase },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/search", label: "Search", icon: Search },
+  { href: "/favorites", label: "Favorites", icon: Briefcase },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
@@ -25,20 +25,19 @@ export function Sidebar() {
     <aside className="flex w-64 flex-col border-r bg-card">
       {/* Logo */}
       <div className="flex h-14 items-center gap-3 border-b px-6">
-        <Logo size="md" />
-        <span className="font-display text-lg font-semibold tracking-tight">
-          Jobs Finder
-        </span>
+        <Link href="/dashboard" className="flex items-center gap-3">
+          <Logo size="md" />
+          <span className="font-display text-lg font-semibold tracking-tight">
+            Jobs Finder
+          </span>
+        </Link>
       </div>
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 px-3 py-4">
         {navItems.map((item) => {
           const Icon = item.icon;
-          const isActive =
-            item.href === "/"
-              ? pathname === "/"
-              : pathname.startsWith(item.href);
+          const isActive = pathname.startsWith(item.href);
 
           return (
             <Link

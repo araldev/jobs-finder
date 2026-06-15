@@ -19,19 +19,55 @@ from typing import Any
 from ..cv._template import AdaptedCV, EducationEntry, ExperienceEntry
 
 ADAPT_CV_SYSTEM_PROMPT = """\
-You are a professional CV writer. You MUST respond with ONLY valid JSON.
-No explanations, no markdown, no narrative text before or after.
+You are a professional CV writer. Output valid JSON only. No explanations, no markdown.
 
-EXAMPLE OF EXPECTED OUTPUT:
-Input: "John Doe, developer at TechCorp, Python, Java"
-Output: {"name":"John Doe","email":"","phone":"","location":"","summary":"Developer at TechCorp.","experience":[{"company":"TechCorp","title":"Developer","start_date":"","end_date":"","description":"Developer.","location":""}],"education":[],"skills":["Python","Java"],"languages":[]}
+ABSOLUTE RULE — THE ORIGINAL CV IS THE ONLY SOURCE OF TRUTH:
+You must output EXACTLY what is in the original CV. Nothing more, nothing less.
 
-CRITICAL RULES:
-1. Your output must be parseable by json.loads() — nothing else.
-2. Return ONLY the JSON object. No text before or after.
-3. Use null for missing string fields, [] for missing arrays.
-4. Do not invent information. Only use what is in the original CV.
-5. Reorder and rephrase existing content to match the job description.
+EVERY piece of information in your output MUST appear verbatim in the original CV text you received.
+
+STRICT FORBIDDEN (immediate rejection of output if violated):
+1. NEVER output a company name that does not appear verbatim in the original CV.
+2. NEVER output a job title that does not appear verbatim in the original CV.
+3. NEVER output a date range not in the original CV.
+4. NEVER output skills not in the original CV.
+5. NEVER output the target company (the company in JOB COMPANY field) as the candidate's employer.
+6. NEVER create a new job entry not in the original CV.
+7. NEVER treat personal projects as job positions.
+8. NEVER invent ANY detail: dates, technologies, responsibilities, achievements.
+
+EXACT RULE FOR EXPERIENCE:
+Only output experience entries where BOTH the company AND the title appear EXPLICITLY in the original CV.
+If the original CV says "NTT DATA Abril 2026 — Mayo 2026, Desarrollador Backend", then "NTT DATA" and "Desarrollador Backend" are valid entries.
+If the original CV mentions "V12-UI" as a project (not a job), do NOT list it as a job at "TechCorp".
+If the original CV mentions personal projects like "PORTFOLIO", "ENGLISH-WEB", or "V12-UI" without a clear employer, they are NOT job entries. Do NOT turn them into jobs.
+
+WHAT YOU MAY DO (only these 3 things):
+1. Rephrase existing descriptions using action verbs (preserve all facts from original).
+2. Inject relevant keywords from the job description INTO the existing descriptions (only words that already exist in the original CV are allowed as skills).
+3. Combine multiple roles at the same company (if the original CV shows multiple roles at the same company, combine them into ONE entry with ONE description).
+
+WHAT YOU MUST NOT DO:
+- Do NOT add a company name from the job description as if the candidate worked there.
+- Do NOT list personal projects as jobs.
+- Do NOT change any fact: company names, job titles, dates, locations, education, skills.
+
+LANGUAGE RULE: Respond in the same language as the original CV.
+
+OUTPUT FORMAT — strict JSON:
+- experience array: ONLY entries where both company and title are verbatim in original CV.
+- skills array: ONLY skills that appear in the original CV skills section.
+- No invented entries. No modified company names. No new dates.
+
+EXAMPLE — CORRECT:
+Original CV: "NTT DATA Abril 2026 — Mayo 2026, Desarrollador Backend"
+Target: "Google"
+Output: experience=[{"company":"NTT DATA","title":"Desarrollador Backend",...}]
+
+EXAMPLE — WRONG (hallucination):
+Original CV: mentions "V12-UI" as a project, not an employer. Target: "knowmad mood"
+WRONG: experience=[{"company":"knowmad mood",...}] — candidate never worked there
+WRONG: experience=[{"company":"TechCorp",...}] — TechCorp not in original CV
 
 JSON SCHEMA:
 {"name":"string|null","email":"string|null","phone":"string|null","location":"string|null","summary":"string|null","experience":[{"company":"string","title":"string","start_date":"string","end_date":"string","description":"string","location":"string|null"}],"education":[{"degree":"string","institution":"string","year":"string","grade":"string|null"}],"skills":["string"],"languages":["string"]}
@@ -46,11 +82,12 @@ def build_adapt_cv_user_message(
 ) -> str:
     """Build the user message for the CV adaptation call."""
     return (
-        f"ORIGINAL CV:\n{cv_text[:8000]}\n\n"
-        f"JOB TITLE: {job_title}\n"
-        f"JOB COMPANY: {job_company}\n"
-        f"JOB DESCRIPTION:\n{job_description[:4000]}\n\n"
-        f"Adapt this CV to the job offer. Follow all rules. Return ONLY JSON."
+        f"ORIGINAL CV (source of truth — do not add anything not in here):\n{cv_text[:8000]}\n\n"
+        f"TARGET JOB TITLE: {job_title}\n"
+        f"TARGET COMPANY: {job_company}  <-- THIS IS THE COMPANY THE CANDIDATE IS APPLYING TO. "
+        f"THE CANDIDATE HAS NEVER WORKED AT {job_company.upper()} UNLESS IT APPEARS IN THE ORIGINAL CV ABOVE.\n"
+        f"JOB DESCRIPTION (for keyword extraction only — do not invent employment at this company):\n{job_description[:4000]}\n\n"
+        f"Adapt this CV: rephrase descriptions, add keywords naturally. Keep ALL original facts. Return ONLY JSON."
     )
 
 

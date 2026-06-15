@@ -1,6 +1,7 @@
 "use client";
 
 import { createClient } from "@/lib/supabase/client";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -39,9 +40,9 @@ export function AuthStatus() {
   if (email) {
     return (
       <div className="flex items-center gap-3">
-        <a href="/dashboard" className="text-sm text-muted-foreground hover:text-foreground">
+        <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
           {email}
-        </a>
+        </Link>
         <button
           onClick={logout}
           className="text-sm text-muted-foreground underline underline-offset-4 transition-colors hover:text-destructive"
@@ -53,11 +54,11 @@ export function AuthStatus() {
   }
 
   return (
-    <a
+    <Link
       href="/login"
       className="rounded-lg bg-foreground px-3 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90"
     >
       Iniciar sesión
-    </a>
+    </Link>
   );
 }

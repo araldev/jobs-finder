@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import type { Job } from "@/types/job";
 import { Upload, FileText, Download, X, Loader2, CheckCircle2 } from "lucide-react";
@@ -24,6 +25,7 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [loadingSavedCV, setLoadingSavedCV] = useState(false);
+  const [consentGiven, setConsentGiven] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const supabase = createClient();
 
@@ -51,6 +53,7 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
     setStatus("idle");
     setErrorMsg(null);
     setDownloadUrl(null);
+    setConsentGiven(false);
     fetchSavedCV();
   }
 
@@ -276,9 +279,34 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
                   <p className="text-sm text-destructive">{errorMsg}</p>
                 )}
 
+                {/* Consent for LLM processing (international transfer to USA) */}
+                <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={consentGiven}
+                      onChange={(e) => setConsentGiven(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-border text-primary accent-primary"
+                      required
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      Entiendo y acepto que mi CV sea procesado por{" "}
+                      <strong className="text-foreground">Groq (EE.UU.)</strong>{" "}
+                      para generar el CV adaptado.{" "}
+                      <Link
+                        href="/privacidad"
+                        target="_blank"
+                        className="underline underline-offset-2 hover:text-foreground"
+                      >
+                        Ver Política de Privacidad
+                      </Link>
+                    </span>
+                  </label>
+                </div>
+
                 <button
                   type="submit"
-                  disabled={!cvFile && !savedCV}
+                  disabled={(!cvFile && !savedCV) || !consentGiven}
                   className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
                 >
                   {status === "uploading" ? (
@@ -297,6 +325,17 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
                     temporalmente.
                   </p>
                 )}
+
+                <p className="text-center text-xs text-muted-foreground">
+                  Tu CV será procesado por Groq (EE.UU.).{" "}
+                  <Link
+                    href="/privacidad"
+                    target="_blank"
+                    className="underline underline-offset-2 hover:text-foreground"
+                  >
+                    Más información
+                  </Link>
+                </p>
               </form>
             )}
           </div>

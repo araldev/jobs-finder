@@ -29,10 +29,30 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Si la ruta empieza con /dashboard y NO hay usuario → redirect a /login
-  if (!user && request.nextUrl.pathname.startsWith("/dashboard")) {
+  // Rutas públicas: / (landing page), /jobs (detalle público), /login, /signup, /auth
+  // APIs (/api/*) son siempre accesibles
+  const publicPaths = ["/jobs", "/login", "/signup", "/auth"];
+  const isPublic = publicPaths.some((path) =>
+    request.nextUrl.pathname.startsWith(path),
+  );
+
+  // La raíz / es la landing page pública
+  const isRoot = request.nextUrl.pathname === "/";
+
+  // Las APIs son siempre accesibles
+  const isApi = request.nextUrl.pathname.startsWith("/api");
+
+  // Si la ruta NO es pública, NO es la raíz, NO es API, y NO hay usuario → redirect a /login
+  if (!user && !isPublic && !isRoot && !isApi) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
+    return NextResponse.redirect(url);
+  }
+
+  // Si está logueado y va a /login → redirect a /dashboard
+  if (user && request.nextUrl.pathname.startsWith("/login")) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/dashboard";
     return NextResponse.redirect(url);
   }
 

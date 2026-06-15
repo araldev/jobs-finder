@@ -135,8 +135,10 @@ class InfoJobsScraperSettings:
     """
 
     __slots__ = (
+        "chromium_path",
         "domain",
         "inter_page_delay_seconds",
+        "launch_channel",
         "location_resolver",
         "max_pages",
         "timeout_ms",
@@ -151,6 +153,8 @@ class InfoJobsScraperSettings:
         domain: str = "www.infojobs.net",
         max_pages: int = 10,
         inter_page_delay_seconds: float = 0.0,
+        launch_channel: str | None = None,
+        chromium_path: str | None = None,
         location_resolver: LocationResolverPort | None = None,
     ) -> None:
         self.user_agent = user_agent
@@ -158,6 +162,8 @@ class InfoJobsScraperSettings:
         self.domain = domain
         self.max_pages = max_pages
         self.inter_page_delay_seconds = inter_page_delay_seconds
+        self.launch_channel = launch_channel
+        self.chromium_path = chromium_path
         self.location_resolver = location_resolver
 
     def __repr__(self) -> str:
@@ -166,6 +172,8 @@ class InfoJobsScraperSettings:
             f"timeout_ms={self.timeout_ms}, domain={self.domain!r}, "
             f"max_pages={self.max_pages}, "
             f"inter_page_delay_seconds={self.inter_page_delay_seconds}, "
+            f"launch_channel={self.launch_channel!r}, "
+            f"chromium_path={self.chromium_path!r}, "
             f"location_resolver={'<set>' if self.location_resolver is not None else 'None'})"
         )
 
@@ -178,6 +186,8 @@ class InfoJobsScraperSettings:
             and self.domain == other.domain
             and self.max_pages == other.max_pages
             and self.inter_page_delay_seconds == other.inter_page_delay_seconds
+            and self.launch_channel == other.launch_channel
+            and self.chromium_path == other.chromium_path
             and self.location_resolver is other.location_resolver
         )
 
@@ -189,6 +199,8 @@ class InfoJobsScraperSettings:
                 self.domain,
                 self.max_pages,
                 self.inter_page_delay_seconds,
+                self.launch_channel,
+                self.chromium_path,
                 self.location_resolver,
             )
         )
@@ -240,7 +252,19 @@ class InfoJobsPlaywrightScraper(JobSearchPort):
             self._browser = await self._browser_factory()
         else:
             self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(headless=True)
+            _launch_kwargs: dict[str, Any] = {
+                "headless": True,
+                "args": [
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
+                ],
+            }
+            if self._settings.launch_channel is not None:
+                _launch_kwargs["channel"] = self._settings.launch_channel
+            if self._settings.chromium_path is not None:
+                _launch_kwargs["executable_path"] = self._settings.chromium_path
+            self._browser = await self._playwright.chromium.launch(**_launch_kwargs)
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -316,7 +340,10 @@ class InfoJobsPlaywrightScraper(JobSearchPort):
                     "narrowed URL shape.",
                 )
 
-        ctx = await self._browser.new_context(user_agent=self._settings.user_agent)
+        ctx = await self._browser.new_context(
+            user_agent=self._settings.user_agent,
+            viewport={"width": 1920, "height": 1080},
+        )
         # Stealth MUST be applied AFTER `new_context` (per
         # `playwright_stealth` docs: "Apply Stealth to Playwright
         # Contexts") and BEFORE `new_page` so the page that follows

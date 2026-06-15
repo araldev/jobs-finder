@@ -322,6 +322,25 @@ _DAYS_PATTERN = re.compile(
 )
 _DAYS_PLUS_PATTERN = re.compile(r"^hace\s+(\d+)\+\s*d[íi]as$", re.IGNORECASE)
 _DAYS_OLD_PATTERN = re.compile(r"^hace\s+m[áa]s\s+de\s+(\d+)\s+d[íi]as$", re.IGNORECASE)
+# Absolute date: "04 may", "04 mayo", "4 ene" — day + abbreviated month
+_ABSOLUTE_DATE_PATTERN = re.compile(r"^(\d{1,2})\s+([a-z]{3,})\.?$", re.IGNORECASE)
+# Month name to number (Spanish and English abbreviations)
+_MONTH_MAP = {
+    "ene": 1, "ene.": 1,
+    "feb": 2, "feb.": 2,
+    "mar": 3, "mar.": 3,
+    "abr": 4, "abr.": 4,
+    "may": 5, "may.": 5,
+    "jun": 6, "jun.": 6,
+    "jul": 7, "jul.": 7,
+    "ago": 8, "ago.": 8,
+    "sep": 9, "sep.": 9, "sept": 9, "sept.": 9,
+    "oct": 10, "oct.": 10,
+    "nov": 11, "nov.": 11,
+    "dic": 12, "dic.": 12,
+    "jan": 1, "jan.": 1,
+    "jul": 7,
+}
 
 
 def _parse_relative_date(raw: str) -> datetime:
@@ -366,6 +385,25 @@ def _parse_relative_date(raw: str) -> datetime:
         days = int(m.group(1)) + 1
         today = datetime.now(UTC).replace(microsecond=0, second=0, minute=0, hour=0)
         return today - timedelta(days=days)
+    # Absolute date: "04 may", "4 jun" — parse day + month, use 1st of that month
+    m = _ABSOLUTE_DATE_PATTERN.match(text)
+    if m:
+        day = int(m.group(1))
+        month_raw = m.group(2).lower().rstrip(".")
+        month = _MONTH_MAP.get(month_raw, None)
+        if month is None:
+            raise ValueError(f"unparseable absolute date: {raw!r}")
+        try:
+            # Use current year; day 1 of that month as proxy date
+            now = datetime.now(UTC)
+            # If the date would be in the future, use last year
+            year = now.year
+            parsed = datetime(year, month, day, 0, 0, 0, tzinfo=UTC)
+            if parsed > now:
+                parsed = datetime(year - 1, month, day, 0, 0, 0, tzinfo=UTC)
+            return parsed
+        except ValueError:
+            raise ValueError(f"unparseable absolute date: {raw!r}")
     raise ValueError(f"unparseable relative date: {raw!r}")
 
 

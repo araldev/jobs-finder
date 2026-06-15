@@ -91,6 +91,7 @@ class MiniMaxLLMClient:
         "_http",
         "_owns_http",
         "_thinking_disabled",
+        "_supports_thinking",
     )
 
     def __init__(
@@ -104,6 +105,7 @@ class MiniMaxLLMClient:
         timeout_seconds: float,
         http_client: httpx.AsyncClient | None = None,
         thinking_disabled: bool = True,
+        supports_thinking: bool = True,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
@@ -118,6 +120,7 @@ class MiniMaxLLMClient:
             self._http = http_client
             self._owns_http = False
         self._thinking_disabled = thinking_disabled
+        self._supports_thinking = supports_thinking
 
     def _build_request_body(self, system: str, user: str) -> dict[str, Any]:
         """Build the OpenAI-compatible request body.
@@ -137,7 +140,7 @@ class MiniMaxLLMClient:
             "max_completion_tokens": self._max_tokens,
             "stream": False,
         }
-        if self._thinking_disabled:
+        if self._supports_thinking and self._thinking_disabled:
             body["thinking"] = {"type": "disabled"}
         # Request JSON mode so the model returns a JSON object
         body["response_format"] = {"type": "json_object"}

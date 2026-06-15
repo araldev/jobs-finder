@@ -456,6 +456,16 @@ def build_app(  # noqa: PLR0915, PLR0912
                 # REQ-J-003: inter-page pacing is part of v1 (unlike
                 # the Indeed v1 which added it later).
                 inter_page_delay_seconds=effective_settings.infojobs_inter_page_delay_seconds,
+                # INFOJOBS_LAUNCH_CHANNEL: when set (e.g. "chrome"),
+                # uses the system Chrome binary instead of bundled
+                # Chromium, giving InfoJobs the same TLS/HTTP-2
+                # fingerprint as a real browser session.
+                launch_channel=effective_settings.infojobs_launch_channel,
+                # INFOJOBS_CHROMIUM_PATH: when set, passed as
+                # `executable_path` to `chromium.launch()`, bypassing
+                # Playwright's channel search. Needed for snap Chromium
+                # which is not at Playwright's default channel paths.
+                chromium_path=effective_settings.infojobs_chromium_path,
                 # REQ-PROV-004: wire the SAME `HardcodedLocationResolver`
                 # instance (L185) into `InfoJobsScraperSettings` so the
                 # scraper's `search()` can call
@@ -792,7 +802,11 @@ def build_app(  # noqa: PLR0915, PLR0912
     # without code changes (REQ-LLM-SEC-002).
     chat_use_case: FilterJobsByIntentUseCase | None = None
     if chat_enabled:
-        llm_client = build_minimax_llm_client(effective_settings, http_client=llm_http_client)
+        llm_client = build_minimax_llm_client(
+            effective_settings,
+            http_client=llm_http_client,
+            supports_thinking=effective_settings.llm_supports_thinking,
+        )
         intent_extractor: IntentExtractor | None = None
         if effective_settings.intent_extraction_enabled:
             intent_extractor = IntentExtractor(

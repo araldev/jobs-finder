@@ -33,6 +33,7 @@ def build_minimax_llm_client(
     settings: Settings,
     *,
     http_client: httpx.AsyncClient | None = None,
+    supports_thinking: bool = True,
 ) -> MiniMaxLLMClient:
     """Build a `MiniMaxLLMClient` from a `Settings` instance.
 
@@ -78,4 +79,5 @@ def build_minimax_llm_client(
         timeout_seconds=settings.llm_request_timeout_seconds,
         http_client=http_client,
         thinking_disabled=True,
+        supports_thinking=supports_thinking,
     )

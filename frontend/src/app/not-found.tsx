@@ -9,7 +9,7 @@ export default function NotFound() {
         The page you are looking for does not exist
       </p>
       <Button variant="outline" className="mt-4" asChild>
-        <Link href="/">Back to Dashboard</Link>
+        <Link href="/dashboard">Back to Dashboard</Link>
       </Button>
     </div>
   );

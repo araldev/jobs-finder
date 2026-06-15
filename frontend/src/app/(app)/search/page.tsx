@@ -67,16 +67,32 @@ export default function SearchPage() {
           ))}
         </div>
       ) : filteredJobs.length > 0 ? (
-        <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-          {filteredJobs.map((job, i) => (
-            <JobCard key={job.id} job={job} index={i} openedJobIds={openedJobIds} />
-          ))}
-        </div>
-      ) : (
+        <>
+          <p className="mb-4 text-sm text-muted-foreground">
+            {filteredJobs.length} jobs found
+          </p>
+          <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+            {filteredJobs.map((job, i) => (
+              <JobCard
+                key={job.id}
+                job={job}
+                index={i}
+                openedJobIds={openedJobIds}
+              />
+            ))}
+          </div>
+        </>
+      ) : query ? (
         <EmptyState
           variant="no-results"
           title="No matching jobs"
-          description={query ? `No results for "${query}"` : "No jobs match your filters"}
+          description={`No results for "${query}"`}
+        />
+      ) : (
+        <EmptyState
+          variant="no-jobs"
+          title="No jobs yet"
+          description="Try adjusting your search"
         />
       )}
     </PageTransition>

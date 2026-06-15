@@ -3,7 +3,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { PageTransition } from "@/components/layout/PageTransition";
 import { StatsCardsRow } from "@/components/dashboard/StatsCardsRow";
-import { JobSourceBreakdown } from "@/components/dashboard/JobSourceBreakdown";
 import { RightSidebar } from "@/components/dashboard/RightSidebar";
 import { SearchBar } from "@/components/search/SearchBar";
 import { CompactJobCard } from "@/components/jobs/CompactJobCard";
@@ -71,11 +70,6 @@ export default function DashboardPage() {
 
       {/* Stats row */}
       <StatsCardsRow />
-
-      {/* Job source breakdown */}
-      <div className="mt-6">
-        <JobSourceBreakdown />
-      </div>
 
       {/* Main content: two columns */}
       <div className="mt-6 flex gap-6">
