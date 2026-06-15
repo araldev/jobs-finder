@@ -58,6 +58,9 @@ class SchedulerState:
     last_error: str | None = None
     cycle_count: int = 0
     total_jobs_collected: int = 0
+    # Track the start time of the last SUCCESSFUL run for deduplication.
+    # Jobs posted before this time are skipped in subsequent cycles.
+    last_successful_run_start: datetime | None = None
 
 
 class BackgroundJobScheduler:
@@ -149,18 +152,32 @@ class BackgroundJobScheduler:
                     self._state.running = True
                     self._state.last_run_start = datetime.now(UTC)
 
+                    # Cutoff: only scrape jobs posted after this time.
+                    # First cycle (no last_successful_run_start) processes all jobs.
+                    cutoff = self._state.last_successful_run_start
+
                     all_jobs: list[Job] = []
+                    new_jobs: list[Job] = []
                     last_query: dict[str, str] = {}
                     for query in self._queries:
                         keywords = query["keywords"]
                         location = query["location"]
                         batch = await self._search_fn(keywords, location)
                         all_jobs.extend(batch)
+                        # Filter out already-seen jobs (dedup by posted_at)
+                        if cutoff is not None:
+                            for job in batch:
+                                if job.posted_at >= cutoff:
+                                    new_jobs.append(job)
+                        else:
+                            # First run: accept all jobs
+                            new_jobs.extend(batch)
                         last_query = query
 
-                    if all_jobs:
+                    # Upsert only genuinely new jobs (posted since last cycle)
+                    if new_jobs:
                         await self._repo.upsert_jobs(
-                            all_jobs,
+                            new_jobs,
                             query_snapshot=last_query,
                         )
 
@@ -178,11 +195,16 @@ class BackgroundJobScheduler:
                             )
 
                     self._state.cycle_count += 1
-                    self._state.total_jobs_collected += len(all_jobs)
+                    self._state.total_jobs_collected += len(new_jobs)
+                    # Commit the cutoff time for the next cycle's deduplication
+                    self._state.last_successful_run_start = self._state.last_run_start
 
                     _logger.info(
-                        "BackgroundJobScheduler: cycle complete — %d jobs collected",
-                        len(all_jobs),
+                        "BackgroundJobScheduler: cycle complete — "
+                        "%d new jobs (skipped %d already-seen), total collected %d",
+                        len(new_jobs),
+                        len(all_jobs) - len(new_jobs),
+                        self._state.total_jobs_collected,
                     )
                 except Exception:
                     self._state.last_error = traceback.format_exc()
