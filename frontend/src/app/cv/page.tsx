@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -58,14 +58,21 @@ export default function CVLandingPage() {
     checkAuth();
   }, [checkAuth]);
 
-  if (typeof window !== "undefined") {
-    window.addEventListener("focus", handleFocus);
-  }
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", handleFocus);
+    }
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("focus", handleFocus);
+      }
+    };
+  }, [handleFocus]);
 
   // Initial load
-  useState(() => {
+  useEffect(() => {
     checkAuth();
-  });
+  }, [checkAuth]);
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
