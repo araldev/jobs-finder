@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { markJobAsOpened } from "@/lib/chat-storage";
 import type { Job } from "@/types/job";
 
 export default function PublicJobDetailPage() {
@@ -37,6 +38,13 @@ export default function PublicJobDetailPage() {
   useEffect(() => {
     fetchJob();
   }, [fetchJob]);
+
+  // Mark job as opened when loaded
+  useEffect(() => {
+    if (job?.id) {
+      markJobAsOpened(job.id);
+    }
+  }, [job?.id]);
 
   // Check auth state
   useEffect(() => {

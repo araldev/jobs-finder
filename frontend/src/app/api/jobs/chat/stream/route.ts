@@ -22,6 +22,19 @@ export async function POST(request: NextRequest) {
     },
   );
 
+  // Handle cases where the backend returns no body (e.g., certain error responses)
+  // In Next.js 15, passing null to new Response() causes
+  // "Attempted to access streaming response content" error
+  if (!backendResponse.body) {
+    return new Response(
+      JSON.stringify({ error: "Backend returned empty response" }),
+      {
+        status: backendResponse.status || 502,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }
+
   return new Response(backendResponse.body, {
     status: backendResponse.status,
     statusText: backendResponse.statusText,
