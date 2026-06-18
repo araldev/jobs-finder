@@ -1,8 +1,11 @@
 "use client";
 
-import { Briefcase, Clock, TrendingUp } from "lucide-react";
+import { Briefcase, Clock, TrendingUp, Eye, FileText, Heart } from "lucide-react";
 import { StatCard } from "./StatCard";
 import { useStats } from "@/hooks/useStats";
+import { useOpenedJobs } from "@/lib/chat-storage";
+import { useFavorites } from "@/hooks/useFavorites";
+import { useCVAdapted } from "@/hooks/useCVAdapted";
 import { formatRelativeDate } from "@/lib/formatters";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState } from "@/components/shared/ErrorState";
@@ -27,10 +30,18 @@ const PLATFORM_ICONS: Record<string, string> = {
 
 export function StatsCardsRow() {
   const { data, isLoading, isError, refetch } = useStats();
+  const openedJobIds = useOpenedJobs();
+  const { favoriteCount } = useFavorites();
+  const { cvAdaptedCount } = useCVAdapted();
 
   if (isLoading) {
     return (
       <div className="space-y-3">
+        <div className="grid gap-4 sm:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-[100px] rounded-xl" />
+          ))}
+        </div>
         <div className="grid gap-4 sm:grid-cols-3">
           {Array.from({ length: 3 }).map((_, i) => (
             <Skeleton key={i} className="h-[100px] rounded-xl" />
@@ -76,6 +87,31 @@ export function StatsCardsRow() {
           value={data.last_sync ? formatRelativeDate(data.last_sync) : "—"}
           iconClassName="bg-muted/50"
           delay={0.1}
+        />
+      </div>
+
+      {/* Engagement stats: opened jobs, CVs adapted, favorites */}
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard
+          icon={Eye}
+          label="Ofertas clicadas"
+          value={openedJobIds.size > 0 ? openedJobIds.size.toLocaleString() : "—"}
+          iconClassName="bg-primary/10"
+          delay={0.15}
+        />
+        <StatCard
+          icon={FileText}
+          label="CVs adaptados"
+          value={cvAdaptedCount > 0 ? cvAdaptedCount.toLocaleString() : "—"}
+          iconClassName="bg-secondary/10"
+          delay={0.2}
+        />
+        <StatCard
+          icon={Heart}
+          label="Favoritos"
+          value={favoriteCount > 0 ? favoriteCount.toLocaleString() : "—"}
+          iconClassName="bg-muted/50"
+          delay={0.25}
         />
       </div>
 

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import type { Job } from "@/types/job";
 import { Upload, FileText, Download, X, Loader2, CheckCircle2 } from "lucide-react";
+import { useCVAdapted } from "@/hooks/useCVAdapted";
 
 interface GenerateCVModalProps {
   job: Job;
@@ -28,6 +29,14 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
   const [consentGiven, setConsentGiven] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const supabase = createClient();
+  const { incrementCVAdapted } = useCVAdapted();
+
+  // Track CV adaptation count when successfully generated
+  useEffect(() => {
+    if (status === "done") {
+      incrementCVAdapted();
+    }
+  }, [status, incrementCVAdapted]);
 
   const fetchSavedCV = useCallback(async () => {
     setLoadingSavedCV(true);
