@@ -3,17 +3,42 @@
 Spec: REQ-DB-002, REQ-DB-003, REQ-DB-004. Uses `aiosqlite` as the async
 driver, enables WAL mode on connect, and creates the `jobs` table with
 a `UNIQUE(source, source_id)` constraint for upsert semantics.
+
+A custom `unaccent(s)` SQL function is registered on every connection
+so the dashboard's location filter is case- AND accent-insensitive:
+"malaga" matches "Málaga, Andalusia, Spain", "MALAGA" matches
+"Málaga", etc. The unaccent algorithm is the standard NFD-decompose
++ drop combining-marks chain (the same one the `HardcodedLocationResolver`
+uses for the intent-extraction path).
 """
 
 from __future__ import annotations
 
 import json
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any
 
 import aiosqlite
 
 from jobs_finder.domain.job import Job
+
+
+def _unaccent(s: str | None) -> str:
+    """Strip combining accent marks via NFD decomposition.
+
+    Pure-Python implementation of the standard "unaccent" routine:
+    NFD-decompose then drop every character in the `Mn` (Mark,
+    nonspacing) category. Lower-cases too so the WHERE clause
+    can rely on `LIKE` (which is ASCII-case-insensitive in SQLite
+    by default) on the already-lowercased + accent-stripped
+    strings.
+    """
+    if s is None:
+        return ""
+    nfd = unicodedata.normalize("NFD", s)
+    stripped = "".join(ch for ch in nfd if unicodedata.category(ch) != "Mn")
+    return stripped.casefold()
 
 # ── Schema ──────────────────────────────────────────────────────────────────
 
@@ -70,6 +95,12 @@ class SqliteJobRepository:
         """Open aiosqlite.connect, enable WAL, run CREATE TABLE + INDEX IF NOT EXISTS."""
         self._connection = await aiosqlite.connect(self._db_path)
         self._connection.row_factory = aiosqlite.Row
+        # Register the custom `unaccent` SQL function so the location
+        # filter is accent- AND case-insensitive ("malaga" matches
+        # "Málaga, Andalusia, Spain"). Idempotent across reconnects.
+        await self._connection.create_function(
+            "unaccent", 1, _unaccent, deterministic=True
+        )
         await self._connection.execute("PRAGMA journal_mode=WAL")
         await self._connection.execute(_CREATE_TABLE_SQL)
         for idx_sql in _CREATE_INDEXES_SQL:
@@ -247,6 +278,23 @@ class SqliteJobRepository:
         assert row is not None
         return int(row[0])
 
+    async def get_job_by_source_id(self, source_id: str) -> Job | None:
+        """Return a single job by its source_id, or None if not found.
+
+        The ``source_id`` is the job ID as it appears in API responses
+        (e.g. ``"4428834914"`` from LinkedIn).  This is NOT the
+        auto-increment integer primary key.
+        """
+        assert self._connection is not None, "repository not opened; use 'async with repo:'"
+
+        sql = "SELECT * FROM jobs WHERE source_id = ? LIMIT 1"
+        async with self._connection.execute(sql, (source_id,)) as cursor:
+            row = await cursor.fetchone()
+
+        if row is None:
+            return None
+        return _row_to_job(row)
+
     async def close(self) -> None:
         """Close the DB connection. Idempotent."""
         if self._connection is not None:
@@ -277,17 +325,24 @@ def _build_history_clauses(
         params.extend(sources)
 
     if keywords is not None:
-        clauses.append("(title LIKE ? OR company LIKE ?)")
+        # Case+accent-insensitive match on title and company: the
+        # user types "pyton" and still gets "Python" matches.
+        clauses.append(
+            "(unaccent(title) LIKE unaccent(?) OR unaccent(company) LIKE unaccent(?))"
+        )
         like_pattern = f"%{keywords}%"
         params.append(like_pattern)
         params.append(like_pattern)
 
     if location is not None:
-        clauses.append("location LIKE ?")
+        # Case+accent-insensitive match on location: "malaga"
+        # matches "Málaga, Andalusia, Spain" (and "MALAGA" matches
+        # "Málaga" — the unaccent fn also lower-cases).
+        clauses.append("unaccent(location) LIKE unaccent(?)")
         params.append(f"%{location}%")
 
     if description is not None:
-        clauses.append("description LIKE ?")
+        clauses.append("unaccent(description) LIKE unaccent(?)")
         params.append(f"%{description}%")
 
     if date_from is not None:

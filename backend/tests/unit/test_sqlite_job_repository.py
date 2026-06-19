@@ -680,3 +680,108 @@ async def test_context_manager_lifecycle() -> None:
     async with r:
         assert r._connection is not None
     assert r._connection is None
+
+
+# ── REQ-DASH-FILTER: case- AND accent-insensitive location filter ────────────
+
+
+@pytest.mark.asyncio
+async def test_search_jobs_history_location_filter_is_case_and_accent_insensitive(
+    repo: SqliteJobRepository,
+) -> None:
+    """The dashboard's `?location=` filter must match regardless of case
+    and accent marks: `malaga` ≡ `Málaga` ≡ `MALAGA` ≡ `mÁlAgA`.
+
+    The custom `unaccent()` SQL function (NFD-decompose + drop
+    combining marks + casefold) is registered on every connection
+    in `SqliteJobRepository.__aenter__` and applied on BOTH the
+    column side and the search-term side of the LIKE.
+    """
+    j_malaga = Job(
+        id="m1",
+        title="Backend",
+        company="Málaga Inc",
+        location="Málaga, Andalusia, Spain",
+        url="https://ex.com/m1",
+        posted_at=datetime(2026, 6, 1, tzinfo=UTC),
+        source="linkedin",
+    )
+    j_madrid = Job(
+        id="m2",
+        title="Backend",
+        company="Madrid Inc",
+        location="Madrid, Community of Madrid, Spain",
+        url="https://ex.com/m2",
+        posted_at=datetime(2026, 6, 2, tzinfo=UTC),
+        source="linkedin",
+    )
+    await repo.upsert_jobs([j_malaga, j_madrid], query_snapshot=_SAMPLE_QUERY)
+
+    # Lowercase, no accent (the user types "malaga" in the dashboard).
+    matches = await repo.search_jobs_history(location="malaga")
+    assert [j.id for j in matches] == ["m1"], (
+        f"expected only the Málaga job for 'malaga', got {[j.location for j in matches]}"
+    )
+
+    # Proper accent (URL-encoded by httpx / browser).
+    matches = await repo.search_jobs_history(location="Málaga")
+    assert [j.id for j in matches] == ["m1"]
+
+    # All uppercase.
+    matches = await repo.search_jobs_history(location="MALAGA")
+    assert [j.id for j in matches] == ["m1"]
+
+    # Mixed case + accent.
+    matches = await repo.search_jobs_history(location="mÁlAgA")
+    assert [j.id for j in matches] == ["m1"]
+
+    # Sanity: a different location must NOT match.
+    matches = await repo.search_jobs_history(location="madrid")
+    assert [j.id for j in matches] == ["m2"]
+
+
+@pytest.mark.asyncio
+async def test_search_jobs_history_keywords_filter_is_case_and_accent_insensitive(
+    repo: SqliteJobRepository,
+) -> None:
+    """Same unaccent rule applies to the `keywords` filter (title/company).
+
+    Note: `unaccent` is accent-stripping, NOT fuzzy matching. A
+    typo like `pyton` (missing `h`) is NOT supposed to match
+    `python` — that's a spellcheck problem, out of scope.
+    """
+    j_python = Job(
+        id="p1",
+        title="Python Developer",
+        company="Tech Co",
+        location="Madrid",
+        url="https://ex.com/p1",
+        posted_at=datetime(2026, 6, 1, tzinfo=UTC),
+        source="linkedin",
+    )
+    j_other = Job(
+        id="p2",
+        title="Java Developer",
+        company="Tech Co",
+        location="Madrid",
+        url="https://ex.com/p2",
+        posted_at=datetime(2026, 6, 2, tzinfo=UTC),
+        source="linkedin",
+    )
+    await repo.upsert_jobs([j_python, j_other], query_snapshot=_SAMPLE_QUERY)
+
+    # Lowercase still matches (case-insensitive).
+    matches = await repo.search_jobs_history(keywords="python")
+    assert [j.id for j in matches] == ["p1"]
+
+    # All uppercase.
+    matches = await repo.search_jobs_history(keywords="PYTHON")
+    assert [j.id for j in matches] == ["p1"]
+
+    # Mixed case.
+    matches = await repo.search_jobs_history(keywords="PyThOn")
+    assert [j.id for j in matches] == ["p1"]
+
+    # Sanity: a different keyword must NOT match.
+    matches = await repo.search_jobs_history(keywords="java")
+    assert [j.id for j in matches] == ["p2"]
