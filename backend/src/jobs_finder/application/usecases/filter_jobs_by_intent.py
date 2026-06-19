@@ -252,15 +252,11 @@ class FilterJobsByIntentUseCase:
             repository query. Defaults to `20` (matching the
             scheduler's fresh results). The v1 path always uses
             `_V1_DEFAULT_LIMIT = 20` regardless of this setting.
-        job_repository: Optional `JobRepositoryPort`. When provided,
-            the use case reads cached jobs from the DB instead of
-            running live scrapers via the aggregator. This makes
-            the chat reliable (no scraper failures) at the cost
-            of slightly stale data. The scheduler's periodic
-            scraping keeps the DB fresh (25-35min intervals).
-            When `None`, the use case falls back to the aggregator
-            (live scraping) for backward compatibility.
-            regardless of this setting.
+        job_repository: `JobRepositoryPort` for DB-only job lookup.
+            The chat endpoint NEVER calls the live scrapers — it
+            queries this repository (populated by the scheduler).
+            If `None`, the use case raises `RuntimeError` (no
+            aggregator fallback exists by design).
     """
 
     def __init__(
@@ -521,59 +517,34 @@ class FilterJobsByIntentUseCase:
             intent = None  # v1 path: no meta
 
         # Stage 2: repository query (cached jobs from scheduler).
-        # When `job_repository` is available, use it instead of the
-        # aggregator to avoid live scraper failures (TargetClosedError
-        # from Playwright browser instability). The scheduler keeps
-        # the DB fresh (25-35min intervals), so cached data is
-        # fresh enough for the LLM scoring stage.
-        if self._job_repository is not None:
-            if intent is not None:
-                stage2_q = intent.q if intent.q is not None else ""
-                stage2_location = intent.location if intent.location is not None else ""
-                used_fallback = False
-                # Emit the `meta` event FIRST (2-stage path).
-                yield StreamEventMeta(intent=intent)
-                flat_jobs = await self._job_repository.search_jobs_history(
-                    keywords=stage2_q,
-                    location=stage2_location,
-                    sources=resolved_sources,
-                    limit=self._intent_max_results,
-                )
-            else:
-                flat_jobs = await self._job_repository.search_jobs_history(
-                    keywords=q,
-                    location=location,
-                    sources=resolved_sources,
-                    limit=limit,
-                )
+        # The chat endpoint NEVER calls the live scrapers — it
+        # queries the SQLite-backed repository populated by the
+        # scheduler. The DB is the single source of jobs.
+        if self._job_repository is None:
+            raise RuntimeError(
+                "FilterJobsByIntentUseCase: stream_execute requires "
+                "job_repository (DB) — no aggregator fallback exists. "
+                "Wire job_repository in app_factory.build_app()."
+            )
+        if intent is not None:
+            stage2_q = intent.q if intent.q is not None else ""
+            stage2_location = intent.location if intent.location is not None else ""
+            used_fallback = False
+            # Emit the `meta` event FIRST (2-stage path).
+            yield StreamEventMeta(intent=intent)
+            flat_jobs = await self._job_repository.search_jobs_history(
+                keywords=stage2_q,
+                location=stage2_location,
+                sources=resolved_sources,
+                limit=self._intent_max_results,
+            )
         else:
-            # Fallback to aggregator (live scraping) when no repository is configured.
-            if intent is not None:
-                stage2_q = intent.q if intent.q is not None else ""
-                stage2_location = intent.location if intent.location is not None else ""
-                used_fallback = False
-                yield StreamEventMeta(intent=intent)
-                linkedin_geo_id: int | None = None
-                if intent.location is not None and self._location_resolver is not None:
-                    try:
-                        linkedin_geo_id = self._location_resolver.resolve(intent.location)
-                    except Exception:  # noqa: BLE001
-                        linkedin_geo_id = None
-                aggregated = await self._aggregator.search(
-                    keywords=stage2_q,
-                    location=stage2_location,
-                    limit=self._intent_max_results,
-                    sources=resolved_sources,
-                    linkedin_geo_id=linkedin_geo_id,
-                )
-            else:
-                aggregated = await self._aggregator.search(
-                    keywords=q,
-                    location=location,
-                    limit=limit,
-                    sources=resolved_sources,
-                )
-            flat_jobs = [agg.job for agg in aggregated.jobs]
+            flat_jobs = await self._job_repository.search_jobs_history(
+                keywords=q,
+                location=location,
+                sources=resolved_sources,
+                limit=limit,
+            )
 
         # Empty-aggregator short-circuit: emit a single `done`
         # and return. The LLM is NEVER called.
@@ -616,7 +587,13 @@ class FilterJobsByIntentUseCase:
         selection = parser.finalize(valid_ids)
 
         # Build the filtered list in the AGGREGATOR's order.
-        filtered = [j for j in flat_jobs if j.id in set(selection.matching_ids)]
+        # If the LLM produced no valid selection (thinking consumed all
+        # tokens), fall back to returning all aggregator jobs.
+        if not selection.matching_ids:
+            filtered = list(flat_jobs)
+            used_fallback = True
+        else:
+            filtered = [j for j in flat_jobs if j.id in set(selection.matching_ids)]
         yield StreamEventDone(
             jobs=filtered,
             explanation=selection.explanation,
@@ -637,20 +614,17 @@ class FilterJobsByIntentUseCase:
         resolved_sources: list[str],
         used_fallback: bool,
     ) -> FilteredJobsResult:
-        """Run the 2-stage path: directed aggregator + v1 stage-3 LLM.
+        """Run the 2-stage path: DB query (from intent) + v1 stage-3 LLM.
 
-        Stage 2 calls the aggregator with the extracted
-        `q` / `location` (the `intent.q or ""` /
-        `intent.location or ""` fallback preserves the v1
-        "empty string is a wildcard" contract) and a higher
-        per-source cap (`self._intent_max_results`,
-        typically 100, vs the v1 `limit=20`).
+        Stage 2 queries the `job_repository` (the SQLite-backed
+        cache populated by the scheduler) using the extracted
+        `intent.q` and `intent.location`. The repository NEVER
+        hits the live scrapers — it serves cached jobs only.
 
-        Stage 3 is the same v1 LLM filter (strict-subset
-        ID validation, hallucination WARNINGs, aggregator
-        order). The `_run_stage3(...)` helper is shared
-        between the 2 paths so the stage-3 logic is NOT
-        duplicated.
+        Stage 3 is the same v1 LLM filter (strict-subset ID
+        validation, hallucination WARNINGs, repo order).
+        The `_run_stage3(...)` helper is shared between the
+        2 paths so the stage-3 logic is NOT duplicated.
 
         Args:
             message: The original user message (for the LLM
@@ -666,73 +640,29 @@ class FilterJobsByIntentUseCase:
 
         Returns:
             A `FilteredJobsResult` with the matched jobs in
-            the aggregator's order, the LLM's Spanish
+            the repository's order, the LLM's Spanish
             explanation, the counts, and `used_fallback=False`.
+
+        Raises:
+            RuntimeError: if `self._job_repository is None` —
+                the chat endpoint requires the DB and refuses to
+                call the live scrapers.
         """
+        if self._job_repository is None:
+            raise RuntimeError(
+                "FilterJobsByIntentUseCase: _execute_2stage requires "
+                "job_repository (DB) — no aggregator fallback exists. "
+                "Wire job_repository in app_factory.build_app()."
+            )
+
         stage2_q = intent.q if intent.q is not None else ""
         stage2_location = intent.location if intent.location is not None else ""
-        # Resolve the `intent.location` to a LinkedIn `geoId` so the
-        # LinkedIn scraper can build `?geoId=<n>` (REQ-LOC-GEO-001).
-        # The resolver is called ONLY in the 2-stage path AND ONLY
-        # when `intent.location is not None` (the v1 path passes
-        # `location=""` and there's nothing to resolve). The
-        # resolver is a Protocol-conforming in-process dict lookup;
-        # a future `HybridLocationResolver` (geocoding API
-        # fallback) is a drop-in replacement.
-        #
-        # Resilience: a resolver exception is caught (a WARNING
-        # is logged) and the path proceeds with
-        # `linkedin_geo_id=None` (the LinkedIn scraper falls
-        # back to the broken `?location=` path — a strict
-        # improvement over today's 100%-broken behavior). The
-        # exception is NOT propagated to the route; the chat
-        # filter is still functional; only the LinkedIn
-        # location filter is degraded.
-        linkedin_geo_id: int | None = None
-        if intent.location is not None and self._location_resolver is not None:
-            try:
-                linkedin_geo_id = self._location_resolver.resolve(intent.location)
-            except Exception as exc:  # noqa: BLE001
-                # Resolver exception: log a WARNING and proceed with
-                # `linkedin_geo_id=None`. The use case does NOT
-                # propagate the exception (the chat filter is still
-                # functional; only the LinkedIn location filter is
-                # degraded). The LinkedIn scraper falls back to the
-                # broken `?location=` path.
-                _logger.warning(
-                    "Location resolver raised for %r; "
-                    "falling back to linkedin_geo_id=None (LinkedIn scraper will use "
-                    "broken ?location= path). Cause: %s",
-                    intent.location,
-                    exc,
-                )
-                linkedin_geo_id = None
-            else:
-                if linkedin_geo_id is None:
-                    # Resolver miss: log a WARNING so ops can spot
-                    # stale geographic intent and re-run the capture
-                    # script. The `HardcodedLocationResolver` itself
-                    # also logs a WARNING on a miss; the use case
-                    # logs a second one with the use-case context
-                    # (the `intent.location` string + the path
-                    # forward). This double-log is intentional — the
-                    # resolver's log is the "miss" signal; the
-                    # use-case's log is the "fallback to broken
-                    # `?location=`" signal.
-                    _logger.warning(
-                        "Location resolver returned None for %r; "
-                        "falling back to linkedin_geo_id=None (LinkedIn scraper will "
-                        "use broken ?location= path).",
-                        intent.location,
-                    )
-        aggregated = await self._aggregator.search(
+        flat_jobs: list[Job] = await self._job_repository.search_jobs_history(
             keywords=stage2_q,
             location=stage2_location,
-            limit=self._intent_max_results,
             sources=resolved_sources,
-            linkedin_geo_id=linkedin_geo_id,
+            limit=self._intent_max_results,
         )
-        flat_jobs: list[Job] = [agg.job for agg in aggregated.jobs]
         return await self._run_stage3(
             message=message,
             flat_jobs=flat_jobs,
@@ -757,43 +687,46 @@ class FilterJobsByIntentUseCase:
         resolved_sources: list[str],
         used_fallback: bool,
     ) -> FilteredJobsResult:
-        """Run the v1 single-stage path: aggregator with the
-        caller's `q`/`location`/`limit` + stage-3 LLM filter.
+        """Run the v1 single-stage path: DB query + stage-3 LLM filter.
 
-        The v1 logic is VERBATIM from the pre-T-008 use case:
-        the aggregator's `search()` is called with whatever
-        `q` / `location` / `limit` the caller passed to
-        `execute(...)`. The v1 chat endpoint passes
-        `q=""`, `location=""`, `limit=20` (per the existing
-        `test_filter_use_case.py::test_execute_forwards_q_location_limit_to_aggregator`
-        test that asserts the use case FORWARDS those kwargs
-        unchanged), but the use case is a thin pass-through
-        — a future caller can pre-fill `q` to benefit from
-        the aggregator cache.
+        The v1 chat endpoint passes `q=""`, `location=""`,
+        `limit=20` — the DB query with empty keyword/location
+        matches all jobs (the empty-string wildcard contract).
 
         Args:
             message: The original user message.
-            q: The aggregator's `keywords` (forwarded from
+            q: The DB query's `keywords` (forwarded from
                 the caller's `execute(...)`).
-            location: The aggregator's `location` (forwarded
+            location: The DB query's `location` (forwarded
                 from the caller's `execute(...)`).
-            limit: The aggregator's `limit` (forwarded from
+            limit: The DB query's `limit` (forwarded from
                 the caller's `execute(...)`).
             resolved_sources: The pre-resolved `sources` list.
             used_fallback: `True` for the v1 path.
 
         Returns:
             A `FilteredJobsResult` with the matched jobs in
-            the aggregator's order, the LLM's Spanish
+            the repository's order, the LLM's Spanish
             explanation, the counts, and `used_fallback=True`.
+
+        Raises:
+            RuntimeError: if `self._job_repository is None` —
+                the chat endpoint requires the DB and refuses to
+                call the live scrapers.
         """
-        aggregated = await self._aggregator.search(
+        if self._job_repository is None:
+            raise RuntimeError(
+                "FilterJobsByIntentUseCase: _execute_v1 requires "
+                "job_repository (DB) — no aggregator fallback exists. "
+                "Wire job_repository in app_factory.build_app()."
+            )
+
+        flat_jobs: list[Job] = await self._job_repository.search_jobs_history(
             keywords=q,
             location=location,
-            limit=limit,
             sources=resolved_sources,
+            limit=limit,
         )
-        flat_jobs: list[Job] = [agg.job for agg in aggregated.jobs]
         return await self._run_stage3(
             message=message,
             flat_jobs=flat_jobs,

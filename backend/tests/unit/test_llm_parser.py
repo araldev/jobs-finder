@@ -288,23 +288,23 @@ def test_finalize_drops_hallucinated_ids_with_warning(
 
 
 def test_finalize_with_malformed_buffer_raises_parse_error() -> None:
-    """A buffer that's not JSON at all raises `LLMResponseParseError`."""
+    """A buffer that's not JSON at all returns empty selection (graceful fallback)."""
     parser = StreamEventParser()
     list(parser.feed("this is not json at all"))
-    with pytest.raises(LLMResponseParseError):
-        parser.finalize({"j1"})
+    selection = parser.finalize({"j1"})
+    assert selection.matching_ids == []
 
 
 # ---------------------------------------------------------------------------
-# Scenario 6: empty buffer + finalize → raises LLMResponseParseError
+# Scenario 6: empty buffer + finalize → empty selection (graceful fallback)
 # ---------------------------------------------------------------------------
 
 
 def test_finalize_with_empty_buffer_raises_parse_error() -> None:
-    """An empty buffer + finalize → raises `LLMResponseParseError`."""
+    """An empty buffer + finalize → returns empty selection (graceful fallback)."""
     parser = StreamEventParser()
-    with pytest.raises(LLMResponseParseError):
-        parser.finalize({"j1"})
+    selection = parser.finalize({"j1"})
+    assert selection.matching_ids == []
 
 
 # ---------------------------------------------------------------------------

@@ -162,7 +162,16 @@ def _build_chat_test_app(
         indeed_use_case=indeed_uc,
         infojobs_use_case=infojobs_uc,
     )
-    chat_use_case = FilterJobsByIntentUseCase(aggregator=aggregator, llm=llm)
+    # The chat endpoint now queries the DB (job_repository) instead
+    # of the aggregator. Wire a FakeJobRepository with the same
+    # canned jobs so tests don't need a live SQLite.
+    from tests.unit._helpers.fake_job_repository import (  # noqa: PLC0415
+        FakeJobRepository,
+    )
+    repo = FakeJobRepository(jobs=jobs or [])
+    chat_use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator, llm=llm, job_repository=repo
+    )
 
     app = FastAPI()
     # Mount the chat router directly (bypassing the conditional

@@ -95,6 +95,7 @@ from jobs_finder.presentation.middleware import (
 )
 from jobs_finder.presentation.routes import chat as chat_routes
 from tests.conftest import FakeIntentExtractor, FakeJobSearchPort
+from tests.unit._helpers.fake_job_repository import FakeJobRepository
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -204,6 +205,7 @@ def _build_chat_2stage_test_app(
         aggregator=aggregator,
         llm=llm,
         intent_extractor=intent_extractor,
+        job_repository=FakeJobRepository(jobs=jobs),
     )
 
     app = FastAPI()
@@ -436,6 +438,7 @@ async def test_2stage_disabled_by_kill_switch(
         llm=llm,
         intent_extractor=extractor,
         intent_extraction_enabled=False,
+        job_repository=FakeJobRepository(jobs=jobs),
     )
     app = FastAPI()
     app.add_middleware(RequestIdMiddleware)
@@ -740,6 +743,7 @@ def _build_chat_2stage_test_app_with_resolver(
         llm=llm,
         intent_extractor=intent_extractor,
         location_resolver=HardcodedLocationResolver(),
+        job_repository=FakeJobRepository(jobs=jobs),
     )
     app = FastAPI()
     app.add_middleware(RequestIdMiddleware)
@@ -753,6 +757,14 @@ def _build_chat_2stage_test_app_with_resolver(
     return app
 
 
+@pytest.mark.skip(
+    reason=(
+        "aggregator fallback removed: the chat endpoint no longer "
+        "calls the LinkedIn scraper / aggregator. The resolver→geoId→"
+        "LinkedIn chain is no longer testable end-to-end through the "
+        "chat endpoint. The resolver itself is still unit-tested."
+    )
+)
 async def test_2stage_geo_id_end_to_end_with_real_resolver(
     jobs: list[Job],
 ) -> None:

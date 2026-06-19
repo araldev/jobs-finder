@@ -468,6 +468,15 @@ class JobRepositoryPort(Protocol):
         """
         ...
 
+    async def get_job_by_source_id(self, source_id: str) -> Job | None:
+        """Return a single job by its source_id, or None if not found.
+
+        The ``source_id`` is the job ID as it appears in API responses
+        (e.g. ``"4428834914"``).  This is NOT the auto-increment
+        integer primary key.
+        """
+        ...
+
     async def close(self) -> None:
         """Close the DB connection. Idempotent."""
         ...

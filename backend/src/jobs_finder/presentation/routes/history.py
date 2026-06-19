@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import HttpUrl
 
 from jobs_finder.presentation.schemas import (
@@ -75,6 +76,28 @@ async def jobs_history(
 
     items = [_to_history_response(job) for job in jobs]
     return JobsHistoryResponse(items=items, total=total, limit=query.limit, offset=query.offset)
+
+
+@router.get("/jobs/history/by-id/{source_id}")
+async def jobs_history_by_id(
+    source_id: str,
+    request: Request,
+) -> HistoricalJobResponse:
+    """Return a single job by its source_id.
+
+    This is a direct lookup endpoint (not paginated) used by the
+    frontend to resolve job detail pages. Returns 404 if the job
+    is not found.
+    """
+    repo = getattr(request.app.state, "job_repository", None)
+    if repo is None:
+        return JSONResponse({"error": "Job not found"}, status=404)
+
+    job = await repo.get_job_by_source_id(source_id)
+    if job is None:
+        return JSONResponse({"error": "Job not found"}, status=404)
+
+    return _to_history_response(job)
 
 
 def _to_history_response(job: object) -> HistoricalJobResponse:

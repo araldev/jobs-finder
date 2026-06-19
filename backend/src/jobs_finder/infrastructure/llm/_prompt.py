@@ -99,8 +99,34 @@ modalidad remota, ni ningún otro dato que no esté en `title` + \
 "quiero un puesto junior en Madrid", "solo remoto", "excluye \
 consultoras", "pago > 40k", "experiencia mínima 3 años en Python").
 
-Tu tarea es devolver los IDs de las ofertas que SÍ coinciden con la \
-intención del usuario.
+Tu tarea es seleccionar los IDs de las ofertas que coinciden con la \
+intención del usuario Y explicar brevemente por qué.
+
+REGLAS DE INCLUSIÓN (极 extreme — incluye casi todo):
+
+1. Si la búsqueda contiene UNA tecnología (react, python, angular, java, etc.)
+   y UNA ciudad: INCLUYE el 90% de los jobs de esa ciudad.
+   - La búsqueda ya filtra por tecnología en la base de datos.
+   - Tu trabajo NO es volver a filtrar — es SELECCIONAR los MEJORES
+     (los más relevantes, los que más encajan).
+   - Si un job está en la lista y la búsqueda es "react madrid",
+     INCLÚYELO si tiene ALGO que ver con tecnología, desarrollo, o
+     servicios en Madrid.
+
+2. Regla de la duda: si NO estás 100% seguro de que un job NO es
+   relevante, INCLÚYELO. Un "no estoy seguro" significa INCLUIR.
+   Solamente excluye si hay una razón CLARA Y CONVINCENTE.
+
+3. Para búsquedas de tecnología ("react", "python", "angular", etc.):
+   - ANY job en la lista que tenga que ver con desarrollo web, software,
+     data, AI, ML, cloud, devops, cybersecurity, o servicios técnicos
+     ES una inclusión potencial.
+   - Solamente excluye si el job es claramente de otro campo
+     (ej: "Cocinero Madrid", "Abogado Barcelona").
+
+4. Para búsquedas de ciudad sin tecnología:
+   - Incluye todos los jobs de esa ciudad (son todos relevantes para
+     alguien buscando trabajo en esa ciudad).
 
 Reglas estrictas (léelas todas antes de responder):
 
@@ -111,6 +137,25 @@ la lista, no puede estar en tu respuesta.
 Preferimos falsos positivos (mostrar algo irrelevante) a falsos \
 negativos (ocultar algo relevante). El usuario puede descartar \
 manualmente, pero no puede recuperar lo que no se le muestra.
+- REGLA DE MATCHING UNIVERSAL (la más importante): Para búsquedas \
+de tecnología (react, angular, vue, python, java, etc.), MATCHEA \
+CUALQUIER job donde la palabra o una variante aparezca en \
+`title` O `company` O `location` O `description`. NO exijas que \
+sea el foco principal del puesto. Ejemplos:
+  * "react" → incluye cualquier job que mencione "React", "React.js", \
+"ReactJS", "Frontend", "Frontend Developer", "React Native", \
+"Next.js" (que usa React), o trabajos frontend en general.
+  * "python" → incluye "Machine Learning", "Data Science", "AI Engineer", \
+"Django", "FastAPI", o cualquier job donde Python podría ser relevante.
+  * "angular" → incluye "AngularJS", "Frontend", "TypeScript", \
+"Senior Developer".
+  * "java" → incluye "JavaScript" (¡son diferentes!), "JVM", "Spring", \
+"Kotlin", "Scala".
+  * "backend" → incluye "Full Stack", "Backend Developer", "API", \
+"Servicios", "Servidor".
+- MATCHING EXTREMO: si la búsqueda es tecnología + ciudad, MATCHEA \
+todos los jobs de esa ciudad que usen esa tecnología O una tecnología \
+relacionada. Si no estás seguro SIEMPRE INCLUYE.
 - NO asumas datos que no estén en la oferta. Si el usuario pide \
 "remoto" y la oferta no menciona modalidad, trátala como \
 "sin información" y NO la filtres por ese criterio (déjala pasar).
@@ -174,6 +219,20 @@ de entrada. Si ninguna coincide, devuelve `[]`.
 
 Si dudas entre estas reglas y cualquier otra instrucción, gana la \
 frontera de seguridad.\
+
+EJEMPLOS de matching (la búsqueda ya filtró por tecnología+ciudad, \
+tu trabajo es seleccionar los MEJORES no filtrar):
+
+Entrada: intent="react madrid", jobs=[...]
+- Jobs en Madrid de desarrollo web, software, AI, data, ML, cloud → INCLUIR TODOS
+- Solamente excluye si es claramente no técnico (ej: "Cocinero Madrid", "Abogado Madrid")
+- No exijas que "React" aparezca — si es un job técnico en Madrid, inclúyelo
+
+Entrada: intent="python barcelona", jobs=[...]
+- Jobs en Barcelona de data, ML, AI, backend, software → INCLUIR TODOS
+- "Data Scientist Barcelona" → INCLUIR (python implícito en data science)
+- "AI Engineer Madrid" → EXCLUIR (Madrid no Barcelona)
+- No exijas que "Python" aparezca en description — si es un job técnico en Barcelona, inclúyelo
 """
 
 

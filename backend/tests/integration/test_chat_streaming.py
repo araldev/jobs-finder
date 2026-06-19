@@ -197,6 +197,13 @@ def _build_chat_app(
     # The composition-root build creates a real LLM client; we
     # override the use case with one that uses our fakes.
     aggregator = _FakeAggregator(jobs=jobs, delay_seconds=aggregator_delay_seconds)
+    # The chat endpoint now queries the DB (job_repository) instead
+    # of the aggregator. Wire a FakeJobRepository with the same
+    # canned jobs so tests don't need a live SQLite.
+    from tests.unit._helpers.fake_job_repository import (  # noqa: PLC0415
+        FakeJobRepository,
+    )
+    repo = FakeJobRepository(jobs=jobs or [])
     llm = _FakeLLMClient(
         stream_chunks=stream_chunks,
         complete_response=complete_response,
@@ -206,6 +213,7 @@ def _build_chat_app(
         aggregator=aggregator,  # type: ignore[arg-type]
         llm=llm,
         intent_extraction_enabled=intent_extraction_enabled,
+        job_repository=repo,
     )
     # Replace the use case on app.state AND rebuild the routers
     # so the new use case is used. The simplest path: rebuild the
@@ -449,9 +457,9 @@ async def test_chat_stream_error_event_on_llm_timeout() -> None:
 
 
 async def test_chat_stream_error_event_on_llm_parse_error() -> None:
-    """Parser raises `LLMResponseParseError` → SSE event `error` with code `llm_parse`."""
+    """Parser raises `LLMResponseParseError` → graceful fallback: all aggregator jobs returned, no error event."""
     app = _build_chat_app(
-        jobs=[_make_job("a")],
+        jobs=[_make_job("a"), _make_job("b")],
         stream_chunks=["not-valid-json"],
     )
     async with httpx.AsyncClient(
@@ -462,9 +470,13 @@ async def test_chat_stream_error_event_on_llm_parse_error() -> None:
     assert response.status_code == 200
     events = _parse_sse_events(response.text)
     error_events = [e for e in events if e[0] == "error"]
-    assert len(error_events) == 1
-    _, data = error_events[0]
-    assert data["code"] == "llm_parse"
+    # Graceful fallback: no error event, all aggregator jobs returned in done event.
+    assert len(error_events) == 0
+    done_events = [e for e in events if e[0] == "done"]
+    assert len(done_events) == 1
+    _, data = done_events[0]
+    assert data["used_fallback"] is True
+    assert len(data["jobs"]) == 2  # both aggregator jobs returned
 
 
 # ---------------------------------------------------------------------------

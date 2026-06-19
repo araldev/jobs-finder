@@ -141,6 +141,10 @@ class MiniMaxLLMClient:
             "stream": False,
         }
         if self._supports_thinking and self._thinking_disabled:
+            # MiniMax: both parameters are needed.
+            # reasoning_effort=off shortens the thinking block.
+            # thinking.type=disabled suppresses the extended thinking.
+            body["reasoning_effort"] = "off"
             body["thinking"] = {"type": "disabled"}
         # Request JSON mode so the model returns a JSON object
         body["response_format"] = {"type": "json_object"}
@@ -381,21 +385,7 @@ class MiniMaxLLMClient:
                     except (KeyError, IndexError, TypeError):
                         delta = None
                     if delta:
-                        # Strip thinking content that MiniMax emits despite
-                        # `thinking: {"type": "disabled"}`. The thinking block
-                        # looks like: `<think>\n...\n</think>\n`. Strip it.
-                        # Use a loop to handle multiple thinking blocks.
-                        while "<think>\n" in delta:
-                            start = delta.index("<think>\n")
-                            end_marker = "\n</think>\n"
-                            end_idx = delta.index(end_marker, start) if end_marker in delta[start:] else -1
-                            if end_idx == -1:
-                                # Incomplete thinking block - remove from start to end of delta
-                                delta = ""
-                                break
-                            delta = delta[:start] + delta[end_idx + len(end_marker):]
-                        if delta:
-                            yield delta
+                        yield delta
         except httpx.TimeoutException as exc:
             # The streaming timeout is a separate class from
             # the non-streaming one — the route maps it to

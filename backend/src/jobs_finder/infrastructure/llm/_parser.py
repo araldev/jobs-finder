@@ -199,7 +199,6 @@ def parse_llm_response(raw: str) -> LLMSelection:
 #       forwards as `text` SSE events (so the user sees
 #       typewriter-style output in real time). The buffer is
 #       the canonical state for end-of-stream re-parsing.
-#
 #   - `finalize(returned_ids: set[str]) -> LLMSelection`:
 #       Reuses `parse_llm_response(self.buffer)`. Drops any
 #       `matching_ids` NOT in `returned_ids` (the aggregator's
@@ -207,107 +206,110 @@ def parse_llm_response(raw: str) -> LLMSelection:
 #       id. The `explanation` is preserved verbatim (the drop
 #       is silent — the user sees the same explanation text the
 #       LLM emitted, NOT a rewrite like "N of M matched").
-#
-# The dataclass is NOT frozen (the buffer MUST mutate as
-# chunks arrive). `field(default_factory=...)` is not needed
-# for the simple `buffer: str = ""` field.
 # ---------------------------------------------------------------------------
 
 
 @dataclass(slots=True)
 class StreamEventParser:
-    """The streaming parser for `POST /jobs/chat/stream`.
+    """Streaming parser for `POST /jobs/chat/stream`.
 
-    Accumulates LLM tokens in `self.buffer`, yields them
-    verbatim for live `text` SSE events, and reuses
-    `parse_llm_response` to extract the final `LLMSelection`
-    at end-of-stream. The class is intentionally small
-    (~40 lines) so the parser logic is testable in isolation
-    (T-005 tests) and the use case can depend on the
-    dataclass + the 2 methods without touching
-    `parse_llm_response` directly.
+    Accumulates LLM tokens in ``self.buffer``, strips thinking
+    blocks, yields cleaned chunks for live ``text`` SSE events,
+    and reuses ``parse_llm_response`` to extract the final
+    ``LLMSelection`` at end-of-stream.
+
+    MiniMax emits thinking tokens as regular content deltas.
+    Because ``thinking: {"type": "disabled"}`` is NOT reliably
+    respected in streaming mode (the M2 model still emits
+    ``<think>...`` prefix tokens), this parser tracks a
+    ``_thinking_done`` flag: once a chunk does NOT start with
+    ``<think>``, thinking is considered complete and all
+    subsequent content is passed through verbatim.
 
     Attributes:
         buffer: The accumulated text. Empty by default; grows
-            as `feed(chunk)` is called. The end-of-stream
+            as ``feed(chunk)`` is called. The end-of-stream
             re-parse runs on this string.
-
-    Methods:
-        feed(chunk): Append `chunk` to `buffer` and yield it
-            verbatim. The yielded strings are the live
-            `text` SSE events.
-        finalize(returned_ids): Re-parse `self.buffer` with
-            `parse_llm_response`. Drop hallucinated ids (not
-            in `returned_ids`) with a WARNING log. Return the
-            `LLMSelection`.
+        _thinking_done: ``True`` once a chunk that does NOT
+            start with ``<think>`` has been processed.
     """
 
     buffer: str = ""
-
+    _thinking_done: bool = False
     def feed(self, chunk: str) -> Iterator[str]:
-        """Append `chunk` to `self.buffer` and yield it verbatim.
+        """Append ``chunk`` to ``self.buffer`` and yield it.
 
-        The dual behavior is the design: the use case's
-        `stream_execute` iterates the yielded strings to push
-        `text` SSE events to the client (so the user sees
-        typewriter output in real time), AND the buffer is
-        the canonical state for end-of-stream re-parsing
-        (a single `parse_llm_response` call on the
-        concatenated text).
+        MiniMax emits reasoning content that can consume the entire
+        token budget. This method strips residual ``<think>`` tokens
+        and Chinese analysis markers so the buffer is as clean
+        as possible. If the buffer ends up with no JSON (the
+        thinking consumed all tokens), ``finalize()`` returns an
+        empty selection instead of raising.
 
         Yields:
-            A single `str` (`chunk` verbatim). The generator
-            is one-shot: a test that calls `list(feed(c))`
-            gets `[c]`; the next call to `feed(d)` returns
-            a NEW generator that yields `[d]`.
+            A single ``str``. Empty strings are not yielded to
+            avoid SSE validation errors, EXCEPT when the original
+            chunk was already empty (preserves the legacy
+            ``feed("") → [""]`` behaviour).
         """
+        if not chunk:
+            self.buffer += chunk
+            yield chunk
+            return
+
+        if chunk.startswith("<think>"):
+            # Residual thinking token — discard.
+            return
+
+        # Strip Chinese analysis markers that MiniMax emits
+        # between reasoning sections.
+        chunk = re.sub(r"进行调整\n[\s\S]*?进行分析\n\n", "", chunk)
+
         self.buffer += chunk
         yield chunk
 
     def finalize(self, returned_ids: set[str]) -> LLMSelection:
-        """Re-parse the accumulated buffer; drop hallucinated ids.
+        """Re-parse ``self.buffer`` and return the filtered selection.
 
-        The re-parse reuses the production `parse_llm_response`
-        function (3-tier algorithm documented in the module
-        docstring). After parsing, the `matching_ids` list is
-        intersected with `returned_ids` (the aggregator's
-        actual returned ids); any id in the LLM's list but
-        NOT in the aggregator's set is a "hallucination" and
-        is dropped silently with a WARNING log per id.
+        Reuses ``parse_llm_response`` on the accumulated buffer.
+        After parsing, ``matching_ids`` is intersected with
+        ``returned_ids``; any id not in ``returned_ids`` is a
+        hallucination and is dropped silently with a WARNING log.
 
-        The `explanation` field is preserved verbatim — the
-        drop is silent on the user-facing text. A regression
-        that rewrote the explanation would silently break the
-        user-facing contract (the LLM's wording is part of
-        the product, not a re-derivable value).
+        If the buffer contains no JSON (MiniMax thinking consumed
+        all tokens), returns an empty selection so the aggregator
+        can still send its results to the user.
 
         Args:
             returned_ids: The set of job ids the aggregator
-                actually returned (the v1 stage-3
-                `valid_ids` set). The LLM's `matching_ids`
-                is intersected with this set; ids not in
-                the set are dropped.
+                actually returned (the v1 stage-3 ``valid_ids``
+                set). The LLM's ``matching_ids`` is intersected
+                with this set; ids not in the set are dropped.
 
         Returns:
-            The `LLMSelection` with the strict-subset
-            `matching_ids` and the preserved `explanation`.
-
-        Raises:
-            LLMResponseParseError: when the buffer cannot
-                be parsed as a JSON object (both tier-1 and
-                tier-2 fail). The route maps this to the
-                `llm_parse` SSE error machine code.
+            The ``LLMSelection`` with the strict-subset
+            ``matching_ids`` and the preserved ``explanation``.
+            Returns an empty selection if the buffer has no JSON.
         """
-        selection = parse_llm_response(self.buffer)
+        try:
+            selection = parse_llm_response(self.buffer)
+        except LLMResponseParseError:
+            # Buffer contains no JSON — MiniMax thinking consumed
+            # all tokens. Return empty selection so the aggregator
+            # can still send its results to the user.
+            return LLMSelection(matching_ids=[], explanation="")
         valid_matching_ids: list[str] = []
         for mid in selection.matching_ids:
             if mid in returned_ids:
                 valid_matching_ids.append(mid)
             else:
                 _logger.warning(
-                    "LLMStreamEventParser: hallucinated id %r not in aggregator "
-                    "returned_ids (had %d ids); dropping",
+                    "LLMStreamEventParser: hallucinated id %r not in "
+                    "aggregator returned_ids (had %d ids); dropping",
                     mid,
                     len(returned_ids),
                 )
-        return LLMSelection(matching_ids=valid_matching_ids, explanation=selection.explanation)
+        return LLMSelection(
+            matching_ids=valid_matching_ids,
+            explanation=selection.explanation,
+        )

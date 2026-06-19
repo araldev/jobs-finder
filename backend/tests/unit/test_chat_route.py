@@ -20,7 +20,8 @@ The route is a thin composition layer over the
      cache-key normalization decision).
   4. Calls the use case's `execute(message=normalized, q="",
      location="", limit=20, sources=None)` (v1 — the message IS
-     the intent; the aggregator receives empty `q` / `location`).
+     the intent; the use case queries the DB-backed repository
+     with empty `q` / `location`).
   5. Maps exceptions: `LLMUnavailableError` → 502 via route-local
      `HTTPException` (the global handler would map it to 502 too,
      but the route-local catch is explicit + testable);
@@ -36,6 +37,13 @@ router, with the use case overridden via `dependency_overrides`.
 The tests use `httpx.AsyncClient` + `ASGITransport` (the
 project's standard pattern — `TestClient` is deprecated by
 Starlette; see `test_app_lifespan.py` for the precedent).
+
+The chat-filter use case no longer calls the aggregator for the
+stage-2 job query — it queries the SQLite-backed
+`JobRepositoryPort` (populated by the scheduler). Tests inject
+a `FakeJobRepository` for the `job_repository=` parameter and
+a `FakeAggregator` (or `MagicMock()`) as a backward-compat
+placeholder for the now-unused `aggregator=` parameter.
 """
 
 from __future__ import annotations
@@ -43,6 +51,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Iterable
 from datetime import UTC, datetime
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -66,6 +75,7 @@ from jobs_finder.infrastructure.llm.exceptions import (
 )
 from jobs_finder.presentation.middleware import RequestIdMiddleware
 from jobs_finder.presentation.routes.chat import build_chat_router
+from tests.unit._helpers.fake_job_repository import FakeJobRepository
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -178,7 +188,7 @@ def _client(app: FastAPI) -> httpx.AsyncClient:
 async def test_chat_route_returns_200_with_filtered_jobs() -> None:
     """`POST /jobs/chat` with a valid message returns 200 + `ChatResponse`.
 
-    The 5 jobs are passed in via the fake aggregator; the LLM
+    The 5 jobs are passed in via the fake job repository; the LLM
     picks 3; the route returns those 3 in the `jobs` field +
     the LLM's explanation + the totals.
     """
@@ -189,9 +199,13 @@ async def test_chat_route_returns_200_with_filtered_jobs() -> None:
         _make_job("d"),
         _make_job("e"),
     ]
-    aggregator = FakeAggregator(jobs=jobs)
+    fake_repo = FakeJobRepository(jobs=jobs)
     llm = FakeLLMClient(matching_ids=["a", "c", "e"], explanation="3 match")
-    use_case = FilterJobsByIntentUseCase(aggregator=aggregator, llm=llm)  # type: ignore[arg-type]
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=MagicMock(),  # type: ignore[arg-type]
+        llm=llm,
+        job_repository=fake_repo,
+    )
 
     app = _build_test_app(use_case=use_case, max_message_chars=1000)
     async with _client(app) as client:
@@ -215,12 +229,16 @@ async def test_chat_route_returns_400_when_message_exceeds_cap() -> None:
 
     Q2 spec resolution: the rejection body shape is the route's
     `HTTPException` shape: `{"detail": "message exceeds 1000 chars
-    (got 1234)"}`. The aggregator and LLM are NEVER called (the
+    (got 1234)"}`. The repository and LLM are NEVER called (the
     cap check runs FIRST).
     """
-    aggregator = FakeAggregator(jobs=[])
+    fake_repo = FakeJobRepository(jobs=[])
     llm = FakeLLMClient()
-    use_case = FilterJobsByIntentUseCase(aggregator=aggregator, llm=llm)  # type: ignore[arg-type]
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=MagicMock(),  # type: ignore[arg-type]
+        llm=llm,
+        job_repository=fake_repo,
+    )
 
     app = _build_test_app(use_case=use_case, max_message_chars=1000)
     async with _client(app) as client:
@@ -229,8 +247,8 @@ async def test_chat_route_returns_400_when_message_exceeds_cap() -> None:
     assert response.status_code == 400
     body = response.json()
     assert body["detail"] == "message exceeds 1000 chars (got 1234)"
-    # The aggregator was NEVER called (cap check runs first).
-    assert aggregator.calls == []
+    # The repository was NEVER called (cap check runs first).
+    assert fake_repo.calls == []
     # The LLM was NEVER called.
     assert llm.calls == []
 
@@ -245,15 +263,19 @@ async def test_chat_route_normalizes_message_before_llm_call() -> None:
 
     REQ-CHAT-001 preflight: `unicodedata.normalize("NFC", s)
     .casefold().strip()`. The LLM receives the normalized form;
-    the aggregator is called with empty `q` / `location` (the
+    the repository is queried with empty `q` / `location` (the
     v1 convention where the message IS the intent).
     """
-    # The aggregator must return at least 1 job so the use case
-    # actually reaches the LLM (the empty-aggregator path
+    # The repository must return at least 1 job so the use case
+    # actually reaches the LLM (the empty-repository path
     # short-circuits and never invokes the LLM).
-    aggregator = FakeAggregator(jobs=[_make_job("a")])
+    fake_repo = FakeJobRepository(jobs=[_make_job("a")])
     llm = FakeLLMClient(matching_ids=["a"], explanation="ok")
-    use_case = FilterJobsByIntentUseCase(aggregator=aggregator, llm=llm)  # type: ignore[arg-type]
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=MagicMock(),  # type: ignore[arg-type]
+        llm=llm,
+        job_repository=fake_repo,
+    )
 
     app = _build_test_app(use_case=use_case, max_message_chars=1000)
     async with _client(app) as client:
@@ -286,9 +308,13 @@ async def test_chat_route_returns_502_when_llm_unavailable() -> None:
     spec's design §5 row: `{"detail": "LLM provider unavailable: <msg>"}`.
     """
     jobs = [_make_job("a")]
-    aggregator = FakeAggregator(jobs=jobs)
+    fake_repo = FakeJobRepository(jobs=jobs)
     llm = FakeLLMClient(error=LLMUnavailableError("upstream down"))
-    use_case = FilterJobsByIntentUseCase(aggregator=aggregator, llm=llm)  # type: ignore[arg-type]
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=MagicMock(),  # type: ignore[arg-type]
+        llm=llm,
+        job_repository=fake_repo,
+    )
 
     app = _build_test_app(use_case=use_case, max_message_chars=1000)
     async with _client(app) as client:
@@ -310,9 +336,13 @@ async def test_chat_route_returns_422_when_llm_response_unparseable() -> None:
     request is malformed in a way the LLM cannot satisfy).
     """
     jobs = [_make_job("a")]
-    aggregator = FakeAggregator(jobs=jobs)
+    fake_repo = FakeJobRepository(jobs=jobs)
     llm = FakeLLMClient(error=LLMResponseParseError("could not extract JSON"))
-    use_case = FilterJobsByIntentUseCase(aggregator=aggregator, llm=llm)  # type: ignore[arg-type]
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=MagicMock(),  # type: ignore[arg-type]
+        llm=llm,
+        job_repository=fake_repo,
+    )
 
     app = _build_test_app(use_case=use_case, max_message_chars=1000)
     async with _client(app) as client:
@@ -338,9 +368,13 @@ async def test_chat_router_factory_returns_an_apirouter_with_chat_route() -> Non
     isolation. Pinning the return type + the route path pins
     the API contract.
     """
-    aggregator = FakeAggregator(jobs=[])
+    fake_repo = FakeJobRepository(jobs=[])
     llm = FakeLLMClient()
-    use_case = FilterJobsByIntentUseCase(aggregator=aggregator, llm=llm)  # type: ignore[arg-type]
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=MagicMock(),  # type: ignore[arg-type]
+        llm=llm,
+        job_repository=fake_repo,
+    )
 
     router = build_chat_router(use_case=use_case, max_message_chars=1000)
     assert isinstance(router, APIRouter)
@@ -418,9 +452,13 @@ def test_chat_stream_router_factory_returns_apirouter_with_route() -> None:
         build_chat_stream_router,
     )
 
-    aggregator = FakeAggregator(jobs=[])
+    fake_repo = FakeJobRepository(jobs=[])
     llm = FakeLLMClient()
-    use_case = FilterJobsByIntentUseCase(aggregator=aggregator, llm=llm)  # type: ignore[arg-type]
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=MagicMock(),  # type: ignore[arg-type]
+        llm=llm,
+        job_repository=fake_repo,
+    )
 
     router = build_chat_stream_router(
         use_case=use_case, max_message_chars=1000, sse_keepalive_seconds=0.0
@@ -435,13 +473,17 @@ async def test_chat_stream_route_returns_400_when_message_exceeds_cap() -> None:
 
     REQ-SSE-001 pre-stream validation: an over-cap
     message is a regular HTTP 400 (NOT an SSE stream).
-    The aggregator + LLM are NEVER invoked (the cap
+    The repository + LLM are NEVER invoked (the cap
     check runs FIRST, mirroring the v1 chat route).
     """
 
-    aggregator = FakeAggregator(jobs=[])
+    fake_repo = FakeJobRepository(jobs=[])
     llm = FakeLLMClient()
-    use_case = FilterJobsByIntentUseCase(aggregator=aggregator, llm=llm)  # type: ignore[arg-type]
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=MagicMock(),  # type: ignore[arg-type]
+        llm=llm,
+        job_repository=fake_repo,
+    )
 
     app = _build_stream_test_app(
         use_case=use_case, max_message_chars=1000, sse_keepalive_seconds=0.0
@@ -454,8 +496,8 @@ async def test_chat_stream_route_returns_400_when_message_exceeds_cap() -> None:
     assert response.status_code == 400
     body = response.json()
     assert body["detail"] == "message exceeds 1000 chars (got 1234)"
-    # The aggregator + LLM were NEVER called.
-    assert aggregator.calls == []
+    # The repository + LLM were NEVER called.
+    assert fake_repo.calls == []
     assert llm.calls == []
 
 
@@ -497,8 +539,13 @@ async def test_chat_stream_route_error_mapping(
             yield ""  # pragma: no cover — async generator marker
 
     aggregator = FakeAggregator(jobs=jobs)
+    repo = FakeJobRepository(jobs=jobs)
     llm = _RaisingLLM()
-    use_case = FilterJobsByIntentUseCase(aggregator=aggregator, llm=llm)  # type: ignore[arg-type]
+    use_case = FilterJobsByIntentUseCase(
+        aggregator=aggregator,  # type: ignore[arg-type]
+        llm=llm,
+        job_repository=repo,
+    )
 
     app = _build_stream_test_app(
         use_case=use_case, max_message_chars=1000, sse_keepalive_seconds=0.0

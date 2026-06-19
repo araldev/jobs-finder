@@ -1150,7 +1150,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("LLM_TEMPERATURE", "llm_temperature"),
     )
     llm_max_tokens: int = Field(
-        default=1024,
+        default=4096,
         validation_alias=AliasChoices("LLM_MAX_TOKENS", "llm_max_tokens"),
     )
     llm_request_timeout_seconds: float = Field(
@@ -1218,13 +1218,20 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("INTENT_EXTRACTION_ENABLED", "intent_extraction_enabled"),
     )
     intent_extraction_confidence_threshold: float = Field(
-        default=0.7,
+        default=0.0,
         validation_alias=AliasChoices(
             "INTENT_EXTRACTION_CONFIDENCE_THRESHOLD",
             "intent_extraction_confidence_threshold",
         ),
         ge=0.0,
         le=1.0,
+        description=(
+            "Confidence threshold for 2-stage chat. At 0.0 (default), "
+            "ALL intents use the 2-stage path and query the job repository "
+            "with extracted keywords + location. At 0.7, low-confidence "
+            "intents fall back to v1 aggregator scraping with q='' (no keywords), "
+            "which returns fewer jobs from live scrapers."
+        ),
     )
     intent_max_results: int = Field(
         default=100,
