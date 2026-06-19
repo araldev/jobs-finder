@@ -5,6 +5,7 @@ import { PageTransition } from "@/components/layout/PageTransition";
 import { StatsCardsRow } from "@/components/dashboard/StatsCardsRow";
 import { RightSidebar } from "@/components/dashboard/RightSidebar";
 import { SearchBar } from "@/components/search/SearchBar";
+import { LocationBar } from "@/components/search/LocationBar";
 import { CompactJobCard } from "@/components/jobs/CompactJobCard";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { useJobsInfinite } from "@/hooks/useJobsInfinite";
@@ -14,7 +15,9 @@ import { useOpenedJobs } from "@/lib/chat-storage";
 
 export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [locationQuery, setLocationQuery] = useState("");
   const debouncedQuery = useDebounce(searchQuery, 400);
+  const debouncedLocation = useDebounce(locationQuery, 400);
   const { enabledSources, allEnabled } = usePlatformConfig();
   const openedJobIds = useOpenedJobs();
 
@@ -29,6 +32,7 @@ export default function DashboardPage() {
     isFetchingNextPage,
   } = useJobsInfinite({
     q: debouncedQuery || undefined,
+    location: debouncedLocation || undefined,
     sources: sourcesParam,
     pageSize: 20,
   });
@@ -75,9 +79,18 @@ export default function DashboardPage() {
       <div className="mt-6 flex gap-6">
         {/* Left column: search + jobs */}
         <div className="flex-1 min-w-0">
-          {/* Search */}
-          <div className="max-w-md">
-            <SearchBar value={searchQuery} onChange={setSearchQuery} placeholder="Search jobs..." />
+          {/* Search + Location filter (side by side) */}
+          <div className="flex max-w-2xl flex-col gap-2 sm:flex-row">
+            <SearchBar
+              value={searchQuery}
+              onChange={setSearchQuery}
+              placeholder="Search jobs..."
+            />
+            <LocationBar
+              value={locationQuery}
+              onChange={setLocationQuery}
+              placeholder="Location (e.g. malaga)"
+            />
           </div>
 
           {/* Compact job cards grid with infinite scroll */}
@@ -94,7 +107,9 @@ export default function DashboardPage() {
             ) : isError ? (
               <EmptyState variant="error" />
             ) : allJobs.length === 0 ? (
-              <EmptyState variant={debouncedQuery ? "no-results" : "no-jobs"} />
+              <EmptyState
+                variant={debouncedQuery || debouncedLocation ? "no-results" : "no-jobs"}
+              />
             ) : (
               <>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">

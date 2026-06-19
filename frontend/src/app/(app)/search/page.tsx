@@ -19,7 +19,16 @@ export default function SearchPage() {
   });
   const { enabledSources, allEnabled } = usePlatformConfig();
 
-  const debouncedQuery = useDebounce(query, 400);
+  // Debounce ALL search params together so that location changes
+  // do NOT reset the keyword debounce timer. This fixes the race
+  // where typing a keyword then immediately selecting a location
+  // would fire two separate requests: (q=old, location=new) and
+  // (q=new, location=new) — the first one could overwrite results
+  // briefly before the second one completes.
+  const debouncedSearch = useDebounce(
+    { q: query, location: filters.location },
+    400,
+  );
   const openedJobIds = useOpenedJobs();
 
   const effectiveSources =
@@ -30,10 +39,10 @@ export default function SearchPage() {
         : enabledSources.join(",");
 
   const { data, isLoading } = useJobs({
-    q: debouncedQuery || undefined,
+    q: debouncedSearch.q || undefined,
     limit: 100,
     sources: effectiveSources,
-    location: filters.location || undefined,
+    location: debouncedSearch.location || undefined,
   });
 
   const filteredJobs = data?.items ?? [];
