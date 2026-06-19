@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { X } from "lucide-react";
+import { Bot, Sparkles, X } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -9,7 +9,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { ChatPanel } from "./ChatPanel";
-import { Logo } from "@/components/layout/Logo";
 
 export function ChatDialog() {
   const [open, setOpen] = useState(false);
@@ -18,13 +17,16 @@ export function ChatDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <button
-          className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-          aria-label="Open chat"
+          className="group fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/80 text-primary-foreground shadow-lg transition-all hover:shadow-xl hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          aria-label="Abrir asistente IA"
         >
           {open ? (
             <X className="h-6 w-6" />
           ) : (
-            <Logo size="lg" className="rounded-full" />
+            <span className="relative">
+              <Bot className="h-6 w-6" />
+              <Sparkles className="absolute -right-1.5 -top-1.5 h-3 w-3 text-yellow-300" />
+            </span>
           )}
         </button>
       </DialogTrigger>
