@@ -6,38 +6,33 @@ const BACKEND_URL =
 /**
  * SSE proxy route handler.
  * Forwards POST body and Content-Type to the backend's /jobs/chat/stream
- * endpoint and streams the SSE response back to the client transparently.
+ * endpoint and streams the SSE response back to the client.
+ *
+ * Uses Web API fetch streaming: we create a new Response with the
+ * ReadableStream from the backend response body. The stream is consumed
+ * once by the client, so this works reliably in Next.js 15 / Node.js 18+.
  */
 export async function POST(request: NextRequest) {
   const body = await request.text();
 
-  const backendResponse = await fetch(
-    `${BACKEND_URL}/jobs/chat/stream`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body,
-    },
-  );
+  const response = await fetch(`${BACKEND_URL}/jobs/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+  });
 
-  // Handle cases where the backend returns no body (e.g., certain error responses)
-  // In Next.js 15, passing null to new Response() causes
-  // "Attempted to access streaming response content" error
-  if (!backendResponse.body) {
-    return new Response(
-      JSON.stringify({ error: "Backend returned empty response" }),
-      {
-        status: backendResponse.status || 502,
-        headers: { "Content-Type": "application/json" },
-      },
+  if (!response.body) {
+    return Response.json(
+      { error: "Backend returned empty response" },
+      { status: response.status || 502 },
     );
   }
 
-  return new Response(backendResponse.body, {
-    status: backendResponse.status,
-    statusText: backendResponse.statusText,
+  // Stream the SSE response back to the client.
+  // In Next.js 15 / React 19, ReadableStream from fetch can be
+  // passed directly to Response constructor.
+  return new Response(response.body, {
+    status: response.status,
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
