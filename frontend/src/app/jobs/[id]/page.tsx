@@ -74,7 +74,12 @@ export default function PublicJobDetailPage() {
           <div className="hidden items-center gap-6 md:flex">
             {user ? (
               <div className="flex items-center gap-4">
-                <span className="text-sm text-muted-foreground">{user.email}</span>
+                <Link
+                  href="/settings"
+                  className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {user.email}
+                </Link>
                 <Button variant="outline" size="sm" onClick={handleLogout}>
                   Cerrar sesión
                 </Button>

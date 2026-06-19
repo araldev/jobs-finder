@@ -160,9 +160,12 @@ export default function CVLandingPage() {
               <>
                 {user ? (
                   <div className="flex items-center gap-4">
-                    <span className="text-sm text-muted-foreground">
+                    <Link
+                      href="/settings"
+                      className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+                    >
                       {user.email}
-                    </span>
+                    </Link>
                     <Button variant="outline" size="sm" onClick={handleLogout}>
                       Cerrar sesión
                     </Button>
@@ -221,7 +224,12 @@ export default function CVLandingPage() {
               )}
               {user && (
                 <div className="flex flex-col gap-2">
-                  <p className="text-sm text-muted-foreground">{user.email}</p>
+                  <Link
+                    href="/settings"
+                    className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    {user.email}
+                  </Link>
                   <Button variant="outline" onClick={handleLogout}>
                     Cerrar sesión
                   </Button>

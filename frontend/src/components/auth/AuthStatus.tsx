@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 
 export function AuthStatus() {
   const supabase = createClient();
@@ -40,15 +41,15 @@ export function AuthStatus() {
   if (email) {
     return (
       <div className="flex items-center gap-3">
-        <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
+        <Link
+          href="/settings"
+          className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
           {email}
         </Link>
-        <button
-          onClick={logout}
-          className="text-sm text-muted-foreground underline underline-offset-4 transition-colors hover:text-destructive"
-        >
+        <Button variant="outline" size="sm" onClick={logout}>
           Cerrar sesión
-        </button>
+        </Button>
       </div>
     );
   }
