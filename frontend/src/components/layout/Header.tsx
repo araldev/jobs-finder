@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
@@ -85,7 +84,7 @@ export function Header() {
 
   return (
     <header className="flex h-20 items-center justify-between border-b bg-card/30 px-6 backdrop-blur-sm">
-      <Link href="/" className="flex items-center gap-4">
+      <div className="flex items-center gap-4">
         <div
           className={cn(
             "flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br shadow-sm ring-1 ring-inset ring-white/10",
@@ -100,7 +99,7 @@ export function Header() {
           </h1>
           <p className="text-xs text-muted-foreground">{description}</p>
         </div>
-      </Link>
+      </div>
       <div className="flex items-center gap-3">
         <AuthStatus />
         <ThemeToggle />

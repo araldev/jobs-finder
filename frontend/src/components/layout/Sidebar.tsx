@@ -23,9 +23,9 @@ export function Sidebar() {
 
   return (
     <aside className="flex w-64 flex-col border-r bg-card">
-      {/* Logo */}
+      {/* Logo — vuelve a la landing page de marketing */}
       <div className="flex h-14 items-center gap-3 border-b px-6">
-        <Link href="/dashboard" className="flex items-center gap-3">
+        <Link href="/" className="flex items-center gap-3">
           <Logo size="md" />
           <span className="font-display text-lg font-semibold tracking-tight">
             Jobs Finder
