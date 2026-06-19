@@ -49,13 +49,6 @@ export default function SearchPage() {
 
   return (
     <PageTransition>
-      <div className="mb-6">
-        <h1 className="font-display text-2xl font-bold tracking-tight">Search Jobs</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Find the perfect position
-        </p>
-      </div>
-
       {/* Search + Filters row */}
       <div className="mb-6 flex items-center gap-3">
         <div className="flex-1 max-w-md">

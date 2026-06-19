@@ -71,21 +71,21 @@ export function StatsCardsRow() {
           icon={Briefcase}
           label="Total en base de datos"
           value={data.total_jobs > 0 ? data.total_jobs.toLocaleString() : "—"}
-          iconClassName="bg-primary/10"
+          accent="primary"
           delay={0}
         />
         <StatCard
           icon={TrendingUp}
           label="Jobs de hoy"
           value={data.jobs_today > 0 ? data.jobs_today.toLocaleString() : "—"}
-          iconClassName="bg-secondary/10"
+          accent="secondary"
           delay={0.05}
         />
         <StatCard
           icon={Clock}
           label="Última sincronización"
           value={data.last_sync ? formatRelativeDate(data.last_sync) : "—"}
-          iconClassName="bg-muted/50"
+          accent="muted"
           delay={0.1}
         />
       </div>
@@ -96,28 +96,28 @@ export function StatsCardsRow() {
           icon={Eye}
           label="Ofertas clicadas"
           value={openedJobIds.size > 0 ? openedJobIds.size.toLocaleString() : "—"}
-          iconClassName="bg-primary/10"
+          accent="primary"
           delay={0.15}
         />
         <StatCard
           icon={FileText}
           label="CVs adaptados"
           value={cvAdaptedCount > 0 ? cvAdaptedCount.toLocaleString() : "—"}
-          iconClassName="bg-secondary/10"
+          accent="secondary"
           delay={0.2}
         />
         <StatCard
           icon={Heart}
           label="Favoritos"
           value={favoriteCount > 0 ? favoriteCount.toLocaleString() : "—"}
-          iconClassName="bg-muted/50"
+          accent="muted"
           delay={0.25}
         />
       </div>
 
       {/* Secondary stats: per platform */}
       {platforms.length > 0 ? (
-        <div className="rounded-xl border bg-card p-3">
+        <div className="rounded-xl bg-card p-3 ring-1 ring-border/50">
           <div className="mb-2 text-xs font-medium text-muted-foreground">
             Jobs por plataforma
           </div>

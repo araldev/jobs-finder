@@ -64,13 +64,6 @@ export default function DashboardPage() {
 
   return (
     <PageTransition>
-      {/* Page header */}
-      <div className="mb-6">
-        <h1 className="font-display text-2xl font-bold tracking-tight">Dashboard</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Overview of your job listings
-        </p>
-      </div>
 
       {/* Stats row */}
       <StatsCardsRow />

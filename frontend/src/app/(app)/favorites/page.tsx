@@ -25,13 +25,6 @@ export default function FavoritesPage() {
 
   return (
     <PageTransition>
-      <div className="mb-6">
-        <h1 className="font-display text-2xl font-bold tracking-tight">Favorite Jobs</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Jobs you&apos;ve bookmarked ({favoriteCount} saved)
-        </p>
-      </div>
-
       {favorites.length > 0 && (
         <div className="mb-4 max-w-md">
           <SearchBar
