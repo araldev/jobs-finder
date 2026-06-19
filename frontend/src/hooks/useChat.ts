@@ -161,7 +161,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     abortRef.current = controller;
 
     const assistantId = crypto.randomUUID();
-    let accumulatedContent = "";
 
     fetch("/api/jobs/chat/stream", {
       method: "POST",
@@ -237,18 +236,15 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
               switch (typed.type) {
                 case "text":
-                  accumulatedContent += typed.data.delta;
-                  setMessages((prev) =>
-                    prev.map((m) =>
-                      m.id === assistantId
-                        ? { ...m, content: accumulatedContent }
-                        : m,
-                    ),
-                  );
+                  // Text deltas are the LLM's reasoning/thinking content
+                  // (MiniMax emits  lexicographic tokens despite
+                  // `thinking: disabled`). We DON'T accumulate them into
+                  // `message.content` because the user-facing response
+                  // comes in the `done` event's `explanation` field.
+                  // The thinking animation handles the in-flight state.
                   break;
 
                 case "done":
-                  accumulatedContent = typed.data.explanation;
                   setMessages((prev) =>
                     prev.map((m) =>
                       m.id === assistantId
@@ -300,20 +296,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
           }
 
           // Flush any remaining data
-          const remaining = parser.flush();
-          for (const msg of remaining) {
-            const typed = parseTypedEvent(msg);
-            if (typed.type === "text") {
-              accumulatedContent += typed.data.delta;
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantId
-                    ? { ...m, content: accumulatedContent }
-                    : m,
-                ),
-              );
-            }
-          }
+          parser.flush();
 
           setStatus("done");
         } catch (err) {
@@ -344,9 +327,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
           {
             id: crypto.randomUUID(),
             role: "assistant",
-            content: accumulatedContent
-              ? accumulatedContent
-              : "",
+            content: "",
             error: {
               code: "internal",
               message:

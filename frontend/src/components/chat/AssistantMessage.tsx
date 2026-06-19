@@ -11,14 +11,37 @@ interface AssistantMessageProps {
   openedJobIds: Set<string>;
 }
 
+/**
+ * Three-pulse thinking indicator. Each dot fades in/out in sequence,
+ * OpenCode-style. Pure CSS, no JS animation library needed.
+ */
+function ThinkingDots() {
+  return (
+    <span
+      className="ml-auto inline-flex items-center gap-1"
+      data-testid="thinking-dots"
+      aria-label="Thinking"
+    >
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary [animation-delay:-0.32s]" />
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary [animation-delay:-0.16s]" />
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+    </span>
+  );
+}
+
 export function AssistantMessage({
   message,
   isStreaming,
   statusLabel,
   openedJobIds,
 }: AssistantMessageProps) {
-  // Show the status indicator while connecting / before first token
-  const showStatus = isStreaming && !message.content && !message.extractedQuery;
+  // Show the status indicator as long as we're streaming AND
+  // we don't yet have the final explanation in `message.content`.
+  // The LLM emits thinking tokens as text deltas which we
+  // intentionally ignore (see useChat.ts) — the user-facing
+  // response arrives only in the `done` event.
+  const showThinking =
+    isStreaming && (!message.content || message.content.length === 0);
 
   return (
     <div className="flex flex-col gap-2">
@@ -31,35 +54,22 @@ export function AssistantMessage({
           <span className="text-sm font-medium text-foreground">
             {message.extractedQuery}
           </span>
-          {isStreaming && (
-            <span className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
-              Searching...
-            </span>
-          )}
+          {isStreaming && <ThinkingDots />}
         </div>
       )}
 
-      {/* Connecting / waiting for first token */}
-      {showStatus && (
+      {/* Thinking / connecting / streaming indicator */}
+      {showThinking && (
         <div className="flex items-center gap-2 rounded-lg bg-muted px-4 py-3 text-sm text-muted-foreground">
           <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-primary" />
           {statusLabel ?? "Analyzing your request..."}
         </div>
       )}
 
-      {/* Streaming content or final explanation */}
-      {(message.content || (!showStatus && !message.error)) && (
+      {/* Final explanation (only shown after done event arrives) */}
+      {!isStreaming && message.content && (
         <div className="rounded-lg bg-muted px-4 py-3 text-sm text-foreground">
-          {message.content || ""}
-          {isStreaming && (
-            <span
-              data-testid="typing-indicator"
-              className="ml-1 inline-block animate-pulse"
-            >
-              ▌
-            </span>
-          )}
+          {message.content}
         </div>
       )}
 
@@ -107,8 +117,7 @@ export function AssistantMessage({
       {message.jobs &&
         message.jobs.length === 0 &&
         !isStreaming &&
-        !message.error &&
-        message.content && (
+        !message.error && (
           <p className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
             No matching jobs found. Try a different description.
           </p>

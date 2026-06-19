@@ -244,8 +244,10 @@ describe("useChat", () => {
     expect(result.current.status).toBe("error");
     const assistantMsg = result.current.messages[1]!;
     expect(assistantMsg.error?.code).toBe("llm_stream");
-    // Partial content should still be preserved
-    expect(assistantMsg.content).toBe("Partial");
+    // Text deltas are intentionally ignored (they're LLM thinking
+    // content, not the user-facing response). The user sees the
+    // thinking animation until the error event arrives.
+    expect(assistantMsg.content).toBe("");
   });
 
   it("does not send empty messages", () => {

@@ -48,20 +48,27 @@ describe("ChatMessages", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows typing indicator during streaming", () => {
+  it("shows thinking indicator during streaming", () => {
     const messages: ChatMessage[] = [
       { id: "1", role: "user", content: "test" },
-      { id: "2", role: "assistant", content: "Thinking" },
+      {
+        id: "2",
+        role: "assistant",
+        content: "",
+        extractedQuery: "react",
+      },
     ];
 
     render(
       <ChatMessages messages={messages} status="streaming" openedJobIds={new Set()} />,
     );
 
-    expect(screen.getByTestId("typing-indicator")).toBeInTheDocument();
+    // The OpenCode-style three-dot thinking animation appears
+    // in the "Looking for:" row while the LLM is processing.
+    expect(screen.getByTestId("thinking-dots")).toBeInTheDocument();
   });
 
-  it("hides typing indicator when done", () => {
+  it("hides thinking indicator when done", () => {
     const messages: ChatMessage[] = [
       { id: "1", role: "user", content: "test" },
       { id: "2", role: "assistant", content: "Done" },
@@ -72,7 +79,7 @@ describe("ChatMessages", () => {
     );
 
     expect(
-      screen.queryByTestId("typing-indicator"),
+      screen.queryByTestId("thinking-dots"),
     ).not.toBeInTheDocument();
   });
 
