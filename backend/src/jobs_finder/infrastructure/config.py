@@ -28,13 +28,28 @@ the Indeed block. The same per-field `validation_alias` pattern is
 used so each `infojobs_*` field reads from its own `INFOJOBS_*` env
 var (the model-level `env_prefix="LINKEDIN_"` is preserved and the
 new fields opt out of the prefix by declaring an alias).
+
+The `toml-config-defaults` refactor adds a TOML layer for non-secret
+operational defaults. `load_settings()` reads `backend/config/default.toml`
+(and `backend/config/local.toml` if present) and injects each value into
+`os.environ` via `setdefault` BEFORE constructing `Settings`. The
+precedence becomes:
+
+    env vars (already set)  >  local.toml  >  default.toml  >  field defaults
+
+`Settings(...)` direct construction (used by the existing 553 tests)
+bypasses the TOML layer entirely — the loader is gated inside
+`load_settings()` only, so existing test paths are byte-identical.
 """
 
 from __future__ import annotations
 
 import ipaddress
 import json
+import os
+import tomllib
 from ipaddress import IPv4Network, IPv6Network
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
@@ -136,6 +151,89 @@ def _validate_str_dict_list(items: list[object], name: str) -> None:
         for key, val in item.items():
             if not isinstance(key, str) or not isinstance(val, str):
                 raise ValueError(f"{name} dict keys and values must be strings: {key!r}: {val!r}")
+
+
+# ---------------------------------------------------------------------------
+# TOML defaults layer (`toml-config-defaults` refactor)
+#
+# The TOML layer lets us ship non-secret operational defaults (throttles,
+# timeouts, namespaces, cache TTL, ranking strategy, etc.) in
+# `backend/config/default.toml` instead of polluting `.env` with 45+
+# values. `.env` stays reserved for secrets + per-environment switches
+# (cookies, passwords, `LLM_API_KEY`, `DATABASE_URL`, `ENVIRONMENT`,
+# `*_ENABLED` kill switches, `CORS_ALLOW_ORIGINS` allowlist).
+#
+# Precedence contract (highest first):
+#
+#   env vars (already in os.environ)
+#     > config/local.toml   (operator override; gitignored)
+#     > config/default.toml (shipped defaults)
+#     > field defaults in `Settings`
+#
+# Implementation note: the helper uses `os.environ.setdefault` so an
+# env var that the operator already exported (via `.env` or shell)
+# WINS over the TOML-injected value. The TOML only fills in keys
+# that are NOT already set, preserving the standard pydantic-settings
+# precedence: init_args > env_vars > dotenv > TOML > field defaults.
+#
+# The module-level `CONFIG_DIR` constant is the source of truth for
+# the directory; tests `monkeypatch.setattr(config, "CONFIG_DIR", ...)`
+# to point the loader at a temp directory with custom TOML files.
+# ---------------------------------------------------------------------------
+
+CONFIG_DIR: Path = Path(__file__).resolve().parents[3] / "config"
+
+
+def _load_toml_defaults() -> dict[str, str]:
+    """Read `default.toml` (then `local.toml` if present) and return a flat
+    `dict[str, str]` of env-var name → stringified value.
+
+    The helper is the single source of truth for the TOML → env-var
+    mapping. JSON-list / JSON-dict fields are stored as JSON strings
+    in the TOML file (single-quoted TOML literal strings), so
+    `tomllib.load()` returns them as Python `str` and the existing
+    `mode="before"` validators in `Settings` parse them unchanged.
+
+    `local.toml` is OPTIONAL — operators copy `local.toml.example`
+    into `local.toml` (gitignored) to override a subset of the
+    shipped defaults without forking `default.toml`. The function
+    reads `default.toml` FIRST, then `local.toml` — `local.toml`
+    wins for any key present in both files.
+
+    Missing files are silently skipped (no exception). The caller
+    (`load_settings()`) always proceeds to construct `Settings()`,
+    which falls through to the field defaults when no env var, no
+    TOML value, and no `.env` entry are present for a given field.
+
+    Values are stringified to match the env-var string format:
+    booleans become `"true"` / `"false"`; numbers become their
+    `str()` representation. String values pass through unchanged.
+    """
+    result: dict[str, str] = {}
+    for filename in ("default.toml", "local.toml"):
+        path = CONFIG_DIR / filename
+        if not path.exists():
+            continue
+        with path.open("rb") as fh:
+            data = tomllib.load(fh)
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"{path} must be a flat TOML table, got {type(data).__name__}; "
+                "nested sections ([section] headers) are not supported"
+            )
+        for key, value in data.items():
+            if isinstance(value, bool):
+                result[key] = "true" if value else "false"
+            elif isinstance(value, (int, float)):
+                result[key] = str(value)
+            elif isinstance(value, str):
+                result[key] = value
+            else:
+                raise ValueError(
+                    f"{path}: key {key!r} has unsupported value type "
+                    f"{type(value).__name__}; use a scalar (bool, number, string)"
+                )
+    return result
 
 
 class Settings(BaseSettings):
@@ -1443,9 +1541,40 @@ class Settings(BaseSettings):
 
 
 def load_settings() -> Settings:
-    """Read env vars and return a fully-populated `Settings`.
+    """Read TOML defaults into the env, then return a fully-populated `Settings`.
 
-    A thin wrapper that exists so callers (and tests) can refer to a
-    single factory function instead of importing the class directly.
+    The factory does two things:
+
+    1. Reads `backend/config/default.toml` (and `local.toml` if present)
+       via `_load_toml_defaults()` and injects each key into `os.environ`
+       via `setdefault`. Pre-set env vars WIN over the TOML values, so
+       operators can override defaults in `.env` or the shell without
+       touching the TOML files.
+
+    2. Constructs `Settings()`, which reads from `os.environ`, then the
+       `.env` file (if present), then field defaults — the standard
+       pydantic-settings precedence.
+
+    The TOML injection is gated INSIDE `load_settings()` so direct
+    `Settings(...)` construction (used by the existing test suite)
+    bypasses the layer and continues to see only env vars + dotenv +
+    field defaults.
+
+    Test isolation: the function tracks which keys it actually
+    injected and `pop`s them from `os.environ` in a `finally` block
+    after `Settings()` is constructed. Without this cleanup, the
+    48 injected vars would leak into `os.environ` and could
+    pollute downstream tests that call `Settings(...)` directly
+    (the existing test suite uses `monkeypatch` for its own
+    vars but does not guard against leaked TOML injections).
     """
-    return Settings()
+    injected_keys: list[str] = []
+    try:
+        for key, value in _load_toml_defaults().items():
+            if key not in os.environ:
+                os.environ[key] = value
+                injected_keys.append(key)
+        return Settings()
+    finally:
+        for key in injected_keys:
+            os.environ.pop(key, None)
