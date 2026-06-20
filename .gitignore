@@ -64,7 +64,10 @@ package-lock.json.bak
 .envrc
 .env.local
 .env.*.local
-# Operator TOML overrides (use `config/local.toml.example` as template)
+# Operator TOML overrides — create this file manually if you need to
+# tweak a non-secret operational default locally without editing
+# `config/default.toml` (which is versioned). Same TOML format as
+# `default.toml`; keys present here override the defaults.
 backend/config/local.toml
 capture_log.txt
 

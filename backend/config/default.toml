@@ -7,9 +7,6 @@
 #
 #   env vars (already set)  >  this TOML  >  field defaults in config.py
 #
-# Operators can override locally with `config/local.toml` (gitignored).
-# Use `.env` (gitignored) for secrets and per-environment switches.
-#
 # Each key is the uppercase env-var name read by `Settings`. Flat
 # structure (no `[section]` headers) — the helper does
 # `tomllib.load(path)` and expects a single-level table.
@@ -17,6 +14,18 @@
 # JSON-list / JSON-dict fields are written as JSON strings (single-
 # quoted TOML literal strings) so the existing `mode="before"`
 # validators in `config.py` parse them unchanged.
+#
+# ── Operator overrides ──────────────────────────────────────────────────────
+# To tweak a non-secret default LOCALLY without forking this file or
+# polluting `.env`, create `config/local.toml` (gitignored — see the
+# root `.gitignore`) with the same TOML format. Keys present in
+# `local.toml` override the matching key here. Example:
+#
+#   # backend/config/local.toml
+#   INDEED_DOMAIN = "uk.indeed.com"
+#   LINKEDIN_THROTTLE_SECONDS = 5.0
+#
+# Use `.env` (gitignored) for secrets and per-environment switches.
 # =============================================================================
 
 
