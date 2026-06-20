@@ -64,6 +64,8 @@ package-lock.json.bak
 .envrc
 .env.local
 .env.*.local
+# Operator TOML overrides (use `config/local.toml.example` as template)
+backend/config/local.toml
 capture_log.txt
 
 # LinkedIn cookies (exported session tokens; never commit)
