@@ -1560,21 +1560,15 @@ def load_settings() -> Settings:
     bypasses the layer and continues to see only env vars + dotenv +
     field defaults.
 
-    Test isolation: the function tracks which keys it actually
-    injected and `pop`s them from `os.environ` in a `finally` block
-    after `Settings()` is constructed. Without this cleanup, the
-    48 injected vars would leak into `os.environ` and could
-    pollute downstream tests that call `Settings(...)` directly
-    (the existing test suite uses `monkeypatch` for its own
-    vars but does not guard against leaked TOML injections).
+    NOTE on os.environ mutation: the 48 injected keys persist in
+    `os.environ` after this function returns. This is safe in
+    practice because the TOML values mirror the field defaults
+    in `Settings` — a subsequent `Settings(...)` that reads from
+    `os.environ` gets the same values it would have gotten from
+    the field defaults. Direct tests that need the field default
+    (not the TOML value) use `Settings(_env_file=None)` with
+    `monkeypatch.delenv(...)` to clear the leaked key first.
     """
-    injected_keys: list[str] = []
-    try:
-        for key, value in _load_toml_defaults().items():
-            if key not in os.environ:
-                os.environ[key] = value
-                injected_keys.append(key)
-        return Settings()
-    finally:
-        for key in injected_keys:
-            os.environ.pop(key, None)
+    for key, value in _load_toml_defaults().items():
+        os.environ.setdefault(key, value)
+    return Settings()
