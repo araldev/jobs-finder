@@ -1,0 +1,76 @@
+# =============================================================================
+# jobs-finder — Docker build context ignore
+# =============================================================================
+#
+# Keep the build context small and free of secrets.
+#
+# Patterns here are MIRRORED from the root `.gitignore`. Any divergence
+# (a secret added to `.gitignore` but missing here, or vice versa) is a
+# build-context leak — update BOTH files in the same commit.
+# =============================================================================
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Local env (secrets) + operator TOML overrides
+.env
+.env.*
+!.env.example
+# direnv state files (may contain `export SECRET=...` lines)
+.envrc
+# Operator overrides — same rationale as `.env`, gitignored
+config/local.toml
+
+# LinkedIn session material (NEVER bake into the image)
+# These are in the root `.gitignore` to keep them out of git; mirror
+# here so they don't accidentally land in the build context either.
+linkedin_cookies.json
+.linkedin_profile/
+
+# SQLite databases (local persistence — never baked into an image)
+jobs.db
+*.db-*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual envs (alternative names — `.venv/` is the project default)
+venv/
+env/
+ENV/
+
+# Tooling caches
+.playwright/
+.opencode/
+.atl/
+
+# Logs that may contain URLs with session tokens
+capture_log.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Readmes and docs (not needed at runtime)
+# NOTE: README.md is required by `pyproject.toml` (readme = "README.md")
+# for the build step. Keep it in the build context.
+# README.md
