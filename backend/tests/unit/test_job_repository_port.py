@@ -94,4 +94,4 @@ def test_protocol_not_runtime_checkable() -> None:
     """
     repo = _TestConcreteRepository()
     with pytest.raises(TypeError, match="runtime_checkable"):
-        isinstance(repo, JobRepositoryPort)  # type: ignore[arg-type]
+        isinstance(repo, JobRepositoryPort)

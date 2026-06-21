@@ -657,7 +657,7 @@ async def test_count_jobs_with_filters(repo: SqliteJobRepository) -> None:
 
 def test_sqlite_job_repository_conforms_to_protocol() -> None:
     """`SqliteJobRepository` must structurally satisfy `JobRepositoryPort`."""
-    repo: JobRepositoryPort = SqliteJobRepository(db_path=":memory:")  # type: ignore[assignment]
+    repo: JobRepositoryPort = SqliteJobRepository(db_path=":memory:")
     assert repo is not None
 
 

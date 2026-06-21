@@ -336,7 +336,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         #    If an API key is present (set by ApiKeyAuthMiddleware),
         #    prepend it to the client_id so each key gets its own
         #    rate limit bucket.
-        api_key: str | None = getattr(request.state, "api_key", None)  # type: ignore[attr-defined]
+        api_key: str | None = getattr(request.state, "api_key", None)
         if api_key:
             # Prefix with "key:" so API-key buckets are distinct from IP buckets.
             client_id = f"key:{hash_client_id(api_key)}"
@@ -589,7 +589,7 @@ class ApiKeyAuthMiddleware(BaseHTTPMiddleware):
 
         # Extract and validate the API key.
         raw_key = request.headers.get(API_KEY_HEADER, "")
-        request.state.api_key = raw_key  # type: ignore[attr-defined]
+        request.state.api_key = raw_key
 
         if raw_key not in self._valid_keys:
             request_id = str(getattr(request.state, "request_id", "") or "")

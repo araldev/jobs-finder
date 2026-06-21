@@ -111,7 +111,7 @@ async def _client_with_lifespan(app: Any) -> AsyncIterator[AsyncClient]:
 
 async def _insert_fixtures(app: Any) -> None:
     """Insert _HISTORY_JOBS into the repo."""
-    repo: SqliteJobRepository = app.state.job_repository  # type: ignore[assignment]
+    repo: SqliteJobRepository = app.state.job_repository
     await repo.upsert_jobs([_HISTORY_JOBS[0]], query_snapshot={})
     await repo.upsert_jobs([_HISTORY_JOBS[1]], query_snapshot={})
     await repo.upsert_jobs([_HISTORY_JOBS[2]], query_snapshot={})

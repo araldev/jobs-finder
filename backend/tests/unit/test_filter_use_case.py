@@ -239,7 +239,7 @@ async def test_execute_returns_filtered_jobs_in_aggregator_order() -> None:
     llm = FakeLLMClient(selection=LLMSelection(matching_ids=["e", "a", "c"], explanation="3 match"))
 
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         job_repository=fake_repo,
     )
@@ -273,7 +273,7 @@ async def test_execute_short_circuits_when_aggregator_returns_no_jobs() -> None:
     llm = FakeLLMClient()  # would record calls if invoked
 
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         job_repository=fake_repo,
     )
@@ -317,7 +317,7 @@ async def test_execute_drops_hallucinated_ids_and_logs_warning(
     )
 
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         job_repository=fake_repo,
     )
@@ -368,7 +368,7 @@ async def test_execute_all_hallucinated_returns_empty_with_warnings(
     )
 
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         job_repository=fake_repo,
     )
@@ -410,7 +410,7 @@ async def test_execute_empty_llm_list_returns_empty_with_no_warning(
     llm = FakeLLMClient(selection=LLMSelection(matching_ids=[], explanation="none match"))
 
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         job_repository=fake_repo,
     )
@@ -452,7 +452,7 @@ async def test_execute_propagates_llm_unavailable_error() -> None:
     llm = FakeLLMClient(error=LLMUnavailableError("upstream down"))
 
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         job_repository=fake_repo,
     )
@@ -478,7 +478,7 @@ async def test_execute_propagates_llm_response_parse_error() -> None:
     llm = FakeLLMClient(error=LLMResponseParseError("no JSON in response"))
 
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         job_repository=fake_repo,
     )
@@ -513,7 +513,7 @@ async def test_execute_forwards_q_location_limit_to_aggregator() -> None:
     llm = FakeLLMClient()
 
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         job_repository=fake_repo,
     )
@@ -616,7 +616,7 @@ async def test_2stage_high_confidence_runs_2_stage_with_extracted_params() -> No
         )
     )
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         intent_extractor=intent_extractor,
         job_repository=fake_repo,
@@ -674,7 +674,7 @@ async def test_2stage_intent_q_none_propagates_to_empty_q() -> None:
         )
     )
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         intent_extractor=intent_extractor,
         job_repository=fake_repo,
@@ -719,7 +719,7 @@ async def test_2stage_intent_max_results_env_override_changes_aggregator_limit()
         )
     )
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         intent_extractor=intent_extractor,
         intent_max_results=50,
@@ -785,7 +785,7 @@ async def test_v1_scenarios_also_pass_with_intent_extraction_enabled_high_confid
         )
     )
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         intent_extractor=intent_extractor,
         intent_extraction_enabled=True,
@@ -843,7 +843,7 @@ async def test_fallback_low_confidence_dispatches_to_v1_with_used_fallback_true(
         )
     )
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         intent_extractor=intent_extractor,
         intent_extraction_confidence_threshold=0.7,
@@ -885,7 +885,7 @@ async def test_fallback_high_confidence_dispatches_to_2stage_with_used_fallback_
         )
     )
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         intent_extractor=intent_extractor,
         intent_extraction_confidence_threshold=0.7,
@@ -930,7 +930,7 @@ async def test_fallback_intent_extraction_disabled_dispatches_to_v1() -> None:
         )
     )
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         intent_extractor=intent_extractor,
         intent_extraction_enabled=False,
@@ -982,7 +982,7 @@ async def test_fallback_threshold_env_override_dispatches_to_2stage_at_lower_con
         )
     )
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         intent_extractor=intent_extractor,
         intent_extraction_confidence_threshold=0.5,  # lowered
@@ -1023,7 +1023,7 @@ async def test_fallback_intent_extractor_parse_error_dispatches_to_v1() -> None:
         error=LLMResponseParseError("stage-1 parse failure after retry")
     )
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         intent_extractor=intent_extractor,
         job_repository=fake_repo,
