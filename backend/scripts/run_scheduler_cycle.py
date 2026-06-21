@@ -17,8 +17,6 @@ import asyncio
 import random
 import subprocess
 import sys
-import os
-from datetime import UTC, datetime
 from pathlib import Path
 
 # Add src to path so we can import jobs_finder
@@ -128,10 +126,10 @@ async def run_cycle() -> None:
     last_completed = _get_checkpoint(db_path)
     start_index = last_completed + 1  # resume after last completed
 
-    print(f"[*] Scheduler one-shot run")
+    print("[*] Scheduler one-shot run")
     print(f"[*] DB: {db_path}")
     print(f"[*] Queries: {len(queries)}")
-    print(f"[*] Sources: linkedin, indeed, infojobs")
+    print("[*] Sources: linkedin, indeed, infojobs")
     print(f"[*] Checkpoint: last completed query = {last_completed} ({last_completed + 1}/{len(queries)})")
     if start_index > 0:
         print(f"[*] Resuming from query {start_index + 1}/{len(queries)}...")
@@ -170,7 +168,7 @@ async def run_cycle() -> None:
         await asyncio.sleep(random.uniform(0.5, 1.5))
 
     print()
-    print(f"[*] Cycle complete:")
+    print("[*] Cycle complete:")
     print(f"    New jobs:       {total_new}")
     print(f"    Already seen:  {total_seen}")
     print(f"    Query errors: {total_errors}")
@@ -180,31 +178,32 @@ async def run_cycle() -> None:
 
 async def run_query_in_subprocess(keywords: str, location: str, db_path: str) -> tuple[int, int, int, str]:
     """Run one query and print unique,new,errors to stdout. Used by the subprocess."""
-    from jobs_finder.infrastructure.infojobs.scraper import (
-        InfoJobsPlaywrightScraper,
-        InfoJobsScraperSettings,
-    )
-    from jobs_finder.infrastructure.infojobs.throttle import InfoJobsAsyncThrottle
+    from playwright_stealth import Stealth  # type: ignore[import-untyped]
+
     from jobs_finder.infrastructure.indeed.scraper import (
         IndeedPlaywrightScraper,
         IndeedScraperSettings,
     )
     from jobs_finder.infrastructure.indeed.throttle import IndeedAsyncThrottle
+    from jobs_finder.infrastructure.infojobs.scraper import (
+        InfoJobsPlaywrightScraper,
+        InfoJobsScraperSettings,
+    )
+    from jobs_finder.infrastructure.infojobs.throttle import InfoJobsAsyncThrottle
+    from jobs_finder.infrastructure.linkedin.auth_cookie import (
+        MultiEnvLinkedInAuthCookiesAdapter,
+    )
     from jobs_finder.infrastructure.linkedin.scraper import (
         LinkedInPlaywrightScraper,
         LinkedInScraperSettings,
     )
     from jobs_finder.infrastructure.linkedin.throttle import AsyncThrottle as LinkedInAsyncThrottle
-    from jobs_finder.infrastructure.linkedin.auth_cookie import (
-        MultiEnvLinkedInAuthCookiesAdapter,
-    )
     from jobs_finder.infrastructure.location.hardcoded_resolver import (
         HardcodedLocationResolver,
     )
     from jobs_finder.infrastructure.persistence.sqlite_job_repository import (
         SqliteJobRepository,
     )
-    from playwright_stealth import Stealth  # type: ignore[import-untyped]
 
     settings = Settings()
 
@@ -273,24 +272,24 @@ async def run_query_in_subprocess(keywords: str, location: str, db_path: str) ->
             try:
                 li_jobs = await li.search(keywords, location, limit=50)
                 all_jobs.extend(li_jobs)
-            except Exception as e:
+            except Exception:
                 failed_sources.append("LinkedIn")
                 errors += 1
 
             try:
                 indeed_jobs = await ind.search(keywords, location, limit=50)
                 all_jobs.extend(indeed_jobs)
-            except Exception as e:
+            except Exception:
                 failed_sources.append("Indeed")
                 errors += 1
 
             try:
                 ij_jobs = await ij.search(keywords, location, limit=50)
                 all_jobs.extend(ij_jobs)
-            except Exception as e:
+            except Exception:
                 failed_sources.append("InfoJobs")
                 errors += 1
-    except Exception as e:
+    except Exception:
         failed_sources.extend(["LinkedIn", "Indeed", "InfoJobs"])
         errors += 3
 

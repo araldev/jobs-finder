@@ -33,12 +33,11 @@ import pytest
 from fastapi import FastAPI
 from pydantic import SecretStr
 
-from jobs_finder.application.ports import Intent
-
 # Session-scoped fixture that mocks _is_within_active_hours to return True.
 # This allows scheduler tests to run regardless of actual Madrid time.
 # The work-hours gate behavior is verified by TestIsWithinActiveHours boundary tests.
 import jobs_finder.infrastructure.scheduler as scheduler_module
+from jobs_finder.application.ports import Intent
 
 
 @pytest.fixture

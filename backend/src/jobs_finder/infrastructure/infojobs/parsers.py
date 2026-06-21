@@ -390,7 +390,7 @@ def _parse_relative_date(raw: str) -> datetime:
     if m:
         day = int(m.group(1))
         month_raw = m.group(2).lower().rstrip(".")
-        month = _MONTH_MAP.get(month_raw, None)
+        month = _MONTH_MAP.get(month_raw)
         if month is None:
             raise ValueError(f"unparseable absolute date: {raw!r}")
         try:

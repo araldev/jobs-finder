@@ -17,7 +17,6 @@ from datetime import datetime
 
 from playwright.async_api import async_playwright
 
-
 LINKEDIN_EMAIL = os.environ.get("LINKEDIN_EMAIL")
 LINKEDIN_PASSWORD = os.environ.get("LINKEDIN_PASSWORD")
 COOKIES_PATH = os.path.join(
@@ -36,7 +35,7 @@ async def main() -> None:
 
     display = os.environ.get("DISPLAY", ":99")
     print(f"[*] DISPLAY={display}")
-    print(f"[*] Channel: chromium (system chromium-browser)")
+    print("[*] Channel: chromium (system chromium-browser)")
     print(f"[*] Cookies will be saved to: {COOKIES_PATH}")
     print()
 

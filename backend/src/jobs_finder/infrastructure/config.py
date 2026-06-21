@@ -1516,7 +1516,7 @@ class Settings(BaseSettings):
         raise ValueError(f"unparseable SCHEDULER_QUERIES: {v!r}")
 
     @model_validator(mode="after")
-    def _auto_cors_for_development(self) -> "Settings":
+    def _auto_cors_for_development(self) -> Settings:
         """Auto-configure CORS origins based on deployment environment.
 
         - development (ENVIRONMENT=development or unset): set CORS to

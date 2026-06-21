@@ -629,7 +629,7 @@ class TestIsWithinActiveHours:
         # Fake datetime.now() that returns a Madrid time with the given hour
         class FakeDatetime:
             @staticmethod
-            def now(tz: ZoneInfo) -> "FakeDatetime":
+            def now(tz: ZoneInfo) -> FakeDatetime:
                 return FakeDatetime()
 
             def __init__(self) -> None:
