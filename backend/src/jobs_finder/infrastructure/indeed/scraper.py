@@ -70,6 +70,9 @@ from playwright_stealth import Stealth  # type: ignore[import-untyped]
 
 from jobs_finder.application.ports import JobSearchPort
 from jobs_finder.domain.job import Job
+from jobs_finder.infrastructure._playwright_lifecycle import (
+    drain_playwright_tasks,
+)
 from jobs_finder.infrastructure.pagination import paginated_search
 
 from .exceptions import IndeedBlockedError, IndeedParseError, IndeedTimeoutError
@@ -212,6 +215,8 @@ class IndeedPlaywrightScraper(JobSearchPort):
                 await self._browser.close()
             if self._playwright is not None:
                 await self._playwright.stop()
+        # playwright.stop() is a no-op; Connection.run() task would leak past __aexit__.
+        await drain_playwright_tasks()
 
     async def search(
         self,

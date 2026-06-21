@@ -51,6 +51,7 @@ source does not affect the other sources' lifespan behavior.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -564,25 +565,38 @@ def build_app(  # noqa: PLR0915, PLR0912
                     f"Redis cache backend selected but cannot connect to "
                     f"{effective_settings.cache_redis_url}: {cause}"
                 ) from cause
-        if scraper_for_lifespan is not None:
-            # Enter the async context manager: launches Chromium and
-            # sets `scraper_for_lifespan._browser`. After this returns,
-            # the first request can call `port.search(...)` and use the
-            # browser.
-            await scraper_for_lifespan.__aenter__()
-        if indeed_scraper_for_lifespan is not None:
-            # Open the Indeed scraper (T-008). Independent of the
-            # LinkedIn one — a failure in one source's startup
-            # ordering does not affect the other. The two scrapers
-            # share a process but each owns its own browser.
-            await indeed_scraper_for_lifespan.__aenter__()
-        if infojobs_scraper_for_lifespan is not None:
-            # Open the InfoJobs scraper (T-007). Independent of the
-            # LinkedIn + Indeed ones — a failure in one source's
-            # startup ordering does not affect the other. The three
-            # scrapers share a process but each owns its own
-            # browser.
-            await infojobs_scraper_for_lifespan.__aenter__()
+        # Open the 3 `*PlaywrightScraper.__aenter__` calls in
+        # PARALLEL (was: sequential). The 3 scrapers own independent
+        # browser instances — they do NOT share state — so concurrent
+        # startup is safe. Parallel startup cuts the lifespan startup
+        # from O(3 × browser.launch()) to O(1 × browser.launch()),
+        # which keeps the lifespan well under `LifespanManager`'s
+        # default 5s startup timeout (and well under the tests'
+        # `startup_timeout=30`).
+        # `return_exceptions=True` ensures a single scraper's startup
+        # failure does not abort the other two — we still want the
+        # remaining scrapers open even if one fails.
+        scrapers_to_open = [
+            s
+            for s in (
+                scraper_for_lifespan,
+                indeed_scraper_for_lifespan,
+                infojobs_scraper_for_lifespan,
+            )
+            if s is not None
+        ]
+        if scrapers_to_open:
+            enter_results = await asyncio.gather(
+                *(s.__aenter__() for s in scrapers_to_open),
+                return_exceptions=True,
+            )
+            for scraper, result in zip(scrapers_to_open, enter_results, strict=True):
+                if isinstance(result, BaseException):
+                    _logger.warning(
+                        "scraper %s __aenter__ raised during parallel startup: %r",
+                        type(scraper).__name__,
+                        result,
+                    )
         # T-009 (background-scheduler-persistence): open the SQLite
         # repository and start the background scheduler when both
         # SCHEDULER_ENABLED and the aggregator use case are available.
@@ -637,19 +651,40 @@ def build_app(  # noqa: PLR0915, PLR0912
                 await _scheduler_instance.stop()
             if _scheduler_repo is not None:
                 await _scheduler_repo.__aexit__(None, None, None)
-            if infojobs_scraper_for_lifespan is not None:
-                # Close the InfoJobs browser and stop its Playwright
-                # driver. Runs FIRST so the InfoJobs shutdown is the
-                # first to fire; the order is the reverse of startup
-                # (LIFO).
-                await infojobs_scraper_for_lifespan.__aexit__(None, None, None)
-            if indeed_scraper_for_lifespan is not None:
-                # Close the Indeed browser and stop its Playwright driver.
-                await indeed_scraper_for_lifespan.__aexit__(None, None, None)
-            if scraper_for_lifespan is not None:
-                # Close the LinkedIn browser and stop its Playwright driver.
-                # Runs LAST so the LinkedIn shutdown is the last to fire.
-                await scraper_for_lifespan.__aexit__(None, None, None)
+            # Close the 3 `*PlaywrightScraper.__aexit__` calls in
+            # PARALLEL (was: sequential LIFO). The 3 scrapers own
+            # independent browser instances — they do NOT share state
+            # — so concurrent teardown is safe. Parallel teardown cuts
+            # the lifespan shutdown from O(3 × browser.close()) to
+            # O(1 × browser.close()), which keeps the lifespan well
+            # under `LifespanManager`'s default 5s shutdown timeout
+            # (and well under the tests' `shutdown_timeout=30`).
+            # `return_exceptions=True` ensures a single scraper's
+            # teardown failure does not abort the other two — we still
+            # want the remaining browsers closed even if one fails.
+            scrapers_to_close = [
+                s
+                for s in (
+                    infojobs_scraper_for_lifespan,
+                    indeed_scraper_for_lifespan,
+                    scraper_for_lifespan,
+                )
+                if s is not None
+            ]
+            if scrapers_to_close:
+                exit_results = await asyncio.gather(
+                    *(s.__aexit__(None, None, None) for s in scrapers_to_close),
+                    return_exceptions=True,
+                )
+                for close_scraper, close_result in zip(
+                    scrapers_to_close, exit_results, strict=True
+                ):
+                    if isinstance(close_result, BaseException):
+                        _logger.warning(
+                            "scraper %s __aexit__ raised during parallel shutdown: %r",
+                            type(close_scraper).__name__,
+                            close_result,
+                        )
 
     app = FastAPI(title="jobs-finder", lifespan=lifespan)
     app.state.use_case = use_case

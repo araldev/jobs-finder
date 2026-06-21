@@ -96,7 +96,7 @@ async def test_live_malaga_returns_actual_malaga_jobs() -> None:
     """
     app = build_app()
     async with (
-        LifespanManager(app),
+        LifespanManager(app, startup_timeout=30, shutdown_timeout=30),
         AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",

@@ -32,6 +32,7 @@ constructs a `FakeBrowser` and wires it into the scraper via
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -54,6 +55,7 @@ from jobs_finder.infrastructure.location.hardcoded_resolver import (
     HardcodedLocationResolver,
 )
 from tests.fixtures.infojobs_search import BLOCKED_PAGE_HTML, SEARCH_PAGE_HTML
+from tests.unit._helpers.fake_playwright_connection import Connection
 
 # Type alias for the per-call selector-timeout hook used by `FakePage`.
 # Mirrors the Indeed test fake. `True` means every `wait_for_selector`
@@ -1176,3 +1178,58 @@ async def test_infojobs_search_logs_warning_when_no_resolver_configured(
     # exact wording.
     info_records = [r for r in caplog.records if r.levelno == logging.INFO]
     assert any("resolver" in r.getMessage().lower() for r in info_records)
+
+
+# ---------------------------------------------------------------------------
+# REQ-LIFECYCLE-004 / SCN-LIFECYCLE-004-3: `__aexit__` drains pending Playwright tasks
+# ---------------------------------------------------------------------------
+
+
+async def test_aexit_drains_pending_playwright_tasks() -> None:
+    """`InfoJobsPlaywrightScraper.__aexit__` awaits/cancels any pending Playwright task.
+
+    REQ-LIFECYCLE-002 — each `*PlaywrightScraper.__aexit__` calls
+    `drain_playwright_tasks()` as the LAST step, after
+    `playwright.stop()`. REQ-LIFECYCLE-004 — the per-scraper test
+    files assert no `Connection.run` task leaks past `__aexit__`.
+    SCN-LIFECYCLE-004-3.
+
+    RED: today, after `__aexit__`, any pending `Connection.run`
+    task is still pending on the loop. GREEN: the drain removes
+    it (awaited to completion or cancelled on the drain's
+    `timeout=0.5s` budget).
+
+    Test strategy: pre-spawn a fake `Connection.run` task
+    (from the shared `tests/unit/_helpers/fake_playwright_connection`
+    fixture) BEFORE entering the `async with` block. The drain
+    is global — it iterates `asyncio.all_tasks()` and finds the
+    fake task by `coro.__qualname__ == "Connection.run"`. The
+    scraper itself uses `browser_factory=` (a `FakeBrowser`),
+    so it does NOT launch real Chromium in this test; the
+    pre-spawned task is the only `Connection.run` task on the
+    loop, and the test isolates the drain behavior.
+    """
+    # Pre-spawn a fake Connection.run task to simulate the leak
+    # (the gate is never set, so the drain will hit its timeout
+    # and cancel — total cost ~0.5s).
+    connection = Connection()
+    leaked = asyncio.create_task(connection.run())
+    # Yield once so the task is actually scheduled and pending.
+    await asyncio.sleep(0)
+    assert not leaked.done()
+
+    page = FakePage("")
+    scraper, _ = await _make_scraper_with(page)
+    async with scraper:
+        # No-op: the scraper uses `browser_factory=fake`, so it
+        # never calls `async_playwright().start()` itself. The
+        # pre-spawned `Connection.run` task is the only one on
+        # the loop and is what the drain must clean up.
+        pass
+
+    # After `__aexit__`, the drain (the LAST step in the
+    # scraper's `__aexit__`) must have completed the leaked
+    # task. With the drain's 0.5s timeout + the gate never
+    # being set, the task was cancelled.
+    assert leaked.done()
+    assert leaked.cancelled()
