@@ -3,14 +3,17 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
+
+import { MagicLinkForm } from "@/components/auth/MagicLinkForm";
 
 export default function LoginPage() {
   const supabase = createClient();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const emailRef = useRef<HTMLInputElement | null>(null);
 
   async function login(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -86,14 +89,23 @@ export default function LoginPage() {
               type="email"
               placeholder="tu@email.com"
               required
+              ref={emailRef}
               className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
             />
           </div>
 
           <div className="space-y-2">
-            <label htmlFor="password" className="text-sm font-medium">
-              Contraseña
-            </label>
+            <div className="flex items-baseline justify-between">
+              <label htmlFor="password" className="text-sm font-medium">
+                Contraseña
+              </label>
+              <Link
+                href="/forgot-password"
+                className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+              >
+                ¿Olvidaste tu contraseña?
+              </Link>
+            </div>
             <input
               id="password"
               name="password"
@@ -116,6 +128,15 @@ export default function LoginPage() {
             {loading ? "Entrando..." : "Entrar"}
           </button>
         </form>
+
+        {/* Feature E — magic-link / OTP login (REQ-AUTH-017).
+            The form below the password login lets the user request a
+            one-time link by email. Reuses the same email field via
+            the `initialEmail` prop if pre-filled; otherwise it's
+            independent. */}
+        <div className="border-t border-border pt-4">
+          <MagicLinkForm initialEmail={emailRef.current?.value ?? ""} />
+        </div>
 
         <div className="relative">
           <div className="absolute inset-0 flex items-center">

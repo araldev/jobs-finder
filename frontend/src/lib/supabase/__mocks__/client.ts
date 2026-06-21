@@ -51,6 +51,9 @@ export interface MockSupabaseAuthClient {
     updateUser: AnyMock;
     resend: AnyMock;
     signInWithOtp: AnyMock;
+    signInWithPassword: AnyMock;
+    signInWithOAuth: AnyMock;
+    signUp: AnyMock;
     signOut: AnyMock;
     getUser: AnyMock;
     getSession: AnyMock;
@@ -89,6 +92,9 @@ hoisted.singleton = {
     updateUser: vi.fn(async () => successUserResult()),
     resend: vi.fn(async () => successUserResult()),
     signInWithOtp: vi.fn(async () => successUserResult()),
+    signInWithPassword: vi.fn(async () => successUserResult()),
+    signInWithOAuth: vi.fn(async () => ({ data: { provider: "google", url: "" }, error: null })),
+    signUp: vi.fn(async () => successUserResult()),
     signOut: vi.fn(async () => ({ error: null })),
     getUser: vi.fn(async () => successUserResult()),
     getSession: vi.fn(async () => successSessionResult()),

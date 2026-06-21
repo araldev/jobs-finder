@@ -48,6 +48,9 @@ export function createMockSupabaseServerClient(): MockSupabaseServerClient {
       updateUser: vi.fn(async () => ({ data: null, error: null })),
       resend: vi.fn(async () => ({ data: null, error: null })),
       signInWithOtp: vi.fn(async () => ({ data: null, error: null })),
+      signInWithPassword: vi.fn(async () => ({ data: null, error: null })),
+      signInWithOAuth: vi.fn(async () => ({ data: null, error: null })),
+      signUp: vi.fn(async () => ({ data: null, error: null })),
       signOut: vi.fn(async () => ({ error: null })),
       onAuthStateChange: vi.fn(() => ({
         data: {
