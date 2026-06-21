@@ -354,7 +354,6 @@ _MONTH_MAP = {
     "dic.": 12,
     "jan": 1,
     "jan.": 1,
-    "jul": 7,
 }
 
 
