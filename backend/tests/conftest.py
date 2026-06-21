@@ -49,6 +49,8 @@ def scheduler_bypass_work_hours(monkeypatch: pytest.MonkeyPatch) -> None:
     do NOT use this fixture - they test the actual hour-based logic.
     """
     monkeypatch.setattr(scheduler_module, "_is_within_active_hours", lambda: True)
+
+
 from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase
 from jobs_finder.application.usecases.search_indeed_jobs import (
     SearchJobsUseCase as IndeedSearchJobsUseCase,

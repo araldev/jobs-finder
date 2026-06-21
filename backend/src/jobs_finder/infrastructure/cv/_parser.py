@@ -143,9 +143,20 @@ def _extract_location(text: str) -> str | None:
 
     # Common Spanish cities
     cities = [
-        "Madrid", "Barcelona", "Valencia", "Sevilla", "Bilbao",
-        "Málaga", "Murcia", "Cádiz", "Zaragoza", "Palma",
-        "Las Palmas", "Santa Cruz", "Valladolid", "Granada",
+        "Madrid",
+        "Barcelona",
+        "Valencia",
+        "Sevilla",
+        "Bilbao",
+        "Málaga",
+        "Murcia",
+        "Cádiz",
+        "Zaragoza",
+        "Palma",
+        "Las Palmas",
+        "Santa Cruz",
+        "Valladolid",
+        "Granada",
     ]
     for city in cities:
         if city in text:

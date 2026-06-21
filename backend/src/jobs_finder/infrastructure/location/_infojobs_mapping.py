@@ -70,8 +70,8 @@ _INFOJOBS_MAPPING: dict[str, tuple[int | None, int]] = {
     "remote": (None, 17),  # "Remote" → country=Spain, no province
     "teletrabajo": (None, 17),  # Spanish synonym for "remote"
     # === Spanish provinces (province_id, country_id=17) — LIVE-TESTED ===
-    "madrid": (33, 17),   # LIVE-tested (2026-06-15)
-    "barcelona": (9, 17), # LIVE-tested (2026-06-15)
+    "madrid": (33, 17),  # LIVE-tested (2026-06-15)
+    "barcelona": (9, 17),  # LIVE-tested (2026-06-15)
     "valencia": (46, 17),  # speculative — INE code; not validated
     "sevilla": (41, 17),  # speculative — INE code; not validated
 }

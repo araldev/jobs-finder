@@ -216,14 +216,29 @@ class JsonLinkedInAuthCookiesAdapter:
     Conforms to ``LinkedInAuthCookiesPort`` structurally.
     """
 
-    _COOKIE_NAMES = ("li_at", "JSESSIONID", "bcookie", "bscookie", "li_gc", "li_rm", "li_mc", "lidc", "lang", "timezone", "sdui_ver")
+    _COOKIE_NAMES = (
+        "li_at",
+        "JSESSIONID",
+        "bcookie",
+        "bscookie",
+        "li_gc",
+        "li_rm",
+        "li_mc",
+        "lidc",
+        "lang",
+        "timezone",
+        "sdui_ver",
+    )
 
     def __init__(self, path: str | os.PathLike[str] | None = None) -> None:
         self._pairs: list[tuple[str, SecretStr]] | None = None
         self._raw_dicts: list[dict] | None = None
         if path is None:
             # Default: repo root (6 levels up from linkedin/)
-            path = str(Path(__file__).resolve().parent.parent.parent.parent.parent.parent / "linkedin_cookies.json")
+            path = str(
+                Path(__file__).resolve().parent.parent.parent.parent.parent.parent
+                / "linkedin_cookies.json"
+            )
         try:
             with open(path) as f:
                 cookies = json.load(f)
@@ -236,14 +251,16 @@ class JsonLinkedInAuthCookiesAdapter:
         for c in cookies:
             if c["name"] in self._COOKIE_NAMES and c.get("value"):
                 pairs.append((c["name"], SecretStr(c["value"].strip('"'))))
-                raw_dicts.append({
-                    "name": c["name"],
-                    "value": c["value"].strip('"'),
-                    "domain": c.get("domain", ".linkedin.com"),
-                    "path": c.get("path", "/"),
-                    "httpOnly": c.get("httpOnly", True),
-                    "secure": c.get("secure", True),
-                })
+                raw_dicts.append(
+                    {
+                        "name": c["name"],
+                        "value": c["value"].strip('"'),
+                        "domain": c.get("domain", ".linkedin.com"),
+                        "path": c.get("path", "/"),
+                        "httpOnly": c.get("httpOnly", True),
+                        "secure": c.get("secure", True),
+                    }
+                )
         self._pairs = pairs if pairs else None
         self._raw_dicts = raw_dicts if raw_dicts else None
 

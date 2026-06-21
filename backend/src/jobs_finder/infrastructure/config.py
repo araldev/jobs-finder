@@ -332,9 +332,7 @@ class Settings(BaseSettings):
     # not explicitly overridden via LINKEDIN_CORS_ALLOW_ORIGINS.
     cors_allow_origins: list[str] = Field(
         default_factory=lambda: ["*"],
-        validation_alias=AliasChoices(
-            "LINKEDIN_CORS_ALLOW_ORIGINS", "cors_allow_origins"
-        ),
+        validation_alias=AliasChoices("LINKEDIN_CORS_ALLOW_ORIGINS", "cors_allow_origins"),
     )
 
     # Auto-detect deployment environment. Set ENVIRONMENT=production for prod.

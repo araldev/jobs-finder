@@ -111,7 +111,9 @@ async def main() -> None:
                 for wait_sec in range(300 - attempt):
                     await asyncio.sleep(1)
                     current_url = page.url
-                    if any(k in current_url for k in ["feed", "jobs", "mynetwork", "notifications"]):
+                    if any(
+                        k in current_url for k in ["feed", "jobs", "mynetwork", "notifications"]
+                    ):
                         login_ok = True
                         print(f"    ✅ Challenge resuelto en {wait_sec}s")
                         break
@@ -137,7 +139,9 @@ async def main() -> None:
         # Show li_at
         li_at = next((c for c in cookies if c["name"] == "li_at"), None)
         if li_at:
-            print(f"    ✅ li_at: {li_at['value'][:15]}... (expira: {datetime.fromtimestamp(li_at['expires']).isoformat() if li_at.get('expires') else 'N/A'})")
+            print(
+                f"    ✅ li_at: {li_at['value'][:15]}... (expira: {datetime.fromtimestamp(li_at['expires']).isoformat() if li_at.get('expires') else 'N/A'})"
+            )
         else:
             print("    ❌ li_at NO encontrada en cookies extraídas")
 

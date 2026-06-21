@@ -540,12 +540,14 @@ class ChatRateLimitMiddleware(BaseHTTPMiddleware):
 API_KEY_HEADER = "X-API-Key"
 
 # Paths that do NOT require API key authentication, regardless of config.
-API_KEY_EXEMPT_PATHS: frozenset[str] = frozenset({
-    "/health",
-    "/docs",
-    "/openapi.json",
-    "/redoc",
-})
+API_KEY_EXEMPT_PATHS: frozenset[str] = frozenset(
+    {
+        "/health",
+        "/docs",
+        "/openapi.json",
+        "/redoc",
+    }
+)
 
 
 class ApiKeyAuthMiddleware(BaseHTTPMiddleware):

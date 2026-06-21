@@ -610,14 +610,14 @@ class TestIsWithinActiveHours:
     @pytest.mark.parametrize(
         "hour,expected",
         [
-            (8, False),   # 08:59 — outside (one minute before opening)
-            (9, True),    # 09:00 — inside (boundary: opening)
-            (10, True),   # 10:00 — inside
-            (14, True),   # 14:00 — inside
-            (21, True),   # 21:59 — inside (one minute before closing)
+            (8, False),  # 08:59 — outside (one minute before opening)
+            (9, True),  # 09:00 — inside (boundary: opening)
+            (10, True),  # 10:00 — inside
+            (14, True),  # 14:00 — inside
+            (21, True),  # 21:59 — inside (one minute before closing)
             (22, False),  # 22:00 — outside (boundary: closing)
             (23, False),  # 23:00 — outside
-            (0, False),   # 00:00 — outside
+            (0, False),  # 00:00 — outside
         ],
     )
     def test_boundary_cases(

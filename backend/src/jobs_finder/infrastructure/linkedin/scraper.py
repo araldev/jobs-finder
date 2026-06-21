@@ -558,7 +558,9 @@ class LinkedInPlaywrightScraper(JobSearchPort):
                             for (name, value) in cookies
                         ]
                     )
-                    _logger.debug("LinkedIn auth cookies injected via pairs (count=%d)", len(cookies))
+                    _logger.debug(
+                        "LinkedIn auth cookies injected via pairs (count=%d)", len(cookies)
+                    )
         # v1 single-cookie path (KEPT byte-identical to the v1
         # `backend-linkedin-auth` cycle). When the v1 `auth_cookie`
         # slot is set (the 35 v1 tests construct
@@ -634,7 +636,9 @@ class LinkedInPlaywrightScraper(JobSearchPort):
                 # - Visits are bounded by `len(jobs)`, so the
                 #   caller controls the cost via `limit`.
                 return await _enrich_with_detail_visits(
-                    page=page, jobs=jobs, timeout_ms=self._settings.timeout_ms,
+                    page=page,
+                    jobs=jobs,
+                    timeout_ms=self._settings.timeout_ms,
                 )
             finally:
                 await page.close()
@@ -850,7 +854,9 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         try:
             await page.goto(url)
             await self._dismiss_cookie_consent(page)
-            await page.wait_for_selector(RESULTS_SELECTOR, state="attached", timeout=self._settings.timeout_ms)
+            await page.wait_for_selector(
+                RESULTS_SELECTOR, state="attached", timeout=self._settings.timeout_ms
+            )
         except PlaywrightTimeoutError as e:
             raise LinkedInTimeoutError(
                 "scraper: timeout waiting for results",
@@ -974,11 +980,11 @@ async def _enrich_with_detail_visits(
                 continue
             await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
             await page.wait_for_selector(
-                panel_selector, state="attached", timeout=5000,
+                panel_selector,
+                state="attached",
+                timeout=5000,
             )
-            panel_html = await page.eval_on_selector(
-                panel_selector, "el => el.outerHTML"
-            )
+            panel_html = await page.eval_on_selector(panel_selector, "el => el.outerHTML")
             panel_soup = BeautifulSoup(panel_html, "html.parser")
             desc = parse_description(panel_soup)
         except (PlaywrightTimeoutError, Exception):  # noqa: BLE001

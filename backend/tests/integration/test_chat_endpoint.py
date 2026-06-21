@@ -168,10 +168,9 @@ def _build_chat_test_app(
     from tests.unit._helpers.fake_job_repository import (  # noqa: PLC0415
         FakeJobRepository,
     )
+
     repo = FakeJobRepository(jobs=jobs or [])
-    chat_use_case = FilterJobsByIntentUseCase(
-        aggregator=aggregator, llm=llm, job_repository=repo
-    )
+    chat_use_case = FilterJobsByIntentUseCase(aggregator=aggregator, llm=llm, job_repository=repo)
 
     app = FastAPI()
     # Mount the chat router directly (bypassing the conditional

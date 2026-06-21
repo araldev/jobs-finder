@@ -379,7 +379,9 @@ async def test_search_uses_geo_id_when_resolver_returns_int() -> None:
             # without raising and the card-select returns [].
             return "<html><body></body></html>"
 
-        async def wait_for_selector(self, selector: str, timeout: int = 0, **kwargs: object) -> None:
+        async def wait_for_selector(
+            self, selector: str, timeout: int = 0, **kwargs: object
+        ) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -444,7 +446,9 @@ async def test_search_uses_location_when_resolver_returns_none() -> None:
         async def content(self) -> str:
             return "<html><body></body></html>"
 
-        async def wait_for_selector(self, selector: str, timeout: int = 0, **kwargs: object) -> None:
+        async def wait_for_selector(
+            self, selector: str, timeout: int = 0, **kwargs: object
+        ) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -499,7 +503,9 @@ async def test_search_uses_location_when_resolver_is_none() -> None:
         async def content(self) -> str:
             return "<html><body></body></html>"
 
-        async def wait_for_selector(self, selector: str, timeout: int = 0, **kwargs: object) -> None:
+        async def wait_for_selector(
+            self, selector: str, timeout: int = 0, **kwargs: object
+        ) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -553,7 +559,9 @@ async def test_resolver_called_once_per_search_not_per_page() -> None:
         async def content(self) -> str:
             return self._html
 
-        async def wait_for_selector(self, selector: str, timeout: int = 0, **kwargs: object) -> None:
+        async def wait_for_selector(
+            self, selector: str, timeout: int = 0, **kwargs: object
+        ) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -733,7 +741,9 @@ async def test_search_uses_structured_when_resolver_returns_triplet() -> None:
         async def content(self) -> str:
             return "<html><body></body></html>"
 
-        async def wait_for_selector(self, selector: str, timeout: int = 0, **kwargs: object) -> None:
+        async def wait_for_selector(
+            self, selector: str, timeout: int = 0, **kwargs: object
+        ) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -787,7 +797,9 @@ async def test_resolver_called_once_per_search_not_per_page_for_structured() -> 
         async def content(self) -> str:
             return "<html><body></body></html>"
 
-        async def wait_for_selector(self, selector: str, timeout: int = 0, **kwargs: object) -> None:
+        async def wait_for_selector(
+            self, selector: str, timeout: int = 0, **kwargs: object
+        ) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -847,7 +859,9 @@ async def test_legacy_wiring_without_resolver_works() -> None:
         async def content(self) -> str:
             return "<html><body></body></html>"
 
-        async def wait_for_selector(self, selector: str, timeout: int = 0, **kwargs: object) -> None:
+        async def wait_for_selector(
+            self, selector: str, timeout: int = 0, **kwargs: object
+        ) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -902,7 +916,9 @@ async def test_structured_none_falls_back_to_legacy() -> None:
         async def content(self) -> str:
             return "<html><body></body></html>"
 
-        async def wait_for_selector(self, selector: str, timeout: int = 0, **kwargs: object) -> None:
+        async def wait_for_selector(
+            self, selector: str, timeout: int = 0, **kwargs: object
+        ) -> None:
             return None
 
     from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
@@ -1568,7 +1584,11 @@ async def test_chromium_launch_xvfb_display_respects_headless_true() -> None:
     # for completeness; the dedicated env-propagation test pins it independently).
     launch_mock.assert_called_once_with(
         headless=True,
-        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
+        args=[
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+        ],
         env={"DISPLAY": ":99"},
     )
 
@@ -1691,7 +1711,6 @@ async def test_enrich_with_detail_visits_empty_jobs_returns_empty() -> None:
     assert page.goto_calls == []
 
 
-
 async def test_chromium_launch_xvfb_display_overrides_headless_false() -> None:
     """Row 4 — `xvfb=":99", headless=False` → Xvfb branch (same as Row 3).
 
@@ -1740,7 +1759,11 @@ async def test_chromium_launch_xvfb_display_overrides_headless_false() -> None:
     # Row 4: same as Row 3 (Xvfb wins, env propagates).
     launch_mock.assert_called_once_with(
         headless=False,
-        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
+        args=[
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+        ],
         env={"DISPLAY": ":99"},
     )
 
@@ -1800,7 +1823,11 @@ async def test_chromium_launch_xvfb_propagates_display_env() -> None:
     # env={"DISPLAY": ":99"})`.
     launch_mock.assert_called_once_with(
         headless=False,
-        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
+        args=[
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+        ],
         env={"DISPLAY": ":99"},
     )
 
@@ -1862,7 +1889,11 @@ async def test_chromium_launch_xvfb_propagates_channel() -> None:
             pass
     launch_mock.assert_called_once_with(
         headless=False,
-        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
+        args=[
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+        ],
         env={"DISPLAY": ":99"},
         channel="chrome",
     )
@@ -1916,6 +1947,10 @@ async def test_chromium_launch_xvfb_no_channel_when_unset() -> None:
     # channel=None must NOT be passed — assert the EXACT 3 kwargs
     launch_mock.assert_called_once_with(
         headless=False,
-        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
+        args=[
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+        ],
         env={"DISPLAY": ":99"},
     )

@@ -203,6 +203,7 @@ def _build_chat_app(
     from tests.unit._helpers.fake_job_repository import (  # noqa: PLC0415
         FakeJobRepository,
     )
+
     repo = FakeJobRepository(jobs=jobs or [])
     llm = _FakeLLMClient(
         stream_chunks=stream_chunks,

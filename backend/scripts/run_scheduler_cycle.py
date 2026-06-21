@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS scheduler_checkpoint (
 def _get_checkpoint(db_path: str) -> int:
     """Return 0-indexed last completed query, or -1 if none."""
     import sqlite3
+
     con = sqlite3.connect(db_path)
     con.execute(_CREATE_CHECKPOINT_SQL)
     try:
@@ -57,6 +58,7 @@ def _get_checkpoint(db_path: str) -> int:
 def _set_checkpoint(db_path: str, query_index: int) -> None:
     """Save completed query index (0-based)."""
     import sqlite3
+
     con = sqlite3.connect(db_path)
     con.execute(_CREATE_CHECKPOINT_SQL)
     con.execute(_CHECKPOINT_SET_SQL, (str(query_index),))
@@ -65,6 +67,7 @@ def _set_checkpoint(db_path: str, query_index: int) -> None:
 
 
 # ── Subprocess per-query runner ───────────────────────────────────────────────
+
 
 async def run_single_query(
     query_index: int,
@@ -79,11 +82,16 @@ async def run_single_query(
         sys.executable,
         str(script),
         "--query-only",
-        "--qi", str(query_index),
-        "--total", str(total_queries),
-        "--keywords", keywords,
-        "--location", location,
-        "--db", db_path,
+        "--qi",
+        str(query_index),
+        "--total",
+        str(total_queries),
+        "--keywords",
+        keywords,
+        "--location",
+        location,
+        "--db",
+        db_path,
     ]
     try:
         result = subprocess.run(
@@ -117,6 +125,7 @@ async def run_single_query(
 
 # ── Main cycle ───────────────────────────────────────────────────────────────
 
+
 async def run_cycle() -> None:
     settings = Settings()
     queries = settings.scheduler_queries
@@ -130,7 +139,9 @@ async def run_cycle() -> None:
     print(f"[*] DB: {db_path}")
     print(f"[*] Queries: {len(queries)}")
     print("[*] Sources: linkedin, indeed, infojobs")
-    print(f"[*] Checkpoint: last completed query = {last_completed} ({last_completed + 1}/{len(queries)})")
+    print(
+        f"[*] Checkpoint: last completed query = {last_completed} ({last_completed + 1}/{len(queries)})"
+    )
     if start_index > 0:
         print(f"[*] Resuming from query {start_index + 1}/{len(queries)}...")
     print()
@@ -141,12 +152,14 @@ async def run_cycle() -> None:
 
     for qi, query in enumerate(queries):
         if qi < start_index:
-            print(f"[{qi+1:2d}/{len(queries)}] {query['keywords']:30s} @ {query['location']}... SKIP (done)")
+            print(
+                f"[{qi + 1:2d}/{len(queries)}] {query['keywords']:30s} @ {query['location']}... SKIP (done)"
+            )
             continue
 
         keywords = query["keywords"]
         location = query["location"]
-        print(f"[{qi+1:2d}/{len(queries)}] {keywords:30s} @ {location}...", flush=True)
+        print(f"[{qi + 1:2d}/{len(queries)}] {keywords:30s} @ {location}...", flush=True)
 
         qi_ret, total, unique, new, errors, failed = await run_single_query(
             qi, len(queries), keywords, location, db_path
@@ -176,7 +189,10 @@ async def run_cycle() -> None:
 
 # ── Single-query subprocess entry point ──────────────────────────────────────
 
-async def run_query_in_subprocess(keywords: str, location: str, db_path: str) -> tuple[int, int, int, str]:
+
+async def run_query_in_subprocess(
+    keywords: str, location: str, db_path: str
+) -> tuple[int, int, int, str]:
     """Run one query and print unique,new,errors to stdout. Used by the subprocess."""
     from playwright_stealth import Stealth  # type: ignore[import-untyped]
 

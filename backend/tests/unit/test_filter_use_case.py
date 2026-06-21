@@ -1123,7 +1123,9 @@ class FakeLocationResolver:
         return self.structured_canned
 
 
-@pytest.mark.skip(reason="aggregator fallback removed; resolver→geo_id forwarding no longer tested via aggregator.calls")
+@pytest.mark.skip(
+    reason="aggregator fallback removed; resolver→geo_id forwarding no longer tested via aggregator.calls"
+)
 async def test_2stage_calls_resolver_and_forwards_geo_id_to_aggregator() -> None:
     """`intent.location="Madrid"` → resolver called once with `"Madrid"`.
     Then `linkedin_geo_id=103374081` is forwarded to the aggregator.
@@ -1174,7 +1176,9 @@ async def test_2stage_calls_resolver_and_forwards_geo_id_to_aggregator() -> None
     assert result.used_fallback is False
 
 
-@pytest.mark.skip(reason="aggregator fallback removed; resolver→None forwarding no longer tested via aggregator.calls")
+@pytest.mark.skip(
+    reason="aggregator fallback removed; resolver→None forwarding no longer tested via aggregator.calls"
+)
 async def test_2stage_resolver_returns_none_logs_warning_and_forwards_none(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1239,7 +1243,9 @@ async def test_2stage_resolver_returns_none_logs_warning_and_forwards_none(
     assert result.used_fallback is False
 
 
-@pytest.mark.skip(reason="aggregator fallback removed; resolver-non-call no longer testable via aggregator.calls")
+@pytest.mark.skip(
+    reason="aggregator fallback removed; resolver-non-call no longer testable via aggregator.calls"
+)
 async def test_v1_path_does_not_call_resolver() -> None:
     """`_execute_v1` does NOT call the resolver (Q2 explore resolution).
 
@@ -1288,7 +1294,9 @@ async def test_v1_path_does_not_call_resolver() -> None:
     assert result.used_fallback is True
 
 
-@pytest.mark.skip(reason="aggregator fallback removed; resolver-non-call no longer testable via aggregator.calls")
+@pytest.mark.skip(
+    reason="aggregator fallback removed; resolver-non-call no longer testable via aggregator.calls"
+)
 async def test_2stage_resolver_not_called_when_intent_location_is_none() -> None:
     """`intent.location=None` → resolver NOT called; `linkedin_geo_id=None` forwarded.
 
@@ -1332,7 +1340,9 @@ async def test_2stage_resolver_not_called_when_intent_location_is_none() -> None
     assert aggregator.calls == [("python", "", 100, ["linkedin", "indeed", "infojobs"], None)]
 
 
-@pytest.mark.skip(reason="aggregator fallback removed; resolver-non-call no longer testable via aggregator.calls")
+@pytest.mark.skip(
+    reason="aggregator fallback removed; resolver-non-call no longer testable via aggregator.calls"
+)
 async def test_use_case_works_without_location_resolver() -> None:
     """`location_resolver=None` (default) → resolver NOT called; `linkedin_geo_id=None`.
 
@@ -1374,7 +1384,9 @@ async def test_use_case_works_without_location_resolver() -> None:
     assert aggregator.calls == [("python", "Madrid", 100, ["linkedin", "indeed", "infojobs"], None)]
 
 
-@pytest.mark.skip(reason="aggregator fallback removed; resolver-exception resilience no longer testable via aggregator.calls")
+@pytest.mark.skip(
+    reason="aggregator fallback removed; resolver-exception resilience no longer testable via aggregator.calls"
+)
 async def test_2stage_resolver_call_is_resilient_to_exceptions(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

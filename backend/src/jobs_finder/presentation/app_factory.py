@@ -752,7 +752,6 @@ def build_app(  # noqa: PLR0915, PLR0912
         _scheduler_repo = SqliteJobRepository(db_path=effective_settings.db_path)
 
     if _wire_scheduler and _scheduler_repo is not None:
-
         # Wrap the aggregator's search() to match the
         # Callable[[str, str], Awaitable[list[Job]]] signature.
         async def _scheduler_search_fn(keywords: str, location: str) -> list[Job]:
@@ -1022,8 +1021,6 @@ def build_app(  # noqa: PLR0915, PLR0912
 
     # CV adaptation route — enabled when LLM is available (same gate as chat).
     if cv_use_case is not None:
-        app.include_router(
-            cv_routes.build_cv_router(generate_adapted_cv_use_case=cv_use_case)
-        )
+        app.include_router(cv_routes.build_cv_router(generate_adapted_cv_use_case=cv_use_case))
 
     return app
