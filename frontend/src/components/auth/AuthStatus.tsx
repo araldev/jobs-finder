@@ -6,7 +6,20 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 
-export function AuthStatus() {
+/**
+ * `scope` controls the Supabase `signOut({ scope })` argument:
+ *   - `'local'` (DEFAULT, unchanged): revoke only this tab's session.
+ *   - `'global'`: revoke every session in the project for this user.
+ *
+ * The header chip keeps `scope: 'local'` by default (existing UX).
+ * Settings callers can pass `scope="global"` to opt into the
+ * "sign out everywhere" behavior (REQ-AUTH-019 / REQ-AUTH-020).
+ */
+export interface AuthStatusProps {
+  scope?: "local" | "global";
+}
+
+export function AuthStatus({ scope = "local" }: AuthStatusProps) {
   const supabase = createClient();
   const router = useRouter();
   const [email, setEmail] = useState<string | null>(null);
@@ -31,7 +44,11 @@ export function AuthStatus() {
   }, [supabase]);
 
   async function logout() {
-    await supabase.auth.signOut();
+    if (scope === "global") {
+      await supabase.auth.signOut({ scope: "global" });
+    } else {
+      await supabase.auth.signOut();
+    }
     router.push("/login");
     router.refresh();
   }
