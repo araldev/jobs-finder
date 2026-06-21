@@ -1,7 +1,14 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockSupabaseAuth } from "../client";
 
 describe("createMockSupabaseAuth", () => {
+  beforeEach(() => {
+    // The singleton accumulates call history across the whole file;
+    // clear it between tests so per-test assertions about call counts
+    // and `mockResolvedValueOnce` queueing are isolated.
+    vi.clearAllMocks();
+  });
+
   it("returns a factory with every required method as a vi.fn()", () => {
     const mock = createMockSupabaseAuth();
 

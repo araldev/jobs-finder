@@ -9,16 +9,27 @@ import { vi, type Mock } from "vitest";
  * `mockResolvedValueOnce` / `mockReturnValue` to exercise failure modes
  * (REQ-AUTH-027).
  *
- * Usage:
+ * Usage (mock the browser `@/lib/supabase/client` module):
  * ```ts
- * import { createMockSupabaseAuth } from "@/lib/supabase/__mocks__/client";
+ * import { mockSupabaseAuth } from "@/lib/supabase/__mocks__/client";
  *
- * vi.mock("@/lib/supabase/client", () => createMockSupabaseAuth());
+ * vi.mock("@/lib/supabase/client", () => ({
+ *   createClient: () => mockSupabaseAuth,
+ * }));
  *
  * beforeEach(() => {
- *   vi.mocked(createClient().auth.signInWithOtp).mockResolvedValueOnce({ data: null, error: new Error("boom") });
+ *   vi.mocked(mockSupabaseAuth.auth.signInWithOtp).mockResolvedValueOnce({
+ *     data: null,
+ *     error: new Error("boom"),
+ *   });
  * });
  * ```
+ *
+ * `mockSupabaseAuth` is a SINGLETON — every `createClient()` call inside
+ * the component-under-test returns the same mock object, so test code
+ * that references `mockSupabaseAuth.auth.signInWithOtp` sees the same
+ * `vi.fn()` the component calls. `vi.hoisted()` guarantees the singleton
+ * is created BEFORE `vi.mock()` runs, so the factory can close over it.
  *
  * Shape conventions follow `@supabase/supabase-js`:
  *   - auth methods return `{ data, error }` (data is null on failure).
@@ -49,54 +60,61 @@ export interface MockSupabaseAuthClient {
   rpc: AnyMock;
 }
 
-const DEFAULT_USER = {
-  id: "user-1",
-  email: "user@example.com",
-  email_confirmed_at: null as string | null,
+const hoisted = vi.hoisted(() => {
+  // vi.hoisted runs before vi.mock factories, so we can stash the
+  // singleton here and reach it from the test factory below.
+  const singleton = {} as MockSupabaseAuthClient;
+  return { singleton };
+});
+
+const successUserResult = () => ({
+  data: {
+    user: {
+      id: "user-1",
+      email: "user@example.com",
+      email_confirmed_at: null as string | null,
+    },
+  },
+  error: null,
+});
+
+const successSessionResult = () => ({
+  data: { session: null },
+  error: null,
+});
+
+hoisted.singleton = {
+  auth: {
+    resetPasswordForEmail: vi.fn(async () => successUserResult()),
+    updateUser: vi.fn(async () => successUserResult()),
+    resend: vi.fn(async () => successUserResult()),
+    signInWithOtp: vi.fn(async () => successUserResult()),
+    signOut: vi.fn(async () => ({ error: null })),
+    getUser: vi.fn(async () => successUserResult()),
+    getSession: vi.fn(async () => successSessionResult()),
+    exchangeCodeForSession: vi.fn(async () => successUserResult()),
+    onAuthStateChange: vi.fn(() => ({
+      data: {
+        subscription: { unsubscribe: () => {} },
+      },
+    })),
+  },
+  rpc: vi.fn(async () => ({ data: null, error: null })),
 };
 
-function successUserResult() {
-  return {
-    data: { user: { ...DEFAULT_USER } },
-    error: null,
-  };
-}
+/**
+ * The single shared Supabase mock instance. Every `createClient()` call
+ * inside the component-under-test returns this object so test code that
+ * references `mockSupabaseAuth.auth.signInWithOtp` sees the same
+ * `vi.fn()` the component calls.
+ */
+export const mockSupabaseAuth: MockSupabaseAuthClient = hoisted.singleton;
 
-function successSessionResult() {
-  return {
-    data: { session: null },
-    error: null,
-  };
-}
-
+/**
+ * Factory function — returns the singleton `mockSupabaseAuth`. Kept as
+ * a function for backward compatibility with the old call site shape;
+ * new tests should prefer importing `mockSupabaseAuth` directly.
+ */
 export function createMockSupabaseAuth(): MockSupabaseAuthClient {
-  return {
-    auth: {
-      resetPasswordForEmail: vi.fn(async (_email: string, _options?: { redirectTo?: string }) =>
-        successUserResult(),
-      ),
-      updateUser: vi.fn(async (_attrs: { password?: string; email?: string }) =>
-        successUserResult(),
-      ),
-      resend: vi.fn(async (_opts: { type: "signup" | "email_change" | "magiclink"; email: string }) =>
-        successUserResult(),
-      ),
-      signInWithOtp: vi.fn(async (_opts: { email: string }) => successUserResult()),
-      signOut: vi.fn(async () => ({ error: null })),
-      getUser: vi.fn(async () => successUserResult()),
-      getSession: vi.fn(async () => successSessionResult()),
-      exchangeCodeForSession: vi.fn(async (_code: string) => successUserResult()),
-      onAuthStateChange: vi.fn((_cb: (event: string, session: unknown) => void) => ({
-        data: {
-          subscription: {
-            unsubscribe: () => {},
-          },
-        },
-      })),
-    },
-    rpc: vi.fn(async (_fn: string, _args?: Record<string, unknown>) => ({
-      data: null,
-      error: null,
-    })),
-  };
+  return mockSupabaseAuth;
 }
