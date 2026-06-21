@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -144,7 +145,7 @@ export default function CVLandingPage() {
       <nav className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container mx-auto flex h-16 items-center justify-between px-4">
           <Link href="/" className="flex items-center gap-2">
-            <img src="/favicon.svg" alt="Jobs Finder" className="h-9 w-9" />
+            <Image src="/favicon.svg" alt="Jobs Finder" width={36} height={36} className="h-9 w-9" />
             <span className="font-display text-xl font-bold">Jobs Finder</span>
           </Link>
 
@@ -632,7 +633,7 @@ export default function CVLandingPage() {
         <div className="container mx-auto px-4 py-8">
           <div className="flex flex-col items-center justify-between gap-4 md:flex-row">
             <div className="flex items-center gap-2">
-              <img src="/favicon.svg" alt="Jobs Finder" className="h-8 w-8" />
+              <Image src="/favicon.svg" alt="Jobs Finder" width={32} height={32} className="h-8 w-8" />
               <span className="font-display text-lg font-bold">
                 Jobs Finder
               </span>

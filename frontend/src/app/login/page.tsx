@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
@@ -69,7 +70,7 @@ export default function LoginPage() {
       <div className="mx-auto mt-8 max-w-sm space-y-6 px-4">
         <div className="space-y-2 text-center">
           <Link href="/" className="inline-flex items-center gap-2">
-            <img src="/favicon.svg" alt="Jobs Finder" className="h-9 w-9" />
+            <Image src="/favicon.svg" alt="Jobs Finder" width={36} height={36} className="h-9 w-9" />
             <span className="font-display text-xl font-bold">Jobs Finder</span>
           </Link>
           <h1 className="mt-4 text-2xl font-display font-bold">Iniciar sesión</h1>
