@@ -360,3 +360,107 @@ class TestHistoryApi:
 
         # Pydantic rejects limit > 200 with 422
         assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Regression: `GET /jobs/history/by-id/{source_id}` returns the correct status
+# (REQ-MAINT-012..014).
+#
+# Bug surfaced by `mypy --strict`: `JSONResponse(content, status=404)` is
+# silently dropped because `JSONResponse.__init__` does NOT accept a `status`
+# kwarg (the kwarg goes to **kwargs and is discarded). The endpoint returns
+# 200 even when trying to signal 404. Fix per ADR-002: `raise HTTPException(
+# status_code=404, detail="Job not found")` — FastAPI's built-in handler
+# produces `{"detail": "Job not found"}` with status 404.
+# ---------------------------------------------------------------------------
+
+
+class TestHistoryByIdRegression:
+    """Regression tests for the by-id endpoint's 404 contract (REQ-MAINT-012)."""
+
+    @pytest.mark.asyncio
+    async def test_by_id_returns_404_when_repo_missing(self) -> None:
+        """When the DB is not configured (repo is None), the endpoint returns 404.
+
+        Before the fix: returned 200 with body `{"error": "Job not found"}`
+        (because `JSONResponse(..., status=404)` silently dropped `status`).
+        After the fix: raises `HTTPException(404)` → FastAPI handler → 404.
+        """
+        # No db_path → repo is None
+        settings = Settings(
+            scheduler_enabled=False,
+            db_path="",  # empty string disables the repository
+        )
+        app = _make_app_with_empty_fakes(settings)
+
+        async with _client_with_lifespan(app) as client:
+            repo = getattr(app.state, "job_repository", None)
+            assert repo is None, "Expected repo=None when db_path is empty"
+
+            resp = await client.get("/jobs/history/by-id/anything")
+
+        assert resp.status_code == 404
+        assert resp.json() == {"detail": "Job not found"}
+
+    @pytest.mark.asyncio
+    async def test_by_id_returns_404_when_job_not_found(self) -> None:
+        """When the repo is configured but the source_id is not present, returns 404."""
+        settings = Settings(
+            scheduler_enabled=False,
+            db_path=":memory:",
+        )
+        app = _make_app_with_empty_fakes(settings)
+
+        async with _client_with_lifespan(app) as client:
+            await _insert_fixtures(app)
+            resp = await client.get("/jobs/history/by-id/does-not-exist")
+
+        assert resp.status_code == 404
+        assert resp.json() == {"detail": "Job not found"}
+
+    @pytest.mark.asyncio
+    async def test_by_id_returns_200_when_job_found(self) -> None:
+        """Positive path: existing source_id → 200 + HistoricalJobResponse."""
+        settings = Settings(
+            scheduler_enabled=False,
+            db_path=":memory:",
+        )
+        app = _make_app_with_empty_fakes(settings)
+
+        async with _client_with_lifespan(app) as client:
+            await _insert_fixtures(app)
+            resp = await client.get("/jobs/history/by-id/linkedin_1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["id"] == "linkedin_1"
+        assert body["title"] == "Python Developer"
+        assert body["company"] == "Tech Corp"
+        assert body["source"] == "linkedin"
+
+    @pytest.mark.asyncio
+    async def test_no_jsonresponse_with_status_kwarg_remains_in_src(self) -> None:
+        """Sweep: no `JSONResponse(..., status=...)` calls remain in `backend/src/`.
+
+        Per REQ-MAINT-014, the fix includes a sweep — after the
+        `history.py` swap, NO production code should call
+        `JSONResponse(content=..., status=...)` because the `status`
+        kwarg is silently dropped. Future code should use
+        `HTTPException(status_code=...)` for non-200 responses.
+        """
+        from pathlib import Path
+
+        src_root = Path(__file__).resolve().parent.parent.parent / "src"
+        offenders: list[str] = []
+        for py in src_root.rglob("*.py"):
+            text = py.read_text()
+            if "JSONResponse(" in text and "status=" in text:
+                # Check same-line or nearby lines
+                for ln_no, line in enumerate(text.splitlines(), start=1):
+                    if "JSONResponse(" in line and "status=" in line:
+                        offenders.append(f"{py.relative_to(src_root)}:{ln_no}: {line.strip()}")
+
+        assert offenders == [], (
+            f"Found {len(offenders)} JSONResponse(...status=...) call(s):\n"
+            + "\n".join(offenders)
+        )
