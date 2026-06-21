@@ -98,9 +98,14 @@ _HISTORY_JOBS = [
 
 @asynccontextmanager
 async def _client_with_lifespan(app: Any) -> AsyncIterator[AsyncClient]:
-    """`AsyncClient` whose lifespan is exercised by `LifespanManager`."""
+    """`AsyncClient` whose lifespan is exercised by `LifespanManager`.
+
+    `shutdown_timeout=30` to keep multi-scraper shutdown stable.
+    Production uses uvicorn's graceful-shutdown timeout, not
+    `LifespanManager`.
+    """
     async with (
-        LifespanManager(app),
+        LifespanManager(app, startup_timeout=30, shutdown_timeout=30),
         AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",

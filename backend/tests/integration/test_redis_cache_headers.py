@@ -85,7 +85,8 @@ def test_redis_unreachable_raises_runtime_error(
     app: FastAPI = build_app(settings=settings)
 
     async def _run_lifespan() -> None:
-        async with LifespanManager(app):
+        # `shutdown_timeout=30` to keep multi-scraper shutdown stable.
+        async with LifespanManager(app, startup_timeout=30, shutdown_timeout=30):
             pass  # pragma: no cover -- the lifespan should fail before this
 
     with pytest.raises(RuntimeError) as exc_info:
@@ -125,7 +126,8 @@ def test_redis_reachable_app_starts_and_aclose_is_called(
     app: FastAPI = build_app(settings=settings)
 
     async def _run_lifespan() -> Any:  # noqa: ANN401
-        async with LifespanManager(app):
+        # `shutdown_timeout=30` to keep multi-scraper shutdown stable.
+        async with LifespanManager(app, startup_timeout=30, shutdown_timeout=30):
             # No-op: the lifespan startup ran `ping()` and the
             # shutdown will run `aclose()`. Both must succeed
             # without raising; the `async with` block returning

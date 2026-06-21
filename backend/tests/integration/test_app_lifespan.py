@@ -58,9 +58,15 @@ async def _client_with_lifespan(app: Any) -> AsyncIterator[AsyncClient]:
 
     `httpx.ASGITransport` does not run the ASGI lifespan on its own;
     `LifespanManager` is the community-standard helper to do that.
+
+    `shutdown_timeout=30` to keep multi-scraper shutdown stable
+    (the default 5s is too tight for 3 `*PlaywrightScraper`
+    instances whose `__aexit__` may take >5s when running serially).
+    Production uses uvicorn's graceful-shutdown timeout, not
+    `LifespanManager`.
     """
     async with (
-        LifespanManager(app),
+        LifespanManager(app, startup_timeout=30, shutdown_timeout=30),
         AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",

@@ -221,7 +221,7 @@ async def test_build_app_default_lifespan_opens_all_three_scrapers(
 
     app = build_app()
 
-    async with LifespanManager(app):
+    async with LifespanManager(app, startup_timeout=30, shutdown_timeout=30):
         # All three scrapers were opened at startup.
         assert len(linkedin_enter_calls) == 1
         assert len(indeed_enter_calls) == 1

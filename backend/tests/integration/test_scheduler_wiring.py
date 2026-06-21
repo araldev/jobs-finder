@@ -26,9 +26,18 @@ from jobs_finder.presentation.app_factory import build_app
 
 @asynccontextmanager
 async def _client_with_lifespan(app: Any) -> AsyncIterator[AsyncClient]:
-    """`AsyncClient` whose lifespan is exercised by `LifespanManager`."""
+    """`AsyncClient` whose lifespan is exercised by `LifespanManager`.
+
+    `LifespanManager`'s default `shutdown_timeout` is 5s; the
+    `app = build_app()` default branch opens 3 `*PlaywrightScraper`
+    instances whose `__aexit__` may take >5s when running serially
+    (browser cleanup, drain helper, asyncio scheduling jitter).
+    We bump to 15s to keep these tests stable without changing the
+    `*PlaywrightScraper` shutdown semantics. Production uses
+    uvicorn's graceful-shutdown timeout, not `LifespanManager`.
+    """
     async with (
-        LifespanManager(app),
+        LifespanManager(app, startup_timeout=30, shutdown_timeout=30),
         AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",

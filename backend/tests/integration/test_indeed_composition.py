@@ -166,7 +166,7 @@ async def test_build_app_default_lifespan_opens_both_scrapers(
 
     from asgi_lifespan import LifespanManager  # noqa: PLC0415
 
-    async with LifespanManager(app):
+    async with LifespanManager(app, startup_timeout=30, shutdown_timeout=30):
         # Both scrapers were opened at startup.
         assert len(linkedin_enter_calls) == 1, (
             "Lifespan startup did not call __aenter__ on the default "
