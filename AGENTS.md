@@ -89,6 +89,7 @@ jobs-finder/
 │   ├── pyproject.toml   # PEP 621 metadata + tool config
 │   ├── scripts/
 │   │   └── check.sh     # local CI: ruff + mypy + pytest
+│   ├── supabase/         # local Supabase config + migrations/
 │   ├── src/
 │   │   └── jobs_finder/ # src layout, imported as `jobs_finder`
 │   │       ├── __init__.py

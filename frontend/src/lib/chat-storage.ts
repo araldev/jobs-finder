@@ -7,8 +7,9 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { JOBS_FINDER_STORAGE_KEYS } from "@/lib/auth/storageKeys";
 
-export const CHAT_STORAGE_KEY = "jobs-finder-chat-v1";
+export const CHAT_STORAGE_KEY = JOBS_FINDER_STORAGE_KEYS.chat;
 
 export interface ChatStorage {
   messages: unknown[];

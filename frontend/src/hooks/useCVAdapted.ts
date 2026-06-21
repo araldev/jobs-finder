@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { JOBS_FINDER_STORAGE_KEYS } from "@/lib/auth/storageKeys";
 
-const CV_ADAPTED_STORAGE_KEY = "jobs-finder-cv-adapted-count";
+const CV_ADAPTED_STORAGE_KEY = JOBS_FINDER_STORAGE_KEYS.cvAdaptedCount;
 
 function readCVAdaptedCount(): number {
   if (typeof window === "undefined") return 0;

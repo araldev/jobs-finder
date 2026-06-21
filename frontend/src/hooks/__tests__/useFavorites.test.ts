@@ -1,7 +1,30 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useFavorites } from "../useFavorites";
+import { JOBS_FINDER_STORAGE_KEYS } from "@/lib/auth/storageKeys";
 import type { Job } from "@/types/job";
+
+// Mock the storageKeys module to use a fake prefix so the regression test
+// (and the existing tests) prove the production code reads the constant
+// instead of a hardcoded literal. Both test setup and production code
+// resolve the constant to FAKE_PREFIX.favorites, keeping them in sync.
+const { FAKE_PREFIX } = vi.hoisted(() => ({
+  FAKE_PREFIX: "auth-flows-test-",
+}));
+vi.mock("@/lib/auth/storageKeys", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/auth/storageKeys")>(
+    "@/lib/auth/storageKeys",
+  );
+  return {
+    ...actual,
+    STORAGE_KEY_PREFIX: FAKE_PREFIX,
+    JOBS_FINDER_STORAGE_KEYS: {
+      favorites: `${FAKE_PREFIX}favorites`,
+      chat: `${FAKE_PREFIX}chat-v1`,
+      cvAdaptedCount: `${FAKE_PREFIX}cv-adapted-count`,
+    },
+  };
+});
 
 const mockJob: Job = {
   id: "job-1",
@@ -25,7 +48,7 @@ const mockJob2: Job = {
   description: "Another great job",
 };
 
-const STORAGE_KEY = "jobs-finder-favorites";
+const STORAGE_KEY = JOBS_FINDER_STORAGE_KEYS.favorites;
 
 beforeEach(() => {
   const store = new Map<string, string>();
@@ -157,5 +180,20 @@ describe("useFavorites", () => {
 
     const { result } = renderHook(() => useFavorites());
     expect(result.current.favorites).toEqual([]);
+  });
+});
+
+describe("useFavorites storage key (regression)", () => {
+  it("writes to JOBS_FINDER_STORAGE_KEYS.favorites (not a hardcoded literal)", () => {
+    const { result } = renderHook(() => useFavorites());
+    act(() => {
+      result.current.toggleFavorite(mockJob);
+    });
+
+    // Production MUST write to the FAKE_PREFIX.favorites key (the mocked
+    // constant). If production keeps a hardcoded "jobs-finder-favorites"
+    // literal, this is null and the real key has the value instead.
+    expect(localStorage.getItem(`${FAKE_PREFIX}favorites`)).not.toBeNull();
+    expect(localStorage.getItem("jobs-finder-favorites")).toBeNull();
   });
 });

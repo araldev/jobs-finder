@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { Job } from "@/types/job";
+import { JOBS_FINDER_STORAGE_KEYS } from "@/lib/auth/storageKeys";
 
-const STORAGE_KEY = "jobs-finder-favorites";
+const STORAGE_KEY = JOBS_FINDER_STORAGE_KEYS.favorites;
 
 function readFavorites(): Job[] {
   try {
