@@ -67,15 +67,19 @@ async def test_options_preflight_returns_cors_allow_origin_header(
     response = await client.options(
         "/jobs/linkedin?keywords=python&location=madrid",
         headers={
-            "Origin": "http://example.com",
+            "Origin": "http://localhost:3000",
             "Access-Control-Request-Method": "GET",
         },
     )
 
     # CORS preflights return 200 with the CORS headers, not 405.
+    # The dev default allowlist (see Settings._auto_cors_for_development)
+    # is `["http://localhost:3000", "http://127.0.0.1:3000"]` — NOT `*`.
+    # The Origin header MUST match one of the allowed origins for the
+    # preflight to succeed (hardened dev default; the v1 `*` policy
+    # would have allowed any origin).
     assert response.status_code == 200
-    # The default `*` policy is set on Settings.cors_allow_origins.
-    assert response.headers.get("access-control-allow-origin") == "*"
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
 
 
 async def test_options_preflight_advertises_get_method(
@@ -135,8 +139,8 @@ async def test_options_preflight_for_post_jobs_chat_stream_succeeds(
 
     # The preflight returns 200 with the CORS headers.
     assert response.status_code == 200
-    # The CORS Allow-Origin is set (the dev default is `*`).
-    assert response.headers.get("access-control-allow-origin") == "*"
+    # The CORS Allow-Origin echoes the dev-allowlisted origin (NOT `*`).
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
     # Allow-Methods includes POST (and GET, for the per-source routes).
     allow_methods = response.headers.get("access-control-allow-methods", "")
     assert "POST" in allow_methods.upper()
@@ -181,8 +185,9 @@ async def test_actual_post_to_chat_endpoint_cross_origin_succeeds(
         )
 
     # The POST itself returns 200 (SSE) or 4xx (validation). The
-    # important assertion is the CORS header.
-    assert response.headers.get("access-control-allow-origin") == "*"
+    # important assertion is the CORS header — the dev allowlist
+    # echoes the origin (NOT `*`).
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
 
 
 async def test_get_request_carries_cors_allow_origin_header(
@@ -195,8 +200,9 @@ async def test_get_request_carries_cors_allow_origin_header(
     """
     response = await client.get(
         "/jobs/linkedin?keywords=python&location=madrid",
-        headers={"Origin": "http://example.com"},
+        headers={"Origin": "http://localhost:3000"},
     )
 
     assert response.status_code == 200
-    assert response.headers.get("access-control-allow-origin") == "*"
+    # Dev allowlist echoes the origin (NOT `*`).
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"

@@ -96,10 +96,24 @@ class TestBuildAppMultiCookieWire:
         """
         from playwright_stealth import Stealth  # type: ignore[import-untyped]  # noqa: PLC0415
 
+        # The factory prefers the JsonLinkedInAuthCookiesAdapter when a
+        # linkedin_cookies.json is present in the repo root (e.g., from a
+        # prior manual capture). Force the Json adapter to "no cookies" so
+        # the MultiEnv adapter from env vars is wired instead — this is
+        # what the test asserts.
+        from jobs_finder.infrastructure.linkedin import auth_cookie as ac_module
+
+        def _json_cookies_none(self: object) -> None:
+            return None
+
+        monkeypatch.setattr(ac_module.JsonLinkedInAuthCookiesAdapter, "cookies", _json_cookies_none)
+        # Also force the constructor to NOT find the file by stubbing the
+        # path resolution. The simpler path is the .cookies() override above.
         monkeypatch.setenv("LINKEDIN_LI_AT", "AQEAAAAQEAAA")
         monkeypatch.setenv("LINKEDIN_JSESSIONID", "ajax:12345678")
         monkeypatch.setenv("LINKEDIN_BCOOKIE", "v2_xyz_padded")
         monkeypatch.setenv("LINKEDIN_LI_GC", "gc_abc_padded")
+        monkeypatch.setenv("LINKEDIN_BSCOOKIE", "bs_xyz_padded")
         # NOTE: the values `"ajax:12345"`, `"v2_xyz"`, `"gc_abc"`
         # from the orchestrator's spec (the canonical sentinels)
         # are <8 chars and would be rejected by the
