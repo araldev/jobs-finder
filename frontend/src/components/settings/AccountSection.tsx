@@ -1,9 +1,12 @@
+"use client";
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { ChangePasswordForm } from "./ChangePasswordForm";
 import { GlobalSignoutButton } from "./GlobalSignoutButton";
 import { DeleteAccountDialog } from "./DeleteAccountDialog";
-import { authCopy } from "@/lib/authCopy";
+import { useEffect, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 /**
  * AccountSection — REQ-AUTH-013 / REQ-AUTH-014.
@@ -18,8 +21,25 @@ import { authCopy } from "@/lib/authCopy";
  *
  * The destructive sub-card is the LAST element so a user reading
  * top-to-bottom encounters the safe controls first.
+ *
+ * AccountSection reads `supabase.auth.getUser()` to fetch the current
+ * user's email (passed to DeleteAccountDialog for the typed-email
+ * safeguard). Renders a placeholder until the email is loaded.
  */
 export function AccountSection() {
+  const supabase = createClient();
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void supabase.auth.getUser().then(({ data }) => {
+      if (active) setUserEmail(data.user?.email ?? null);
+    });
+    return () => {
+      active = false;
+    };
+  }, [supabase]);
+
   return (
     <Card>
       <CardHeader>
@@ -37,7 +57,11 @@ export function AccountSection() {
           className="rounded-xl border border-destructive/40 p-6"
           data-testid="delete-account-destructive-card"
         >
-          <DeleteAccountDialog />
+          {userEmail ? (
+            <DeleteAccountDialog userEmail={userEmail} />
+          ) : (
+            <p className="text-sm text-muted-foreground">Cargando…</p>
+          )}
         </div>
       </CardContent>
     </Card>

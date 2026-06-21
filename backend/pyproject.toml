@@ -75,6 +75,14 @@ addopts = "-ra --strict-markers"
 filterwarnings = [
     "error",
 ]
+markers = [
+    # Tests that require a `supabase start` local stack. Skipped by
+    # default in CI (per AGENTS.md rule #1 — no live Supabase calls in
+    # CI). Run locally with:
+    #   SUPABASE_LOCAL_URL=... SUPABASE_LOCAL_ANON_KEY=... \
+    #     uv run pytest -m supabase_local tests/integration/
+    "supabase_local: tests requiring a `supabase start` local stack (deselect with -m 'not supabase_local')",
+] 
 
 # --- Type checker ----------------------------------------------------------
 [tool.mypy]

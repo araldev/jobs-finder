@@ -54,7 +54,7 @@ export const authCopy = Object.freeze({
     confirmTitle: "¿Eliminar tu cuenta para siempre?",
     confirmDescription:
       "Esta acción es permanente. Se borrarán tu CV, tus favoritos y todos los datos asociados.",
-    confirmEmailLabel: "Escribí tu correo exacto para confirmar",
+    confirmEmailLabel: "Confirmá con tu correo electrónico",
     confirmPlaceholder: "tu@email.com",
     confirmSubmit: "Sí, eliminar mi cuenta",
     confirmCancel: "Cancelar",
