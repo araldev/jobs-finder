@@ -66,10 +66,21 @@ def test_llm_temperature_default_is_zero() -> None:
     assert settings.llm_temperature == 0.0
 
 
-def test_llm_max_tokens_default_is_1024() -> None:
-    """`llm_max_tokens` defaults to `1024` (per the design §4)."""
-    settings = Settings()
-    assert settings.llm_max_tokens == 1024
+def test_llm_max_tokens_default_is_4096() -> None:
+    """`llm_max_tokens` code default is `4096`.
+
+    The code default was raised from 1024 to 4096 per the deliberate
+    config change tracked in Q6 of the
+    `refactor-pre-existing-baseline-debt` change — stage-3
+    responses (full job matches with descriptions) need the
+    larger budget to avoid truncation on complex queries.
+
+    `_env_file=None` forces pydantic-settings to ignore the
+    operator's local `.env` (which may override `LLM_MAX_TOKENS`).
+    The test verifies the CODE default, not the env default.
+    """
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.llm_max_tokens == 4096
 
 
 def test_llm_request_timeout_seconds_default_is_15() -> None:
