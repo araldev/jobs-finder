@@ -8,6 +8,14 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: "./vitest.setup.ts",
     globals: true,
+    // The e2e/ folder holds Playwright specs (run via `playwright test`,
+    // NOT vitest). Excluding them here keeps `npm run test` green.
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/.next/**",
+      "e2e/**",
+    ],
   },
   resolve: {
     alias: {
