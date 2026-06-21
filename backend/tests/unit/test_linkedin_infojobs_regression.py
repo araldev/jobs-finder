@@ -57,10 +57,18 @@ async def test_infojobs_launch_kwargs_unaffected_by_linkedin_xvfb() -> None:
         ap_mock.return_value.start = playwright_start
         async with scraper:
             pass
-    # Q5: the InfoJobs launch is byte-identical to cycle 2.
-    # No `--no-sandbox`, no `--disable-dev-shm-usage`, no
-    # `env=` kwarg, no Xvfb wins.
-    launch_mock.assert_called_once_with(headless=True)
+    # Q5: the InfoJobs launch keeps its hardcoded headless=True +
+    # the 3 sandbox-bypass args added for containerized environments
+    # (REQ-LQ5-002: headless hardcoded; the 3 args are an additive
+    # sandbox bypass, not a behavior change for local dev).
+    launch_mock.assert_called_once_with(
+        headless=True,
+        args=[
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+        ],
+    )
     # No DISPLAY env kwarg leaks to InfoJobs.
     playwright_start.assert_called_once_with()
 
@@ -104,6 +112,15 @@ async def test_infojobs_launch_kwargs_unaffected_by_settings_headless_false() ->
         ap_mock.return_value.start = playwright_start
         async with scraper:
             pass
-    # Same as test 1: byte-identical to cycle 2.
-    launch_mock.assert_called_once_with(headless=True)
+    # Same as test 1: byte-identical to cycle 2 (headless=True +
+    # 3 sandbox-bypass args; the Settings.headless=False knob is
+    # LinkedIn-only and MUST NOT affect InfoJobs).
+    launch_mock.assert_called_once_with(
+        headless=True,
+        args=[
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+        ],
+    )
     playwright_start.assert_called_once_with()

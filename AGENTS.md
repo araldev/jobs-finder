@@ -48,7 +48,7 @@ backend's "no floating versions" convention.
 | Tool                          | Version  | Purpose                                       |
 | ----------------------------- | -------- | --------------------------------------------- |
 | Node                          | >= 20    | Runtime.                                      |
-| npm                           | >= 10    | Package manager.                              |
+| pnpm                          | >= 10    | Package manager.                              |
 | Next.js                       | 15.5.19  | App Router, RSC, Route Handlers.              |
 | React                         | 19.1.0   | UI runtime.                                   |
 | TypeScript                    | 5.9.2    | Strict + `noUncheckedIndexedAccess`.          |
@@ -335,8 +335,9 @@ a follow-up change to extend the helper — don't bypass it.
 
 Backend commands are run from `backend/` and use `uv` (NOT `pip`,
 NOT `poetry`). Frontend commands are run from `frontend/` and
-use `npm` (NOT `yarn`, NOT `pnpm`, NOT `bun` — `create-next-app`
-defaulted to npm and the lockfile is `package-lock.json`).
+use `pnpm` (NOT `npm`, NOT `yarn`, NOT `bun` — the lockfile is
+`pnpm-lock.yaml` and `pnpm-workspace.yaml` configures the
+workspace).
 
 ```bash
 # Backend
@@ -349,12 +350,12 @@ uv run ruff format --check
 
 # Frontend
 cd frontend
-npm install
-npm run dev            # http://localhost:3000
-npm run typecheck      # tsc --noEmit (strict + noUncheckedIndexedAccess)
-npm run lint           # next lint
-npm run test           # vitest run --passWithNoTests
-npm run build          # production build
+pnpm install
+pnpm run dev            # http://localhost:3000
+pnpm run typecheck      # tsc --noEmit (strict + noUncheckedIndexedAccess)
+pnpm run lint           # next lint
+pnpm run test           # vitest run --passWithNoTests
+pnpm run build          # production build
 ```
 
 ## Pre-commit
@@ -363,8 +364,8 @@ Run the workspace's check commands before every commit.
 
 - **Backend** — `cd backend && bash scripts/check.sh` runs `ruff
   check`, `ruff format --check`, `mypy`, `pytest`.
-- **Frontend** — `cd frontend && npm run typecheck && npm run
-  lint && npm run test && npm run build` runs the four gates
+- **Frontend** — `cd frontend && pnpm run typecheck && pnpm run
+  lint && pnpm run test && pnpm run build` runs the four gates
   this project uses.
 
 CI runs the same commands. Do not commit if any check fails.
@@ -401,10 +402,11 @@ CI runs the same commands. Do not commit if any check fails.
 7. **No secrets in the repo.** `li_at` cookies, proxy credentials, or
    any LinkedIn / Indeed authentication material are explicitly
    forbidden by the spec.
-8. **Use `npm`, not `yarn` or `pnpm`** (frontend). All Node
-   dependency operations go through `cd frontend && npm install`
-   and `cd frontend && npm run ...`. The lockfile is
-   `package-lock.json`.
+8. **Use `pnpm`, not `npm` or `yarn`** (frontend). All Node
+   dependency operations go through `cd frontend && pnpm install`
+   and `cd frontend && pnpm run ...`. The lockfile is
+   `pnpm-lock.yaml` (committed); `pnpm-workspace.yaml` configures
+   the workspace.
 9. **Src layout only — within `frontend/`.** Production code lives
    under `frontend/src/`. Never add modules at the repo root or at
    `frontend/` directly (no loose `.ts`/`.tsx` files next to

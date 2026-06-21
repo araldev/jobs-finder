@@ -17,8 +17,6 @@ import asyncio
 import random
 import subprocess
 import sys
-import os
-from datetime import UTC, datetime
 from pathlib import Path
 
 # Add src to path so we can import jobs_finder
@@ -45,6 +43,7 @@ CREATE TABLE IF NOT EXISTS scheduler_checkpoint (
 def _get_checkpoint(db_path: str) -> int:
     """Return 0-indexed last completed query, or -1 if none."""
     import sqlite3
+
     con = sqlite3.connect(db_path)
     con.execute(_CREATE_CHECKPOINT_SQL)
     try:
@@ -59,6 +58,7 @@ def _get_checkpoint(db_path: str) -> int:
 def _set_checkpoint(db_path: str, query_index: int) -> None:
     """Save completed query index (0-based)."""
     import sqlite3
+
     con = sqlite3.connect(db_path)
     con.execute(_CREATE_CHECKPOINT_SQL)
     con.execute(_CHECKPOINT_SET_SQL, (str(query_index),))
@@ -67,6 +67,7 @@ def _set_checkpoint(db_path: str, query_index: int) -> None:
 
 
 # ── Subprocess per-query runner ───────────────────────────────────────────────
+
 
 async def run_single_query(
     query_index: int,
@@ -81,16 +82,22 @@ async def run_single_query(
         sys.executable,
         str(script),
         "--query-only",
-        "--qi", str(query_index),
-        "--total", str(total_queries),
-        "--keywords", keywords,
-        "--location", location,
-        "--db", db_path,
+        "--qi",
+        str(query_index),
+        "--total",
+        str(total_queries),
+        "--keywords",
+        keywords,
+        "--location",
+        location,
+        "--db",
+        db_path,
     ]
     try:
         result = subprocess.run(
             cmd,
             capture_output=True,
+            check=False,
             text=True,
             timeout=300,  # 5 min per query
         )
@@ -119,6 +126,7 @@ async def run_single_query(
 
 # ── Main cycle ───────────────────────────────────────────────────────────────
 
+
 async def run_cycle() -> None:
     settings = Settings()
     queries = settings.scheduler_queries
@@ -128,11 +136,13 @@ async def run_cycle() -> None:
     last_completed = _get_checkpoint(db_path)
     start_index = last_completed + 1  # resume after last completed
 
-    print(f"[*] Scheduler one-shot run")
+    print("[*] Scheduler one-shot run")
     print(f"[*] DB: {db_path}")
     print(f"[*] Queries: {len(queries)}")
-    print(f"[*] Sources: linkedin, indeed, infojobs")
-    print(f"[*] Checkpoint: last completed query = {last_completed} ({last_completed + 1}/{len(queries)})")
+    print("[*] Sources: linkedin, indeed, infojobs")
+    print(
+        f"[*] Checkpoint: last completed query = {last_completed} ({last_completed + 1}/{len(queries)})"
+    )
     if start_index > 0:
         print(f"[*] Resuming from query {start_index + 1}/{len(queries)}...")
     print()
@@ -143,12 +153,14 @@ async def run_cycle() -> None:
 
     for qi, query in enumerate(queries):
         if qi < start_index:
-            print(f"[{qi+1:2d}/{len(queries)}] {query['keywords']:30s} @ {query['location']}... SKIP (done)")
+            print(
+                f"[{qi + 1:2d}/{len(queries)}] {query['keywords']:30s} @ {query['location']}... SKIP (done)"
+            )
             continue
 
         keywords = query["keywords"]
         location = query["location"]
-        print(f"[{qi+1:2d}/{len(queries)}] {keywords:30s} @ {location}...", flush=True)
+        print(f"[{qi + 1:2d}/{len(queries)}] {keywords:30s} @ {location}...", flush=True)
 
         qi_ret, total, unique, new, errors, failed = await run_single_query(
             qi, len(queries), keywords, location, db_path
@@ -170,7 +182,7 @@ async def run_cycle() -> None:
         await asyncio.sleep(random.uniform(0.5, 1.5))
 
     print()
-    print(f"[*] Cycle complete:")
+    print("[*] Cycle complete:")
     print(f"    New jobs:       {total_new}")
     print(f"    Already seen:  {total_seen}")
     print(f"    Query errors: {total_errors}")
@@ -178,33 +190,37 @@ async def run_cycle() -> None:
 
 # ── Single-query subprocess entry point ──────────────────────────────────────
 
-async def run_query_in_subprocess(keywords: str, location: str, db_path: str) -> tuple[int, int, int, str]:
+
+async def run_query_in_subprocess(
+    keywords: str, location: str, db_path: str
+) -> tuple[int, int, int, str]:
     """Run one query and print unique,new,errors to stdout. Used by the subprocess."""
-    from jobs_finder.infrastructure.infojobs.scraper import (
-        InfoJobsPlaywrightScraper,
-        InfoJobsScraperSettings,
-    )
-    from jobs_finder.infrastructure.infojobs.throttle import InfoJobsAsyncThrottle
+    from playwright_stealth import Stealth  # type: ignore[import-untyped]
+
     from jobs_finder.infrastructure.indeed.scraper import (
         IndeedPlaywrightScraper,
         IndeedScraperSettings,
     )
     from jobs_finder.infrastructure.indeed.throttle import IndeedAsyncThrottle
+    from jobs_finder.infrastructure.infojobs.scraper import (
+        InfoJobsPlaywrightScraper,
+        InfoJobsScraperSettings,
+    )
+    from jobs_finder.infrastructure.infojobs.throttle import InfoJobsAsyncThrottle
+    from jobs_finder.infrastructure.linkedin.auth_cookie import (
+        MultiEnvLinkedInAuthCookiesAdapter,
+    )
     from jobs_finder.infrastructure.linkedin.scraper import (
         LinkedInPlaywrightScraper,
         LinkedInScraperSettings,
     )
     from jobs_finder.infrastructure.linkedin.throttle import AsyncThrottle as LinkedInAsyncThrottle
-    from jobs_finder.infrastructure.linkedin.auth_cookie import (
-        MultiEnvLinkedInAuthCookiesAdapter,
-    )
     from jobs_finder.infrastructure.location.hardcoded_resolver import (
         HardcodedLocationResolver,
     )
     from jobs_finder.infrastructure.persistence.sqlite_job_repository import (
         SqliteJobRepository,
     )
-    from playwright_stealth import Stealth  # type: ignore[import-untyped]
 
     settings = Settings()
 
@@ -273,24 +289,24 @@ async def run_query_in_subprocess(keywords: str, location: str, db_path: str) ->
             try:
                 li_jobs = await li.search(keywords, location, limit=50)
                 all_jobs.extend(li_jobs)
-            except Exception as e:
+            except Exception:
                 failed_sources.append("LinkedIn")
                 errors += 1
 
             try:
                 indeed_jobs = await ind.search(keywords, location, limit=50)
                 all_jobs.extend(indeed_jobs)
-            except Exception as e:
+            except Exception:
                 failed_sources.append("Indeed")
                 errors += 1
 
             try:
                 ij_jobs = await ij.search(keywords, location, limit=50)
                 all_jobs.extend(ij_jobs)
-            except Exception as e:
+            except Exception:
                 failed_sources.append("InfoJobs")
                 errors += 1
-    except Exception as e:
+    except Exception:
         failed_sources.extend(["LinkedIn", "Indeed", "InfoJobs"])
         errors += 3
 

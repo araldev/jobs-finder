@@ -59,16 +59,18 @@ def test_settings_intent_extraction_enabled_default_is_true() -> None:
     assert settings.intent_extraction_enabled is True
 
 
-def test_settings_intent_extraction_confidence_threshold_default_is_0_7() -> None:
-    """`intent_extraction_confidence_threshold` defaults to `0.7`.
+def test_settings_intent_extraction_confidence_threshold_default_is_0_0() -> None:
+    """`intent_extraction_confidence_threshold` defaults to `0.0`.
 
     Below this confidence, the use case falls back to v1
-    (REQ-CHAT-INT-004). 0.7 is a reasonable middle ground:
-    high enough to be trustworthy, low enough to avoid
-    over-rejecting.
+    (REQ-CHAT-INT-004). 0.0 (deliberate per Q6 of the
+    `refactor-pre-existing-baseline-debt` change) means
+    "always use the 2-stage path with extracted keywords +
+    location"; the v1 fallback is only triggered when
+    operators explicitly raise the threshold above 0.0.
     """
     settings = Settings()
-    assert settings.intent_extraction_confidence_threshold == 0.7
+    assert settings.intent_extraction_confidence_threshold == 0.0
 
 
 def test_settings_intent_max_results_default_is_100() -> None:

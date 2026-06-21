@@ -203,6 +203,7 @@ def _build_chat_app(
     from tests.unit._helpers.fake_job_repository import (  # noqa: PLC0415
         FakeJobRepository,
     )
+
     repo = FakeJobRepository(jobs=jobs or [])
     llm = _FakeLLMClient(
         stream_chunks=stream_chunks,
@@ -457,7 +458,7 @@ async def test_chat_stream_error_event_on_llm_timeout() -> None:
 
 
 async def test_chat_stream_error_event_on_llm_parse_error() -> None:
-    """Parser raises `LLMResponseParseError` → graceful fallback: all aggregator jobs returned, no error event."""
+    """LLMResponseParseError → graceful fallback: all jobs returned, no error event."""
     app = _build_chat_app(
         jobs=[_make_job("a"), _make_job("b")],
         stream_chunks=["not-valid-json"],
@@ -476,7 +477,9 @@ async def test_chat_stream_error_event_on_llm_parse_error() -> None:
     assert len(done_events) == 1
     _, data = done_events[0]
     assert data["used_fallback"] is True
-    assert len(data["jobs"]) == 2  # both aggregator jobs returned
+    jobs_field = data["jobs"]
+    assert isinstance(jobs_field, list)
+    assert len(jobs_field) == 2  # both aggregator jobs returned
 
 
 # ---------------------------------------------------------------------------

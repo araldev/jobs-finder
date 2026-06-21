@@ -268,8 +268,10 @@ def test_app_factory_wires_intent_extractor_when_2stage_enabled() -> None:
     assert use_case._intent_extraction_enabled is True  # noqa: SLF001
     # The default threshold / max_results match the spec.
     # Note: intent_max_results was changed back to 100 to give the LLM
-    # more jobs to score for better relevance matching.
-    assert use_case._intent_extraction_confidence_threshold == 0.7  # noqa: SLF001
+    # more jobs to score for better relevance matching. The threshold
+    # was deliberately lowered from 0.7 to 0.0 per Q6 of the
+    # refactor-pre-existing-baseline-debt change — see config.py:1316.
+    assert use_case._intent_extraction_confidence_threshold == 0.0  # noqa: SLF001
     assert use_case._intent_max_results == 100  # noqa: SLF001
 
 

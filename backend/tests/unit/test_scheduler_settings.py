@@ -61,16 +61,54 @@ def test_scheduler_max_interval_default() -> None:
 
 
 def test_scheduler_queries_default() -> None:
-    """`scheduler_queries` defaults to 3 Spain location-only queries (empty keywords).
+    """`scheduler_queries` code default is a 30-entry IT-keyword × city matrix.
 
-    Phase 3 of `scheduler-source-fix`: scheduler queries with no keyword filtering,
-    only location. The 3 locations are España, Madrid, and Barcelona.
+    Per the deliberate config change tracked in Q6 of the
+    `refactor-pre-existing-baseline-debt` change — the
+    scheduler now scrapes 10 IT keywords × 3 cities
+    (Madrid, Barcelona, Málaga) for a richer dataset than
+    the previous 3 location-only entries. See
+    `config.py:1430-1467` for the canonical list.
+
+    `_env_file=None` forces pydantic-settings to ignore the
+    operator's local `.env` (which may override
+    `SCHEDULER_QUERIES`).
     """
-    s = Settings()
+    s = Settings(_env_file=None)  # type: ignore[call-arg]
     assert s.scheduler_queries == [
-        {"keywords": "", "location": "España"},
-        {"keywords": "", "location": "Madrid, España"},
-        {"keywords": "", "location": "Barcelona, España"},
+        # Madrid - IT keywords
+        {"keywords": "React", "location": "Madrid"},
+        {"keywords": "TypeScript", "location": "Madrid"},
+        {"keywords": "Python", "location": "Madrid"},
+        {"keywords": "Node.js", "location": "Madrid"},
+        {"keywords": "DevOps", "location": "Madrid"},
+        {"keywords": "AWS", "location": "Madrid"},
+        {"keywords": "Docker", "location": "Madrid"},
+        {"keywords": "Full Stack", "location": "Madrid"},
+        {"keywords": "Backend", "location": "Madrid"},
+        {"keywords": "Frontend", "location": "Madrid"},
+        # Barcelona - IT keywords
+        {"keywords": "React", "location": "Barcelona"},
+        {"keywords": "TypeScript", "location": "Barcelona"},
+        {"keywords": "Python", "location": "Barcelona"},
+        {"keywords": "Node.js", "location": "Barcelona"},
+        {"keywords": "DevOps", "location": "Barcelona"},
+        {"keywords": "AWS", "location": "Barcelona"},
+        {"keywords": "Docker", "location": "Barcelona"},
+        {"keywords": "Full Stack", "location": "Barcelona"},
+        {"keywords": "Backend", "location": "Barcelona"},
+        {"keywords": "Frontend", "location": "Barcelona"},
+        # Málaga - IT keywords
+        {"keywords": "React", "location": "Málaga"},
+        {"keywords": "TypeScript", "location": "Málaga"},
+        {"keywords": "Python", "location": "Málaga"},
+        {"keywords": "Node.js", "location": "Málaga"},
+        {"keywords": "DevOps", "location": "Málaga"},
+        {"keywords": "AWS", "location": "Málaga"},
+        {"keywords": "Docker", "location": "Málaga"},
+        {"keywords": "Full Stack", "location": "Málaga"},
+        {"keywords": "Backend", "location": "Málaga"},
+        {"keywords": "Frontend", "location": "Málaga"},
     ]
 
 

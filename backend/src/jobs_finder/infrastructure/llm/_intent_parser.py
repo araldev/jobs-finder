@@ -107,7 +107,7 @@ def parse_intent_response(raw: str) -> Intent:
             # Unclosed opening tag — strip everything from start onward.
             text = text[:start]
             break
-        text = text[:start] + text[end_idx + len(_THINKING_END):]
+        text = text[:start] + text[end_idx + len(_THINKING_END) :]
 
     stripped = text.strip()
 

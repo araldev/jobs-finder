@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 @dataclass
 class ExperienceEntry:
     """A single work experience entry."""
+
     company: str
     title: str
     start_date: str
@@ -28,6 +29,7 @@ class ExperienceEntry:
 @dataclass
 class EducationEntry:
     """A single education entry."""
+
     degree: str
     institution: str
     year: str
@@ -37,6 +39,7 @@ class EducationEntry:
 @dataclass
 class AdaptedCV:
     """Structured adapted CV ready for rendering."""
+
     name: str
     email: str
     phone: str
@@ -270,7 +273,9 @@ class AdaptedCV:
             return ""
         items = ""
         for exp in self.experience:
-            location_html = f' — <span class="exp-location">{exp.location}</span>' if exp.location else ""
+            location_html = (
+                f' — <span class="exp-location">{exp.location}</span>' if exp.location else ""
+            )
             items += f"""
 <div class="experience-item">
   <div class="exp-header">
@@ -280,14 +285,18 @@ class AdaptedCV:
   <div class="exp-title">{exp.title}{location_html}</div>
   <div class="exp-description">{exp.description}</div>
 </div>"""
-        return f'<div class="section"><div class="section-title">Experiencia Profesional</div>{items}</div>'
+        return (
+            f'<div class="section">'
+            f'<div class="section-title">Experiencia Profesional</div>'
+            f"{items}</div>"
+        )
 
     def _render_education(self) -> str:
         if not self.education:
             return ""
         items = ""
         for edu in self.education:
-            grade_html = f' — {edu.grade}' if edu.grade else ""
+            grade_html = f" — {edu.grade}" if edu.grade else ""
             items += f"""
 <div class="edu-item">
   <div class="edu-header">
@@ -303,11 +312,17 @@ class AdaptedCV:
             return ""
         skills_html = ""
         if self.skills:
-            tags = " &nbsp;·&nbsp; ".join(f"<span class='skill-tag'><strong>{s}</strong></span>" for s in self.skills)
+            tags = " &nbsp;·&nbsp; ".join(
+                f"<span class='skill-tag'><strong>{s}</strong></span>" for s in self.skills
+            )
             skills_html += f"<div class='skills-grid'>{tags}</div>"
         languages_html = ""
         if self.languages:
-            languages_html = f"<div class='languages-list'><strong>Idiomas:</strong> {', '.join(self.languages)}</div>"
+            languages_html = (
+                f"<div class='languages-list'>"
+                f"<strong>Idiomas:</strong> {', '.join(self.languages)}"
+                f"</div>"
+            )
         return f"""
 <div class="section">
   <div class="section-title">Habilidades</div>

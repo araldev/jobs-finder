@@ -8,7 +8,6 @@ preserves PDF reading order better than pdfplumber for complex layouts
 from __future__ import annotations
 
 import base64
-import io
 import re
 from dataclasses import dataclass
 
@@ -36,16 +35,16 @@ def extract_cv_text(pdf_bytes: bytes) -> CVData:
     Returns:
         CVData with full text and any detected contact info.
     """
-    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")  # type: ignore[no-untyped-call]
     full_text_parts: list[str] = []
 
     for page_num in range(len(doc)):
         page = doc[page_num]
-        text = page.get_text()
+        text = page.get_text()  # type: ignore[no-untyped-call]
         if text:
             full_text_parts.append(text)
 
-    doc.close()
+    doc.close()  # type: ignore[no-untyped-call]
     full_text = "\n\n".join(full_text_parts)
 
     name = _extract_name(full_text)
@@ -69,21 +68,19 @@ def extract_cv_image(pdf_bytes: bytes) -> str | None:
     pdfplumber.  Returns the image as a base64-encoded PNG data URL,
     or None if no image is found.
     """
-    import pymupdf
-
     try:
-        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")  # type: ignore[no-untyped-call]
     except Exception:
         return None
 
     for page_num in range(len(doc)):
         page = doc[page_num]
         # Get all images on this page
-        image_list = page.get_images(full=True)
-        for img_index, img in enumerate(image_list):
+        image_list = page.get_images(full=True)  # type: ignore[no-untyped-call]
+        for _img_index, img in enumerate(image_list):
             try:
                 xref = img[0]
-                base_image = doc.extract_image(xref)
+                base_image = doc.extract_image(xref)  # type: ignore[no-untyped-call]
                 image_bytes = base_image["image"]
                 image_ext = base_image["ext"]
                 # Filter out tiny images (likely icons/logos, not a photo)
@@ -144,9 +141,20 @@ def _extract_location(text: str) -> str | None:
 
     # Common Spanish cities
     cities = [
-        "Madrid", "Barcelona", "Valencia", "Sevilla", "Bilbao",
-        "Málaga", "Murcia", "Cádiz", "Zaragoza", "Palma",
-        "Las Palmas", "Santa Cruz", "Valladolid", "Granada",
+        "Madrid",
+        "Barcelona",
+        "Valencia",
+        "Sevilla",
+        "Bilbao",
+        "Málaga",
+        "Murcia",
+        "Cádiz",
+        "Zaragoza",
+        "Palma",
+        "Las Palmas",
+        "Santa Cruz",
+        "Valladolid",
+        "Granada",
     ]
     for city in cities:
         if city in text:

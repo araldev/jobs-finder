@@ -332,9 +332,7 @@ class Settings(BaseSettings):
     # not explicitly overridden via LINKEDIN_CORS_ALLOW_ORIGINS.
     cors_allow_origins: list[str] = Field(
         default_factory=lambda: ["*"],
-        validation_alias=AliasChoices(
-            "LINKEDIN_CORS_ALLOW_ORIGINS", "cors_allow_origins"
-        ),
+        validation_alias=AliasChoices("LINKEDIN_CORS_ALLOW_ORIGINS", "cors_allow_origins"),
     )
 
     # Auto-detect deployment environment. Set ENVIRONMENT=production for prod.
@@ -1516,7 +1514,7 @@ class Settings(BaseSettings):
         raise ValueError(f"unparseable SCHEDULER_QUERIES: {v!r}")
 
     @model_validator(mode="after")
-    def _auto_cors_for_development(self) -> "Settings":
+    def _auto_cors_for_development(self) -> Settings:
         """Auto-configure CORS origins based on deployment environment.
 
         - development (ENVIRONMENT=development or unset): set CORS to

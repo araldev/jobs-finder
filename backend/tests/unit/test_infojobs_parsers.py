@@ -34,6 +34,7 @@ from bs4 import BeautifulSoup, Tag
 
 from jobs_finder.infrastructure.infojobs.exceptions import InfoJobsParseError
 from jobs_finder.infrastructure.infojobs.parsers import (
+    _MONTH_MAP,
     is_infojobs_blocked,
     parse_infojobs_company,
     parse_infojobs_description,
@@ -871,3 +872,109 @@ def test_parse_infojobs_description_handles_malformed_html() -> None:
     # If the parse loses the text entirely, `None` is also
     # acceptable — the contract is "no exception + sane return".
     assert result is None or "Recovered text" in result
+
+
+# ---------------------------------------------------------------------------
+# Regression: `_MONTH_MAP` dict has no duplicate keys (REQ-MAINT-009..011).
+# Bug surfaced by `ruff check` as F601 (multi-value-repeated-key-literal) at
+# `parsers.py:342` — a redundant `"jul": 7` entry duplicated line 335's
+# `"jul": 7`. Python silently collapses duplicates (the second value wins,
+# which here equals the first), so runtime behavior was unchanged; the
+# regression test asserts the structural invariant so a future re-introduction
+# of the duplicate fails the test before it ever reaches production.
+# ---------------------------------------------------------------------------
+
+
+def test_month_map_has_no_duplicate_keys() -> None:
+    """`_MONTH_MAP` MUST have the canonical 28-entry set of month keys.
+
+    The dict literal at `parsers.py:328-343` originally had a
+    duplicate `"jul"` key (line 342), which ruff flagged as F601.
+    After the fix the literal has exactly one entry per key,
+    yielding the canonical 28-entry dict: 12 months × 2 forms
+    (with and without trailing dot) + 2 extras (`sept`,
+    `sept.`). The runtime invariant — `len(_MONTH_MAP) == 28`
+    AND `set(_MONTH_MAP) == expected_keys` — is preserved
+    before AND after the fix because Python collapses the
+    duplicate at construction time. The literal-level check
+    is delegated to the ruff F601 test below.
+    """
+    expected_keys = {
+        "ene",
+        "ene.",
+        "feb",
+        "feb.",
+        "mar",
+        "mar.",
+        "abr",
+        "abr.",
+        "may",
+        "may.",
+        "jun",
+        "jun.",
+        "jul",
+        "jul.",
+        "ago",
+        "ago.",
+        "sep",
+        "sep.",
+        "sept",
+        "sept.",
+        "oct",
+        "oct.",
+        "nov",
+        "nov.",
+        "dic",
+        "dic.",
+        "jan",
+        "jan.",
+    }
+    assert len(_MONTH_MAP) == 28
+    assert set(_MONTH_MAP) == expected_keys
+    assert _MONTH_MAP["jul"] == 7
+    assert _MONTH_MAP["jul."] == 7
+
+
+def test_parse_relative_date_with_04_jul_resolves_to_july() -> None:
+    """`_parse_relative_date("04 jul")` returns a datetime in July.
+
+    This is the downstream-behavior test: even though the
+    duplicate `"jul": 7` had no runtime impact (both values
+    were 7), we pin the behavior so a future regression
+    (e.g., accidentally mapping "jul" to 8) is caught.
+    """
+    from jobs_finder.infrastructure.infojobs.parsers import _parse_relative_date
+
+    result = _parse_relative_date("04 jul")
+    assert result.month == 7
+
+
+def test_ruff_check_emits_zero_F601_on_parsers_module() -> None:
+    """`ruff check` reports zero F601 diagnostics on `parsers.py`.
+
+    The bug was a literal-level duplicate; ruff F601 is the
+    only linter that catches it. This test re-runs ruff on
+    the parsers module and asserts the count is 0. If a
+    future change re-introduces a duplicate key, this fails.
+    """
+    import subprocess  # local import: ruff is only needed for this test
+    from pathlib import Path
+
+    parsers_py = (
+        Path(__file__).resolve().parent.parent.parent
+        / "src"
+        / "jobs_finder"
+        / "infrastructure"
+        / "infojobs"
+        / "parsers.py"
+    )
+    result = subprocess.run(
+        ["uv", "run", "ruff", "check", "--select", "F601", str(parsers_py)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(parsers_py.parent.parent.parent.parent),
+    )
+    assert "F601" not in result.stdout, (
+        f"F601 detected in {parsers_py.name}:\n{result.stdout}\n{result.stderr}"
+    )

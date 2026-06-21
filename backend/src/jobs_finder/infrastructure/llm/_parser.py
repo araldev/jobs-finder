@@ -236,6 +236,7 @@ class StreamEventParser:
 
     buffer: str = ""
     _thinking_done: bool = False
+
     def feed(self, chunk: str) -> Iterator[str]:
         """Append ``chunk`` to ``self.buffer`` and yield it.
 

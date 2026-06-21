@@ -40,6 +40,7 @@ def _unaccent(s: str | None) -> str:
     stripped = "".join(ch for ch in nfd if unicodedata.category(ch) != "Mn")
     return stripped.casefold()
 
+
 # ── Schema ──────────────────────────────────────────────────────────────────
 
 _CREATE_TABLE_SQL = """
@@ -98,9 +99,7 @@ class SqliteJobRepository:
         # Register the custom `unaccent` SQL function so the location
         # filter is accent- AND case-insensitive ("malaga" matches
         # "Málaga, Andalusia, Spain"). Idempotent across reconnects.
-        await self._connection.create_function(
-            "unaccent", 1, _unaccent, deterministic=True
-        )
+        await self._connection.create_function("unaccent", 1, _unaccent, deterministic=True)
         await self._connection.execute("PRAGMA journal_mode=WAL")
         await self._connection.execute(_CREATE_TABLE_SQL)
         for idx_sql in _CREATE_INDEXES_SQL:
@@ -215,7 +214,7 @@ class SqliteJobRepository:
         limit: int = 50,
         offset: int = 0,
     ) -> list[Job]:
-        """SELECT with optional filters on source, keyword, location, description, and date range."""
+        """SELECT with optional filters on source, keyword, location, description, and date range."""  # noqa: E501
         assert self._connection is not None, "repository not opened; use 'async with repo:'"
 
         clauses, params = _build_history_clauses(
@@ -227,13 +226,41 @@ class SqliteJobRepository:
 
         # Prioritize Spain locations (all Spanish cities and regions)
         spain_terms = [
-            "Spain", "España", "Madrid", "Barcelona", "Málaga", "Malaga",
-            "Valencia", "Sevilla", "Zaragoza", "Murcia", "Bilbao",
-            "Galicia", "Cataluña", "Andalucía", "Castilla", "Asturias",
-            "Cantabria", "Rioja", "Navarra", "Extremadura", "Baleares",
-            "Canarias", "Santiago", "Vigo", "Gijón", "Granada", "Córdoba",
-            "Valladolid", "País Vasco", "Aragón", "La Rioja", "Navarra",
-            "Asturias", "Melilla", "Ceuta",
+            "Spain",
+            "España",
+            "Madrid",
+            "Barcelona",
+            "Málaga",
+            "Malaga",
+            "Valencia",
+            "Sevilla",
+            "Zaragoza",
+            "Murcia",
+            "Bilbao",
+            "Galicia",
+            "Cataluña",
+            "Andalucía",
+            "Castilla",
+            "Asturias",
+            "Cantabria",
+            "Rioja",
+            "Navarra",
+            "Extremadura",
+            "Baleares",
+            "Canarias",
+            "Santiago",
+            "Vigo",
+            "Gijón",
+            "Granada",
+            "Córdoba",
+            "Valladolid",
+            "País Vasco",
+            "Aragón",
+            "La Rioja",
+            "Navarra",
+            "Asturias",
+            "Melilla",
+            "Ceuta",
         ]
         spain_clauses = " OR ".join(f"location LIKE '%{t}%'" for t in spain_terms)
         sql = (
@@ -327,9 +354,7 @@ def _build_history_clauses(
     if keywords is not None:
         # Case+accent-insensitive match on title and company: the
         # user types "pyton" and still gets "Python" matches.
-        clauses.append(
-            "(unaccent(title) LIKE unaccent(?) OR unaccent(company) LIKE unaccent(?))"
-        )
+        clauses.append("(unaccent(title) LIKE unaccent(?) OR unaccent(company) LIKE unaccent(?))")
         like_pattern = f"%{keywords}%"
         params.append(like_pattern)
         params.append(like_pattern)

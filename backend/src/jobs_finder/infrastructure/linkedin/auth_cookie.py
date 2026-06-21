@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 from pydantic import SecretStr
 
@@ -216,41 +217,57 @@ class JsonLinkedInAuthCookiesAdapter:
     Conforms to ``LinkedInAuthCookiesPort`` structurally.
     """
 
-    _COOKIE_NAMES = ("li_at", "JSESSIONID", "bcookie", "bscookie", "li_gc", "li_rm", "li_mc", "lidc", "lang", "timezone", "sdui_ver")
+    _COOKIE_NAMES = (
+        "li_at",
+        "JSESSIONID",
+        "bcookie",
+        "bscookie",
+        "li_gc",
+        "li_rm",
+        "li_mc",
+        "lidc",
+        "lang",
+        "timezone",
+        "sdui_ver",
+    )
 
     def __init__(self, path: str | os.PathLike[str] | None = None) -> None:
         self._pairs: list[tuple[str, SecretStr]] | None = None
-        self._raw_dicts: list[dict] | None = None
+        self._raw_dicts: list[dict[str, Any]] | None = None
         if path is None:
             # Default: repo root (6 levels up from linkedin/)
-            path = str(Path(__file__).resolve().parent.parent.parent.parent.parent.parent / "linkedin_cookies.json")
+            path = str(
+                Path(__file__).resolve().parent.parent.parent.parent.parent.parent
+                / "linkedin_cookies.json"
+            )
         try:
             with open(path) as f:
                 cookies = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             return  # self._pairs stays None → no-op
 
-        cookie_map = {c["name"]: c["value"] for c in cookies}
         pairs: list[tuple[str, SecretStr]] = []
-        raw_dicts: list[dict] = []
+        raw_dicts: list[dict[str, Any]] = []
         for c in cookies:
             if c["name"] in self._COOKIE_NAMES and c.get("value"):
                 pairs.append((c["name"], SecretStr(c["value"].strip('"'))))
-                raw_dicts.append({
-                    "name": c["name"],
-                    "value": c["value"].strip('"'),
-                    "domain": c.get("domain", ".linkedin.com"),
-                    "path": c.get("path", "/"),
-                    "httpOnly": c.get("httpOnly", True),
-                    "secure": c.get("secure", True),
-                })
+                raw_dicts.append(
+                    {
+                        "name": c["name"],
+                        "value": c["value"].strip('"'),
+                        "domain": c.get("domain", ".linkedin.com"),
+                        "path": c.get("path", "/"),
+                        "httpOnly": c.get("httpOnly", True),
+                        "secure": c.get("secure", True),
+                    }
+                )
         self._pairs = pairs if pairs else None
         self._raw_dicts = raw_dicts if raw_dicts else None
 
     def cookies(self) -> list[tuple[str, SecretStr]] | None:
         return self._pairs
 
-    def cookie_dicts(self) -> list[dict] | None:
+    def cookie_dicts(self) -> list[dict[str, Any]] | None:
         """Return full cookie dicts with original attributes (domain, path, httpOnly, secure).
 
         Used by the scraper to inject cookies via ``ctx.add_cookies()``

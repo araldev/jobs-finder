@@ -257,7 +257,9 @@ async def test_search_navigates_to_infojobs_ofertas_trabajo() -> None:
         # `limit=10` keeps the test on a single page so the assertion
         # isolates the URL contract from the pagination contract.
         await scraper.search(keywords="python", location="madrid", limit=5)
-    assert page.goto_calls == ["https://www.infojobs.net/ofertas-trabajo?keyword=python&l=madrid&page=1"]
+    assert page.goto_calls == [
+        "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=madrid&page=1"
+    ]
 
 
 async def test_search_uses_one_indexed_page_param_on_first_page() -> None:
@@ -509,7 +511,9 @@ async def test_search_does_not_paginate_when_first_page_satisfies_limit() -> Non
     scraper, _ = await _make_scraper_with(page)
     async with scraper:
         await scraper.search("python", "madrid", limit=3)
-    assert page.goto_calls == ["https://www.infojobs.net/ofertas-trabajo?keyword=python&l=madrid&page=1"]
+    assert page.goto_calls == [
+        "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=madrid&page=1"
+    ]
 
 
 async def test_search_returns_first_page_results_when_subsequent_page_times_out() -> None:
@@ -857,7 +861,10 @@ def test_infojobs_build_url_country_only_when_province_is_none() -> None:
         1,
         infojobs_geo=(None, 17),
     )
-    assert url == "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=remote&page=1&countryIds=17"
+    assert (
+        url
+        == "https://www.infojobs.net/ofertas-trabajo?keyword=python&l=remote&page=1&countryIds=17"
+    )
     assert "provinceIds" not in url
 
 

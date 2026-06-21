@@ -149,16 +149,13 @@ def test_default_toml_is_flat() -> None:
     """
     config_path = Path(config_module.CONFIG_DIR) / "default.toml"
     assert config_path.exists(), (
-        f"backend/config/default.toml not found at {config_path}; "
-        "the TOML defaults layer is broken"
+        f"backend/config/default.toml not found at {config_path}; the TOML defaults layer is broken"
     )
 
     with config_path.open("rb") as fh:
         data = tomllib.load(fh)
 
-    assert isinstance(data, dict), (
-        f"default.toml must be a flat table, got {type(data).__name__}"
-    )
+    assert isinstance(data, dict), f"default.toml must be a flat table, got {type(data).__name__}"
     assert data, "default.toml is empty"
     # Every key MUST be uppercase (env-var shape, case-sensitive match).
     for key in data:
@@ -190,6 +187,6 @@ def test_settings_constructor_bypasses_toml_layer(monkeypatch: pytest.MonkeyPatc
     monkeypatch.delenv("INDEED_DOMAIN", raising=False)
 
     # No env override, no TOML injection → field default applies.
-    settings = Settings(_env_file=None)  # type: ignore[call-arg] 
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
 
     assert settings.indeed_domain == "es.indeed.com"

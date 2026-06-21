@@ -104,9 +104,7 @@ class GenerateAdaptedCVUseCase:
         try:
             cv_data = extract_cv_text(pdf_bytes)
         except Exception as exc:
-            raise CVAdaptationError(
-                f"Failed to extract text from CV PDF: {exc}"
-            ) from exc
+            raise CVAdaptationError(f"Failed to extract text from CV PDF: {exc}") from exc
 
         try:
             photo = extract_cv_image(pdf_bytes)

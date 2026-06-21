@@ -5,6 +5,7 @@ Spec: REQ-DB-002, REQ-DB-003, REQ-DB-004.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,7 +20,7 @@ from jobs_finder.infrastructure.persistence.sqlite_job_repository import (
 
 
 @pytest.fixture
-async def repo() -> SqliteJobRepository:
+async def repo() -> AsyncGenerator[SqliteJobRepository, None]:
     """A `SqliteJobRepository` backed by `:memory:` for isolated tests."""
     r = SqliteJobRepository(db_path=":memory:")
     await r.__aenter__()
@@ -45,6 +46,7 @@ _SAMPLE_QUERY = {"keywords": "python", "location": "Madrid"}
 @pytest.mark.asyncio
 async def test_schema_creation(repo: SqliteJobRepository) -> None:
     """After connect, the `jobs` table exists with all columns."""
+    assert repo._connection is not None
     async with repo._connection.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'"
     ) as cursor:
@@ -59,6 +61,7 @@ async def test_wal_mode_enabled(tmp_path: Any) -> None:
     db_file = str(tmp_path / "test_wal.db")
     r = SqliteJobRepository(db_path=db_file)
     async with r:
+        assert r._connection is not None
         cursor = await r._connection.execute("PRAGMA journal_mode")
         row = await cursor.fetchone()
     assert row is not None
@@ -70,6 +73,7 @@ async def test_wal_mode_enabled(tmp_path: Any) -> None:
 async def test_source_check_constraint(repo: SqliteJobRepository) -> None:
     """The `CHECK(source IN (...))` constraint must reject invalid sources."""
     with pytest.raises(aiosqlite.IntegrityError):
+        assert repo._connection is not None
         await repo._connection.execute(
             "INSERT INTO jobs (source, source_id, title, company, location, url, "
             "posted_at, query_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -80,6 +84,7 @@ async def test_source_check_constraint(repo: SqliteJobRepository) -> None:
 @pytest.mark.asyncio
 async def test_indexes_exist(repo: SqliteJobRepository) -> None:
     """The 3 indexes must be created."""
+    assert repo._connection is not None
     async with repo._connection.execute(
         "SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL"
     ) as cursor:
@@ -98,6 +103,7 @@ async def test_upsert_inserts_new_row(repo: SqliteJobRepository) -> None:
     count = await repo.upsert_jobs([_SAMPLE_JOB], query_snapshot=_SAMPLE_QUERY)
     assert count == 1
 
+    assert repo._connection is not None
     async with repo._connection.execute(
         "SELECT title, company FROM jobs WHERE source='linkedin' AND source_id='123'"
     ) as cursor:
@@ -125,6 +131,7 @@ async def test_upsert_updates_existing_row(repo: SqliteJobRepository) -> None:
     # SQLite reports 2 affected rows for an UPDATE on conflict
     assert count >= 1
 
+    assert repo._connection is not None
     async with repo._connection.execute(
         "SELECT title FROM jobs WHERE source='linkedin' AND source_id='123'"
     ) as cursor:
@@ -138,6 +145,7 @@ async def test_upsert_preserves_first_seen_at(repo: SqliteJobRepository) -> None
     """On update, `first_seen_at` stays unchanged while `last_seen_at` updates."""
     await repo.upsert_jobs([_SAMPLE_JOB], query_snapshot=_SAMPLE_QUERY)
 
+    assert repo._connection is not None
     async with repo._connection.execute(
         "SELECT first_seen_at, last_seen_at FROM jobs WHERE source='linkedin' AND source_id='123'"
     ) as cursor:
@@ -149,6 +157,7 @@ async def test_upsert_preserves_first_seen_at(repo: SqliteJobRepository) -> None
     # Upsert again with same job
     await repo.upsert_jobs([_SAMPLE_JOB], query_snapshot=_SAMPLE_QUERY)
 
+    assert repo._connection is not None
     async with repo._connection.execute(
         "SELECT first_seen_at, last_seen_at FROM jobs WHERE source='linkedin' AND source_id='123'"
     ) as cursor:
@@ -184,6 +193,7 @@ async def test_upsert_multiple_jobs(repo: SqliteJobRepository) -> None:
     count = await repo.upsert_jobs(jobs, query_snapshot=_SAMPLE_QUERY)
     assert count == 2
 
+    assert repo._connection is not None
     async with repo._connection.execute(
         "SELECT count(*) FROM jobs WHERE source='indeed'"
     ) as cursor:
@@ -199,6 +209,7 @@ async def test_upsert_multiple_jobs(repo: SqliteJobRepository) -> None:
 async def test_delete_older_than_deletes_old_jobs(repo: SqliteJobRepository) -> None:
     """Jobs with `last_seen_at` older than `days` are deleted."""
     # Insert an old job and a recent one
+    assert repo._connection is not None
     await repo._connection.execute(
         "INSERT INTO jobs (source, source_id, title, company, location, url, "
         "posted_at, query_snapshot, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -214,6 +225,7 @@ async def test_delete_older_than_deletes_old_jobs(repo: SqliteJobRepository) -> 
             "2024-01-01T00:00:00Z",
         ),
     )
+    assert repo._connection is not None
     await repo._connection.execute(
         "INSERT INTO jobs (source, source_id, title, company, location, url, "
         "posted_at, query_snapshot, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -229,12 +241,14 @@ async def test_delete_older_than_deletes_old_jobs(repo: SqliteJobRepository) -> 
             datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         ),
     )
+    assert repo._connection is not None
     await repo._connection.commit()
 
     deleted = await repo.delete_older_than(days=30)
     assert deleted == 1
 
     # Only the new job should remain
+    assert repo._connection is not None
     async with repo._connection.execute("SELECT source_id FROM jobs") as cursor:
         remaining = await cursor.fetchall()
     assert [r[0] for r in remaining] == ["new1"]
@@ -244,6 +258,7 @@ async def test_delete_older_than_deletes_old_jobs(repo: SqliteJobRepository) -> 
 async def test_delete_older_than_respects_limit(repo: SqliteJobRepository) -> None:
     """When more old rows exist than `limit`, only `limit` are deleted."""
     for i in range(5):
+        assert repo._connection is not None
         await repo._connection.execute(
             "INSERT INTO jobs (source, source_id, title, company, location, url, "
             "posted_at, query_snapshot, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -259,12 +274,14 @@ async def test_delete_older_than_respects_limit(repo: SqliteJobRepository) -> No
                 "2024-01-01T00:00:00Z",
             ),
         )
+    assert repo._connection is not None
     await repo._connection.commit()
 
     deleted = await repo.delete_older_than(days=30, limit=2)
     assert deleted == 2
 
     # Count remaining old rows
+    assert repo._connection is not None
     async with repo._connection.execute(
         "SELECT count(*) FROM jobs WHERE last_seen_at < '2024-06-01T00:00:00Z'"
     ) as cursor:
@@ -276,6 +293,7 @@ async def test_delete_older_than_respects_limit(repo: SqliteJobRepository) -> No
 @pytest.mark.asyncio
 async def test_delete_older_than_no_matching_rows(repo: SqliteJobRepository) -> None:
     """When no rows are old enough, returns 0."""
+    assert repo._connection is not None
     await repo._connection.execute(
         "INSERT INTO jobs (source, source_id, title, company, location, url, "
         "posted_at, query_snapshot, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -291,11 +309,13 @@ async def test_delete_older_than_no_matching_rows(repo: SqliteJobRepository) -> 
             datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         ),
     )
+    assert repo._connection is not None
     await repo._connection.commit()
 
     deleted = await repo.delete_older_than(days=1)  # 1 day ago — fresh row is newer
     assert deleted == 0
 
+    assert repo._connection is not None
     async with repo._connection.execute("SELECT count(*) FROM jobs") as cursor:
         row = await cursor.fetchone()
     assert row is not None
@@ -306,6 +326,7 @@ async def test_delete_older_than_no_matching_rows(repo: SqliteJobRepository) -> 
 async def test_delete_older_than_double_delete(repo: SqliteJobRepository) -> None:
     """First delete removes old rows, second delete removes 0."""
     for i in range(3):
+        assert repo._connection is not None
         await repo._connection.execute(
             "INSERT INTO jobs (source, source_id, title, company, location, url, "
             "posted_at, query_snapshot, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -321,6 +342,7 @@ async def test_delete_older_than_double_delete(repo: SqliteJobRepository) -> Non
                 "2024-01-01T00:00:00Z",
             ),
         )
+    assert repo._connection is not None
     await repo._connection.commit()
 
     deleted1 = await repo.delete_older_than(days=30)
@@ -657,7 +679,7 @@ async def test_count_jobs_with_filters(repo: SqliteJobRepository) -> None:
 
 def test_sqlite_job_repository_conforms_to_protocol() -> None:
     """`SqliteJobRepository` must structurally satisfy `JobRepositoryPort`."""
-    repo: JobRepositoryPort = SqliteJobRepository(db_path=":memory:")  # type: ignore[assignment]
+    repo: JobRepositoryPort = SqliteJobRepository(db_path=":memory:")
     assert repo is not None
 
 

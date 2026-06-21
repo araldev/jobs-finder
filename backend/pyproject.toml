@@ -110,9 +110,17 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["PLR2004", "S101"]  # magic numbers, asserts are fine in tests
+"tests/**" = ["PLR2004", "S101", "PLC0415"]  # magic numbers, asserts are fine in tests; hoisting test-local imports is noise
 "tests/fixtures/**" = ["E501"]  # raw captured HTML has long lines
-"tests/unit/test_infojobs_parsers.py" = ["E501"]  # raw HTML fixtures with long InfoJobs class names
+"tests/unit/test_infojobs_parsers.py" = ["E501", "N802"]  # raw HTML fixtures with long InfoJobs class names; subprocess-based F601-regression test uses uppercase verbs deliberately
+"scripts/**" = ["PLR2004", "PLR0915", "PLC0415", "E501"]  # operational scripts: magic numbers (thresholds, counts) + long lines are acceptable; inline imports in scripts are scoped to the function that needs them
+"tests/conftest.py" = ["E402"]  # imports come AFTER `sys.path` mutation; hoisting breaks the test discovery contract
+"src/jobs_finder/application/ports.py" = ["E501"]  # Protocol docstrings have long lines
+"src/jobs_finder/infrastructure/infojobs/parsers.py" = ["PLR0911"]  # _parse_relative_date has 7 return branches; the explicit pattern-match is clearer than a flattened chain
+"src/jobs_finder/infrastructure/linkedin/scraper.py" = ["PLR0912"]  # launch() has 14 branches (browser_factory vs playwright path + stealth vs no-stealth); refactoring obscures the contract
+"src/jobs_finder/infrastructure/scheduler.py" = ["PLR0912"]  # scheduler lifecycle has 13 branches by design (start/stop/wait/cancel); refactoring would scatter the FSM
+"src/jobs_finder/infrastructure/cv/_parser.py" = ["PLR2004"]  # magic numbers (10_000 byte floor, 60 char name cap) are pixel-thresholds documented inline
+"src/jobs_finder/presentation/routes/cv.py" = ["B008"]  # File(...) default is the FastAPI Form(...) idiom; the file is only opened on actual upload
 # The LLM client's complete() method has many branches + statements by
 # necessity: the selective retry policy distinguishes 5 failure modes
 # (401/403, 429, 5xx, transient MiniMax codes, permanent MiniMax codes)

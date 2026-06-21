@@ -124,9 +124,7 @@ class TestSchedulerRetentionWiring:
     """SCHEDULER_ENABLED=true + RETENTION_DAYS > 0."""
 
     @pytest.mark.asyncio
-    async def test_retention_days_wired_to_scheduler(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_retention_days_wired_to_scheduler(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When `RETENTION_DAYS=30`, the scheduler receives `retention_days=30`."""
         monkeypatch.setenv("SCHEDULER_ENABLED", "true")
         monkeypatch.setenv("DB_PATH", ":memory:")

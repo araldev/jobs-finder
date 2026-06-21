@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { ArrowLeft } from "lucide-react";
 
 import { MagicLinkForm } from "@/components/auth/MagicLinkForm";
@@ -13,7 +14,13 @@ export default function LoginPage() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const emailRef = useRef<HTMLInputElement | null>(null);
+  // Controlled email state (REQ-MAINT-017, ADR-006): the previous implementation
+  // used emailRef.current?.value at render time, which is null on the first
+  // render (refs are set AFTER first commit). Lifting to useState lets the parent
+  // re-render MagicLinkForm with the typed email as `initialEmail` and forces a
+  // remount via the `key` prop on every keystroke (RHF reads defaultValues only
+  // on mount).
+  const [email, setEmail] = useState<string>("");
 
   async function login(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -69,7 +76,7 @@ export default function LoginPage() {
       <div className="mx-auto mt-8 max-w-sm space-y-6 px-4">
         <div className="space-y-2 text-center">
           <Link href="/" className="inline-flex items-center gap-2">
-            <img src="/favicon.svg" alt="Jobs Finder" className="h-9 w-9" />
+            <Image src="/favicon.svg" alt="Jobs Finder" width={36} height={36} className="h-9 w-9" />
             <span className="font-display text-xl font-bold">Jobs Finder</span>
           </Link>
           <h1 className="mt-4 text-2xl font-display font-bold">Iniciar sesión</h1>
@@ -89,7 +96,8 @@ export default function LoginPage() {
               type="email"
               placeholder="tu@email.com"
               required
-              ref={emailRef}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
             />
           </div>
@@ -133,9 +141,16 @@ export default function LoginPage() {
             The form below the password login lets the user request a
             one-time link by email. Reuses the same email field via
             the `initialEmail` prop if pre-filled; otherwise it's
-            independent. */}
+            independent.
+
+            REQ-MAINT-017 + ADR-006: `key={email}` forces MagicLinkForm
+            to remount on every email change so react-hook-form re-reads
+            `defaultValues: { email: initialEmail }` on mount. Without
+            the key, RHF only reads defaultValues on the FIRST mount and
+            the OTP email input would stay empty when the user types in
+            the password form then switches to OTP. */}
         <div className="border-t border-border pt-4">
-          <MagicLinkForm initialEmail={emailRef.current?.value ?? ""} />
+          <MagicLinkForm key={email} initialEmail={email} />
         </div>
 
         <div className="relative">

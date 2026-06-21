@@ -202,7 +202,7 @@ async def test_chat_route_returns_200_with_filtered_jobs() -> None:
     fake_repo = FakeJobRepository(jobs=jobs)
     llm = FakeLLMClient(matching_ids=["a", "c", "e"], explanation="3 match")
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         job_repository=fake_repo,
     )
@@ -235,7 +235,7 @@ async def test_chat_route_returns_400_when_message_exceeds_cap() -> None:
     fake_repo = FakeJobRepository(jobs=[])
     llm = FakeLLMClient()
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         job_repository=fake_repo,
     )
@@ -272,7 +272,7 @@ async def test_chat_route_normalizes_message_before_llm_call() -> None:
     fake_repo = FakeJobRepository(jobs=[_make_job("a")])
     llm = FakeLLMClient(matching_ids=["a"], explanation="ok")
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         job_repository=fake_repo,
     )
@@ -311,7 +311,7 @@ async def test_chat_route_returns_502_when_llm_unavailable() -> None:
     fake_repo = FakeJobRepository(jobs=jobs)
     llm = FakeLLMClient(error=LLMUnavailableError("upstream down"))
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         job_repository=fake_repo,
     )
@@ -339,7 +339,7 @@ async def test_chat_route_returns_422_when_llm_response_unparseable() -> None:
     fake_repo = FakeJobRepository(jobs=jobs)
     llm = FakeLLMClient(error=LLMResponseParseError("could not extract JSON"))
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         job_repository=fake_repo,
     )
@@ -371,7 +371,7 @@ async def test_chat_router_factory_returns_an_apirouter_with_chat_route() -> Non
     fake_repo = FakeJobRepository(jobs=[])
     llm = FakeLLMClient()
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         job_repository=fake_repo,
     )
@@ -455,7 +455,7 @@ def test_chat_stream_router_factory_returns_apirouter_with_route() -> None:
     fake_repo = FakeJobRepository(jobs=[])
     llm = FakeLLMClient()
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         job_repository=fake_repo,
     )
@@ -480,7 +480,7 @@ async def test_chat_stream_route_returns_400_when_message_exceeds_cap() -> None:
     fake_repo = FakeJobRepository(jobs=[])
     llm = FakeLLMClient()
     use_case = FilterJobsByIntentUseCase(
-        aggregator=MagicMock(),  # type: ignore[arg-type]
+        aggregator=MagicMock(),
         llm=llm,
         job_repository=fake_repo,
     )

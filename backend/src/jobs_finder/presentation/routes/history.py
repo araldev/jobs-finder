@@ -13,8 +13,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import HttpUrl
 
 from jobs_finder.presentation.schemas import (
@@ -91,11 +90,11 @@ async def jobs_history_by_id(
     """
     repo = getattr(request.app.state, "job_repository", None)
     if repo is None:
-        return JSONResponse({"error": "Job not found"}, status=404)
+        raise HTTPException(status_code=404, detail="Job not found")
 
     job = await repo.get_job_by_source_id(source_id)
     if job is None:
-        return JSONResponse({"error": "Job not found"}, status=404)
+        raise HTTPException(status_code=404, detail="Job not found")
 
     return _to_history_response(job)
 

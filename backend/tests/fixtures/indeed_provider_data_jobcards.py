@@ -24,8 +24,32 @@ capture (per AGENTS.md rule #1). The fixture exposes:
    fixture (in order). Useful for assertions.
 """
 
-PROVIDER_DATA_JSON = {'metaData': {'isJpBundle': False}, 'mosaicProviderJobCardsModel': {'jobListings': [{'jobkey': 'dba0611af22b2374', 'title': 'Especialista en IA con Python', 'company': '', 'snippet': '<ul style="list-style-type:circle;margin-top: 0px;margin-bottom: 0px;padding-left:20px;">\n <li>Buscamos incorporar un/a Especialista en Inteligencia Artificial con experiencia en <b>Python</b>, orientado/a a la implementación práctica de soluciones y…</li>\n</ul>'}, {'jobkey': '7bc5f5f2d189a262', 'title': 'Desarrollador/a Python Junior', 'company': '', 'snippet': '<ul style="list-style-type:circle;margin-top: 0px;margin-bottom: 0px;padding-left:20px;">\n <li>Estamos en busca de profesionales que no solo busquen un empleo, sino que aspiren a integrarse en equipos que lideran la transformación en sectores estratégicos…</li>\n</ul>'}, {'jobkey': '74e944b8e04bff12', 'title': 'Desarrollador Python', 'company': '', 'snippet': '<ul style="list-style-type:circle;margin-top: 0px;margin-bottom: 0px;padding-left:20px;">\n <li>Experiencia demostrable como Desarrollador <b>Python</b> o Full Stack Developer, con especialización en el backend basado en Python.</li>\n</ul>'}]}}
+PROVIDER_DATA_JSON = {
+    "metaData": {"isJpBundle": False},
+    "mosaicProviderJobCardsModel": {
+        "jobListings": [
+            {
+                "jobkey": "dba0611af22b2374",
+                "title": "Especialista en IA con Python",
+                "company": "",
+                "snippet": '<ul style="list-style-type:circle;margin-top: 0px;margin-bottom: 0px;padding-left:20px;">\n <li>Buscamos incorporar un/a Especialista en Inteligencia Artificial con experiencia en <b>Python</b>, orientado/a a la implementación práctica de soluciones y…</li>\n</ul>',
+            },
+            {
+                "jobkey": "7bc5f5f2d189a262",
+                "title": "Desarrollador/a Python Junior",
+                "company": "",
+                "snippet": '<ul style="list-style-type:circle;margin-top: 0px;margin-bottom: 0px;padding-left:20px;">\n <li>Estamos en busca de profesionales que no solo busquen un empleo, sino que aspiren a integrarse en equipos que lideran la transformación en sectores estratégicos…</li>\n</ul>',
+            },
+            {
+                "jobkey": "74e944b8e04bff12",
+                "title": "Desarrollador Python",
+                "company": "",
+                "snippet": '<ul style="list-style-type:circle;margin-top: 0px;margin-bottom: 0px;padding-left:20px;">\n <li>Experiencia demostrable como Desarrollador <b>Python</b> o Full Stack Developer, con especialización en el backend basado en Python.</li>\n</ul>',
+            },
+        ]
+    },
+}
 
 PAGE_HTML = '<html><head><script>\nwindow.mosaic.providerData["mosaic-provider-jobcards"]={"metaData":{"isJpBundle":false},"mosaicProviderJobCardsModel":{"jobListings":[{"jobkey":"dba0611af22b2374","title":"Especialista en IA con Python","company":"","snippet":"<ul style=\\"list-style-type:circle;margin-top: 0px;margin-bottom: 0px;padding-left:20px;\\">\\n <li>Buscamos incorporar un/a Especialista en Inteligencia Artificial con experiencia en <b>Python</b>, orientado/a a la implementación práctica de soluciones y…</li>\\n</ul>"},{"jobkey":"7bc5f5f2d189a262","title":"Desarrollador/a Python Junior","company":"","snippet":"<ul style=\\"list-style-type:circle;margin-top: 0px;margin-bottom: 0px;padding-left:20px;\\">\\n <li>Estamos en busca de profesionales que no solo busquen un empleo, sino que aspiren a integrarse en equipos que lideran la transformación en sectores estratégicos…</li>\\n</ul>"},{"jobkey":"74e944b8e04bff12","title":"Desarrollador Python","company":"","snippet":"<ul style=\\"list-style-type:circle;margin-top: 0px;margin-bottom: 0px;padding-left:20px;\\">\\n <li>Experiencia demostrable como Desarrollador <b>Python</b> o Full Stack Developer, con especialización en el backend basado en Python.</li>\\n</ul>"}]}};\n</script></head></html>'
 
-SNIPPET_JOBKEYS = ['dba0611af22b2374', '7bc5f5f2d189a262', '74e944b8e04bff12']
+SNIPPET_JOBKEYS = ["dba0611af22b2374", "7bc5f5f2d189a262", "74e944b8e04bff12"]

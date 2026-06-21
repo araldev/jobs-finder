@@ -84,10 +84,11 @@ def build_adapt_cv_user_message(
     return (
         f"ORIGINAL CV (source of truth — do not add anything not in here):\n{cv_text[:8000]}\n\n"
         f"TARGET JOB TITLE: {job_title}\n"
-        f"TARGET COMPANY: {job_company}  <-- THIS IS THE COMPANY THE CANDIDATE IS APPLYING TO. "
-        f"THE CANDIDATE HAS NEVER WORKED AT {job_company.upper()} UNLESS IT APPEARS IN THE ORIGINAL CV ABOVE.\n"
-        f"JOB DESCRIPTION (for keyword extraction only — do not invent employment at this company):\n{job_description[:4000]}\n\n"
-        f"Adapt this CV: rephrase descriptions, add keywords naturally. Keep ALL original facts. Return ONLY JSON."
+        f"TARGET COMPANY: {job_company}  <-- APPLYING COMPANY. "
+        f"CANDIDATE HAS NEVER WORKED AT {job_company.upper()} UNLESS IN CV ABOVE.\n"
+        f"JOB DESCRIPTION (keyword extraction only):\n{job_description[:4000]}\n\n"
+        f"Adapt this CV: rephrase descriptions, add keywords naturally. "
+        f"Keep ALL original facts. Return ONLY JSON."
     )
 
 

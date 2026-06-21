@@ -58,11 +58,14 @@ class FakeJobRepository:
         *,
         sources: list[str] | None = None,
         keywords: str | None = None,
+        location: str | None = None,
+        description: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[Job]:
+        del location, description
         return []
 
     async def count_jobs(
@@ -74,6 +77,10 @@ class FakeJobRepository:
         date_to: str | None = None,
     ) -> int:
         return 0
+
+    async def get_job_by_source_id(self, source_id: str) -> Job | None:
+        del source_id
+        return None
 
     async def close(self) -> None:
         pass
@@ -610,14 +617,14 @@ class TestIsWithinActiveHours:
     @pytest.mark.parametrize(
         "hour,expected",
         [
-            (8, False),   # 08:59 — outside (one minute before opening)
-            (9, True),    # 09:00 — inside (boundary: opening)
-            (10, True),   # 10:00 — inside
-            (14, True),   # 14:00 — inside
-            (21, True),   # 21:59 — inside (one minute before closing)
+            (8, False),  # 08:59 — outside (one minute before opening)
+            (9, True),  # 09:00 — inside (boundary: opening)
+            (10, True),  # 10:00 — inside
+            (14, True),  # 14:00 — inside
+            (21, True),  # 21:59 — inside (one minute before closing)
             (22, False),  # 22:00 — outside (boundary: closing)
             (23, False),  # 23:00 — outside
-            (0, False),   # 00:00 — outside
+            (0, False),  # 00:00 — outside
         ],
     )
     def test_boundary_cases(
@@ -629,7 +636,7 @@ class TestIsWithinActiveHours:
         # Fake datetime.now() that returns a Madrid time with the given hour
         class FakeDatetime:
             @staticmethod
-            def now(tz: ZoneInfo) -> "FakeDatetime":
+            def now(tz: ZoneInfo) -> FakeDatetime:
                 return FakeDatetime()
 
             def __init__(self) -> None:

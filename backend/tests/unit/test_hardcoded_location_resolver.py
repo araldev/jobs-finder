@@ -270,24 +270,29 @@ def test_unknown_location_returns_none_with_warning(
     assert "Atlantis" in warnings[0].getMessage()
 
 
-def test_country_level_espana_returns_none_with_warning(
+def test_country_level_espana_returns_country_geo_id(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """`"España"` (country-level) returns `None` and emits a WARNING.
+    """`"España"` resolves to the Spain country geoId (103644278).
 
-    The country-level geoId from the CSV (`103644278`) is the
-    LinkedIn worldwide fallback — using it would return globally-
-    distributed results that don't match the user's country intent.
-    The spec (REQ-LOC-GEO-001 scenario 7) intentionally degrades
-    country-level to `None` + WARNING so the scraper falls back
-    to the (broken) `?location=España` string.
+    Originally the spec (REQ-LOC-GEO-001 scenario 7) intended
+    country-level to degrade to `None` + WARNING (the worldwide
+    fallback would return globally-distributed results). After
+    LIVE testing (2026-06-15), the Spain country geoId was
+    promoted into the resolver's mapping table (see
+    `src/jobs_finder/infrastructure/location/_mapping.py:86`),
+    so the resolver now returns the country geoId directly
+    (LinkedIn respects it and returns Spain-localized jobs).
+    No warning is emitted because the geoId IS the intended
+    country-level match.
     """
     resolver = HardcodedLocationResolver()
     with caplog.at_level(logging.WARNING, logger=_RESOLVER_LOGGER):
-        assert resolver.resolve("España") is None
-    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert len(warnings) == 1
-    assert "España" in warnings[0].getMessage()
+        result = resolver.resolve("España")
+    assert result == 103644278
+    # The country geoId is a known match; no warning is expected.
+    espana_warnings = [r for r in caplog.records if "España" in r.getMessage()]
+    assert espana_warnings == []
 
 
 def test_country_level_mexico_returns_none_with_warning(
@@ -747,10 +752,13 @@ def test_readme_documents_verified_speculative_and_live_gate() -> None:
         ("spain", None, 17),  # English synonym
         ("remote", None, 17),  # country-only "Remote" case
         ("teletrabajo", None, 17),  # Spanish synonym for remote
-        # === Spanish provinces (province_id, country_id=17) — 4 speculative ===
-        # (Pending LIVE test validation; INE codes are best-effort.)
-        ("madrid", 28, 17),  # speculative
-        ("barcelona", 8, 17),  # speculative
+        # === Spanish provinces (province_id, country_id=17) — 2 LIVE-verified ===
+        # Madrid=33 and Barcelona=9 are the LIVE-tested INE codes
+        # (2026-06-15). The original speculative values (28 and 8) were
+        # best-effort guesses; the LIVE test against real InfoJobs
+        # confirmed the actual province_id values.
+        ("madrid", 33, 17),  # LIVE 2026-06-15
+        ("barcelona", 9, 17),  # LIVE 2026-06-15
         ("valencia", 46, 17),  # speculative
         ("sevilla", 41, 17),  # speculative
     ],
