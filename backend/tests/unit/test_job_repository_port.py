@@ -23,7 +23,9 @@ class _TestConcreteRepository:
     """A minimal class that satisfies `JobRepositoryPort` structurally."""
 
     async def upsert_jobs(
-        self, jobs: list[Job], source: str, query_snapshot: dict[str, str]
+        self,
+        jobs: list[Job],
+        query_snapshot: dict[str, str],
     ) -> int:
         return 0
 
@@ -39,13 +41,41 @@ class _TestConcreteRepository:
     async def delete_older_than(self, *, days: int, limit: int = 1000) -> int:
         return 0
 
+    async def search_jobs_history(
+        self,
+        *,
+        sources: list[str] | None = None,
+        keywords: str | None = None,
+        location: str | None = None,
+        description: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Job]:
+        return []
+
+    async def count_jobs(
+        self,
+        *,
+        sources: list[str] | None = None,
+        keywords: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> int:
+        return 0
+
+    async def get_job_by_source_id(self, source_id: str) -> Job | None:
+        del source_id
+        return None
+
     async def close(self) -> None:
         return None
 
 
 def test_job_repository_port_is_protocol() -> None:
     """`JobRepositoryPort` must be a `typing.Protocol` subclass."""
-    assert issubclass(JobRepositoryPort, Protocol)
+    assert issubclass(JobRepositoryPort, Protocol)  # type: ignore[arg-type]
 
 
 def test_job_repository_port_has_upsert_jobs() -> None:
@@ -94,4 +124,4 @@ def test_protocol_not_runtime_checkable() -> None:
     """
     repo = _TestConcreteRepository()
     with pytest.raises(TypeError, match="runtime_checkable"):
-        isinstance(repo, JobRepositoryPort)
+        isinstance(repo, JobRepositoryPort)  # type: ignore[misc]

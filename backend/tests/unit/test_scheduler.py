@@ -58,11 +58,14 @@ class FakeJobRepository:
         *,
         sources: list[str] | None = None,
         keywords: str | None = None,
+        location: str | None = None,
+        description: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[Job]:
+        del location, description
         return []
 
     async def count_jobs(
@@ -74,6 +77,10 @@ class FakeJobRepository:
         date_to: str | None = None,
     ) -> int:
         return 0
+
+    async def get_job_by_source_id(self, source_id: str) -> Job | None:
+        del source_id
+        return None
 
     async def close(self) -> None:
         pass
