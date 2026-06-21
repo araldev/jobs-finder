@@ -19,11 +19,12 @@ The 3 `*PlaywrightScraper.__aexit__` methods call this helper
 as the LAST step so the test boundary is clean.
 
 Test approach:
-- `Connection` (module-level) provides a method whose coro
-  `__qualname__` is `"Connection.run"`. The class name is
-  intentionally `Connection` (NOT `_FakeConnection`) so the
-  qualified name mirrors Playwright's internal class — that
-  is the exact string the drain helper matches.
+- The shared `Connection` fake from
+  `tests.unit._helpers.fake_playwright_connection` provides a
+  method whose coro `__qualname__` is `"Connection.run"`. The
+  class name is intentionally `Connection` (NOT `_FakeConnection`)
+  so the qualified name mirrors Playwright's internal class —
+  that is the exact string the drain helper matches.
 - Tests spawn a real `asyncio.Task` wrapping that coro, then call
   the drain and assert the task is `done()` afterwards.
 - For the "cancels on timeout" scenario, the coro awaits an
@@ -38,37 +39,11 @@ import asyncio
 from jobs_finder.infrastructure._playwright_lifecycle import (
     drain_playwright_tasks,
 )
+from tests.unit._helpers.fake_playwright_connection import Connection
 
 # ---------------------------------------------------------------------------
-# Fakes — `Connection.run` and `Connection.init` shaped coros
+# Test helpers
 # ---------------------------------------------------------------------------
-
-
-class Connection:
-    """Stand-in for Playwright's internal `Connection` class.
-
-    The class name is intentionally `Connection` (NOT
-    `_FakeConnection`) so the coroutine `__qualname__` mirrors
-    Playwright's actual class. The drain helper matches on
-    `coro.__qualname__ in {"Connection.run", "Connection.init"}`
-    (see `_PLAYWRIGHT_CONNECTION_CORO_NAMES`); using a different
-    class name would make the qualname mismatch and the tests
-    would not exercise the helper's matching logic.
-    """
-
-    async def run(self) -> None:
-        # Block on the gate until the test releases it; the
-        # drain's timeout forces a cancel on the timeout-zero
-        # scenario.
-        await self._gate.wait()
-
-    async def init(self) -> None:
-        await self._gate.wait()
-
-    def __init__(self) -> None:
-        # One gate shared between `run` and `init` so tests can
-        # release both at once when they want the drain to complete.
-        self._gate: asyncio.Event = asyncio.Event()
 
 
 def _spawn_connection_run(connection: Connection) -> asyncio.Task[None]:

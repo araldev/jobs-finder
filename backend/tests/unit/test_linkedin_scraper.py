@@ -55,10 +55,13 @@ the closure in isolation).
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from jobs_finder.domain.job import Job
 from jobs_finder.infrastructure.linkedin.scraper import LinkedInPlaywrightScraper
+from tests.unit._helpers.fake_playwright_connection import Connection
 
 # ---------------------------------------------------------------------------
 # URL formula (REQ-LOC-GEO-001 scenario 9 + per-page + empty-keywords)
@@ -1591,6 +1594,81 @@ async def test_chromium_launch_xvfb_display_respects_headless_true() -> None:
         ],
         env={"DISPLAY": ":99"},
     )
+
+
+# ---------------------------------------------------------------------------
+# REQ-LIFECYCLE-004 / SCN-LIFECYCLE-004-1: `__aexit__` drains pending Playwright tasks
+# ---------------------------------------------------------------------------
+
+
+async def test_aexit_drains_pending_playwright_tasks() -> None:
+    """`LinkedInPlaywrightScraper.__aexit__` awaits/cancels any pending Playwright task.
+
+    REQ-LIFECYCLE-002 — each `*PlaywrightScraper.__aexit__` calls
+    `drain_playwright_tasks()` as the LAST step, after
+    `playwright.stop()`. REQ-LIFECYCLE-004 — the per-scraper test
+    files assert no `Connection.run` task leaks past `__aexit__`.
+    SCN-LIFECYCLE-004-1.
+
+    RED: today, after `__aexit__`, any pending `Connection.run`
+    task is still pending on the loop. GREEN: the drain removes
+    it (awaited to completion or cancelled on the drain's
+    `timeout=0.5s` budget).
+
+    Test strategy: pre-spawn a fake `Connection.run` task
+    (from the shared `tests/unit/_helpers/fake_playwright_connection`
+    fixture) BEFORE entering the `async with` block. The drain
+    is global — it iterates `asyncio.all_tasks()` and finds the
+    fake task by `coro.__qualname__ == "Connection.run"`. The
+    scraper itself uses `browser_factory=` (a `FakeBrowser`),
+    so it does NOT launch real Chromium in this test; the
+    pre-spawned task is the only `Connection.run` task on the
+    loop, and the test isolates the drain behavior.
+    """
+    # Pre-spawn a fake Connection.run task to simulate the leak
+    # (the gate is never set, so the drain will hit its timeout
+    # and cancel — total cost ~0.5s).
+    connection = Connection()
+    leaked = asyncio.create_task(connection.run())
+    # Yield once so the task is actually scheduled and pending.
+    await asyncio.sleep(0)
+    assert not leaked.done()
+
+    # Construct a LinkedIn scraper with a fake browser (the
+    # scraper never calls `async_playwright().start()` in this
+    # path; the pre-spawned `Connection.run` task is the only
+    # Playwright task on the loop).
+    from jobs_finder.infrastructure.linkedin.scraper import (  # noqa: PLC0415
+        LinkedInScraperSettings,
+    )
+    from jobs_finder.infrastructure.linkedin.throttle import (  # noqa: PLC0415
+        AsyncThrottle,
+    )
+
+    fake_browser = _LinkedInFakeBrowser(_LinkedInFakePage())
+
+    async def factory() -> _LinkedInFakeBrowser:
+        return fake_browser
+
+    scraper = LinkedInPlaywrightScraper(
+        throttle=AsyncThrottle(min_interval_seconds=0.0),
+        settings=LinkedInScraperSettings(
+            user_agent="test-agent/1.0",
+            timeout_ms=10_000,
+            max_pages=1,
+            inter_page_delay_seconds=0.0,
+        ),
+        browser_factory=factory,
+    )
+    async with scraper:
+        pass
+
+    # After `__aexit__`, the drain (the LAST step in the
+    # scraper's `__aexit__`) must have completed the leaked
+    # task. With the drain's 0.5s timeout + the gate never
+    # being set, the task was cancelled.
+    assert leaked.done()
+    assert leaked.cancelled()
 
 
 # --- Camino 1: full description via N+1 detail visits (REQ-SCRAPER-LINKEDIN-DETAIL-001) ---
