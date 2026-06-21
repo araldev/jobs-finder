@@ -5,9 +5,12 @@ import { useChat } from "@/hooks/useChat";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ChatMessages } from "./ChatMessages";
 import { ChatInput } from "./ChatInput";
+import { JOBS_FINDER_STORAGE_KEYS } from "@/lib/auth/storageKeys";
 
 export function ChatPanel() {
-  const { messages, status, sendMessage, reset, openedJobIds } = useChat({ storageKey: "jobs-finder-chat-v1" });
+  const { messages, status, sendMessage, reset, openedJobIds } = useChat({
+    storageKey: JOBS_FINDER_STORAGE_KEYS.chat,
+  });
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom when messages change or streaming
