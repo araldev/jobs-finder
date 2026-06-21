@@ -30,8 +30,10 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   // Rutas públicas: / (landing page), /jobs (detalle público), /login, /signup, /auth
-  // APIs (/api/*) son siempre accesibles
-  const publicPaths = ["/jobs", "/login", "/signup", "/auth"];
+  // APIs (/api/*) son siempre accesibles. /forgot-password and /reset-password
+  // are part of the public auth flow (REQ-AUTH-021) so an unauthenticated
+  // user can request + complete a password reset without bouncing to /login.
+  const publicPaths = ["/jobs", "/login", "/signup", "/auth", "/forgot-password", "/reset-password"];
   const isPublic = publicPaths.some((path) =>
     request.nextUrl.pathname.startsWith(path),
   );
