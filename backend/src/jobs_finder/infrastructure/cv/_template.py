@@ -285,7 +285,11 @@ class AdaptedCV:
   <div class="exp-title">{exp.title}{location_html}</div>
   <div class="exp-description">{exp.description}</div>
 </div>"""
-        return f'<div class="section"><div class="section-title">Experiencia Profesional</div>{items}</div>'
+        return (
+            f'<div class="section">'
+            f'<div class="section-title">Experiencia Profesional</div>'
+            f"{items}</div>"
+        )
 
     def _render_education(self) -> str:
         if not self.education:
@@ -314,7 +318,11 @@ class AdaptedCV:
             skills_html += f"<div class='skills-grid'>{tags}</div>"
         languages_html = ""
         if self.languages:
-            languages_html = f"<div class='languages-list'><strong>Idiomas:</strong> {', '.join(self.languages)}</div>"
+            languages_html = (
+                f"<div class='languages-list'>"
+                f"<strong>Idiomas:</strong> {', '.join(self.languages)}"
+                f"</div>"
+            )
         return f"""
 <div class="section">
   <div class="section-title">Habilidades</div>

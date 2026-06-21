@@ -246,7 +246,6 @@ class JsonLinkedInAuthCookiesAdapter:
         except (FileNotFoundError, json.JSONDecodeError):
             return  # self._pairs stays None → no-op
 
-        cookie_map = {c["name"]: c["value"] for c in cookies}
         pairs: list[tuple[str, SecretStr]] = []
         raw_dicts: list[dict[str, Any]] = []
         for c in cookies:

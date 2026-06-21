@@ -1123,9 +1123,7 @@ class FakeLocationResolver:
         return self.structured_canned
 
 
-@pytest.mark.skip(
-    reason="aggregator fallback removed; resolver→geo_id forwarding no longer tested via aggregator.calls"
-)
+@pytest.mark.skip(reason="aggregator fallback removed; resolver→geo_id forwarding no longer tested")
 async def test_2stage_calls_resolver_and_forwards_geo_id_to_aggregator() -> None:
     """`intent.location="Madrid"` → resolver called once with `"Madrid"`.
     Then `linkedin_geo_id=103374081` is forwarded to the aggregator.
@@ -1176,9 +1174,7 @@ async def test_2stage_calls_resolver_and_forwards_geo_id_to_aggregator() -> None
     assert result.used_fallback is False
 
 
-@pytest.mark.skip(
-    reason="aggregator fallback removed; resolver→None forwarding no longer tested via aggregator.calls"
-)
+@pytest.mark.skip(reason="aggregator fallback removed; resolver→None forwarding no longer tested")
 async def test_2stage_resolver_returns_none_logs_warning_and_forwards_none(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1385,7 +1381,7 @@ async def test_use_case_works_without_location_resolver() -> None:
 
 
 @pytest.mark.skip(
-    reason="aggregator fallback removed; resolver-exception resilience no longer testable via aggregator.calls"
+    reason="aggregator fallback removed; resolver-exception resilience no longer testable"
 )
 async def test_2stage_resolver_call_is_resilient_to_exceptions(
     caplog: pytest.LogCaptureFixture,

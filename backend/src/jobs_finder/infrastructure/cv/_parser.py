@@ -68,8 +68,6 @@ def extract_cv_image(pdf_bytes: bytes) -> str | None:
     pdfplumber.  Returns the image as a base64-encoded PNG data URL,
     or None if no image is found.
     """
-    import pymupdf
-
     try:
         doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")  # type: ignore[no-untyped-call]
     except Exception:
@@ -79,7 +77,7 @@ def extract_cv_image(pdf_bytes: bytes) -> str | None:
         page = doc[page_num]
         # Get all images on this page
         image_list = page.get_images(full=True)  # type: ignore[no-untyped-call]
-        for img_index, img in enumerate(image_list):
+        for _img_index, img in enumerate(image_list):
             try:
                 xref = img[0]
                 base_image = doc.extract_image(xref)  # type: ignore[no-untyped-call]

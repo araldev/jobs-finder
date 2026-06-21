@@ -488,7 +488,7 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         # `page.goto(page)` and `_dismiss_cookie_consent`.
         # AttributeError is silently caught so the method works
         # with fake context objects in tests.
-        try:
+        try:  # noqa: SIM105 — see docstring above; AttributeError from fake ctx is expected
             await ctx.add_init_script(
                 """() => {
                     new MutationObserver((mutations, observer) => {
@@ -967,7 +967,7 @@ async def _enrich_with_detail_visits(
         return jobs
     enriched: list[Job] = []
     panel_selector = "section.show-more-less-html"
-    for i, job in enumerate(jobs):
+    for _i, job in enumerate(jobs):
         url = job.url
         desc: str | None = None
         try:

@@ -461,6 +461,5 @@ class TestHistoryByIdRegression:
                         offenders.append(f"{py.relative_to(src_root)}:{ln_no}: {line.strip()}")
 
         assert offenders == [], (
-            f"Found {len(offenders)} JSONResponse(...status=...) call(s):\n"
-            + "\n".join(offenders)
+            f"Found {len(offenders)} JSONResponse(...status=...) call(s):\n" + "\n".join(offenders)
         )

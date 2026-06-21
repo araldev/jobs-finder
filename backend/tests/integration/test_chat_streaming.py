@@ -458,7 +458,7 @@ async def test_chat_stream_error_event_on_llm_timeout() -> None:
 
 
 async def test_chat_stream_error_event_on_llm_parse_error() -> None:
-    """Parser raises `LLMResponseParseError` → graceful fallback: all aggregator jobs returned, no error event."""
+    """LLMResponseParseError → graceful fallback: all jobs returned, no error event."""
     app = _build_chat_app(
         jobs=[_make_job("a"), _make_job("b")],
         stream_chunks=["not-valid-json"],

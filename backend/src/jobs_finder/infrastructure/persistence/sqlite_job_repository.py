@@ -214,7 +214,7 @@ class SqliteJobRepository:
         limit: int = 50,
         offset: int = 0,
     ) -> list[Job]:
-        """SELECT with optional filters on source, keyword, location, description, and date range."""
+        """SELECT with optional filters on source, keyword, location, description, and date range."""  # noqa: E501
         assert self._connection is not None, "repository not opened; use 'async with repo:'"
 
         clauses, params = _build_history_clauses(

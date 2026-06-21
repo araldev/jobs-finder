@@ -97,6 +97,7 @@ async def run_single_query(
         result = subprocess.run(
             cmd,
             capture_output=True,
+            check=False,
             text=True,
             timeout=300,  # 5 min per query
         )
