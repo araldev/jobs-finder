@@ -40,14 +40,19 @@ import { cleanupJobsFinderLocalStorage } from "@/lib/auth/cleanupJobsFinderLocal
  *   2. RPC: `supabase.rpc('delete_current_user')` runs server-side in
  *      Postgres with `SECURITY DEFINER` + an `auth.uid() IS NULL`
  *      guard (the real safety — the UI is a soft UX gate).
- *   3. Side effects in order on success:
- *      a. `cleanupJobsFinderLocalStorage()` — sweep `jobs-finder-*`
- *         keys so the next sign-in doesn't see stale favorites.
- *      b. `supabase.auth.signOut()` — invalidate the JWT.
- *      c. `router.push('/')` — redirect to the landing page.
+ *   3. Side effects in order — STRICT order per spec REQ-AUTH-012:
+ *      a. `await supabase.rpc('delete_current_user')` — server-side
+ *         delete. On error, STOP (toast + dialog stays open, no other
+ *         side effects run).
+ *      b. `cleanupJobsFinderLocalStorage()` — sweep `jobs-finder-*`
+ *         keys. Only runs on RPC success.
+ *      c. `await supabase.auth.signOut()` — invalidate the JWT.
+ *      d. `router.push('/')` — redirect to the landing page.
  *
- * On RPC failure: Spanish toast + dialog stays open (user can retry
- * or cancel). REQ-AUTH-025.
+ * The RPC MUST run before localStorage cleanup: if the server-side
+ * delete fails, the user's favorites / chat / cv-count MUST stay
+ * intact. Wiping localStorage on a server-side failure is data loss
+ * from the user's perspective. (REQ-AUTH-025)
  */
 export interface DeleteAccountDialogProps {
   /** The current user's email. Used for the typed-email safeguard. */
@@ -85,21 +90,28 @@ export function DeleteAccountDialog({ userEmail }: DeleteAccountDialogProps) {
 
     setBusy(true);
 
-    // Step 1: localStorage cleanup (run BEFORE the RPC + signOut so
-    // any in-flight session can't write a new key after the sweep).
-    cleanupJobsFinderLocalStorage();
-
-    // Step 2: the actual server-side deletion via Postgres RPC.
-    // The RPC's SECURITY DEFINER body handles the auth.users delete +
-    // cascade. No service-role key in the browser.
+    // Step 1 (per REQ-AUTH-012): the actual server-side deletion via
+    // Postgres RPC. The RPC's SECURITY DEFINER body handles the
+    // auth.users delete + cascade. No service-role key in the browser.
+    //
+    // CRITICAL: this MUST run BEFORE any localStorage cleanup. If the
+    // RPC fails, the user's favorites / chat / cv-count MUST stay
+    // intact — wiping localStorage on a server-side failure is data
+    // loss from the user's perspective (their Supabase data is still
+    // there but the UI shows an empty state).
     const { error } = await supabase.rpc("delete_current_user");
 
     if (error) {
       toast.error(authCopy.delete.errorToast);
       setBusy(false);
-      // Dialog stays open — user can retry or cancel.
+      // Dialog stays open — user can retry or cancel. localStorage is
+      // untouched. No sign-out. No redirect.
       return;
     }
+
+    // Step 2 (on success only): sweep `jobs-finder-*` keys so the next
+    // sign-in (by anyone) doesn't see stale favorites.
+    cleanupJobsFinderLocalStorage();
 
     // Step 3: sign out (invalidates the JWT the browser holds).
     await supabase.auth.signOut();

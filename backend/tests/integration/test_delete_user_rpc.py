@@ -65,9 +65,7 @@ def anon_key() -> str:
 def service_key() -> str:
     key = _service_key()
     if not key:
-        pytest.skip(
-            "SUPABASE_LOCAL_SERVICE_KEY not set; skipping supabase_local test"
-        )
+        pytest.skip("SUPABASE_LOCAL_SERVICE_KEY not set; skipping supabase_local test")
     return key
 
 

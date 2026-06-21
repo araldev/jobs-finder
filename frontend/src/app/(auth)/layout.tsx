@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import type { ReactNode } from "react";
 
 /**
@@ -11,7 +12,13 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-background px-4 py-8">
       <Link href="/" className="mb-8 inline-flex items-center gap-2">
-        <img src="/favicon.svg" alt="Jobs Finder" className="h-9 w-9" />
+        <Image
+          src="/favicon.svg"
+          alt="Jobs Finder"
+          width={36}
+          height={36}
+          className="h-9 w-9"
+        />
         <span className="font-display text-xl font-bold">Jobs Finder</span>
       </Link>
       <div className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-sm">

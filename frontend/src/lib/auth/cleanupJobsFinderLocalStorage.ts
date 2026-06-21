@@ -1,13 +1,15 @@
-import { JOBS_FINDER_STORAGE_KEYS } from "./storageKeys";
+import { JOBS_FINDER_STORAGE_KEYS, STORAGE_KEY_PREFIX } from "./storageKeys";
 
 /**
  * Sweep every key under `STORAGE_KEY_PREFIX` ("jobs-finder-") from
  * `window.localStorage` (REQ-AUTH-012 + ADR-005).
  *
- * Called from `DeleteAccountDialog` after a successful RPC
- * `delete_current_user` and BEFORE `supabase.auth.signOut()`. The
- * order matters: cleanup first so the in-flight session can't write
- * a new key after the sweep.
+ * Called from `DeleteAccountDialog` ONLY after a successful
+ * `supabase.rpc('delete_current_user')` and BEFORE
+ * `supabase.auth.signOut()`. The RPC MUST run first — if the
+ * server-side delete fails, the user's data must stay intact in
+ * localStorage so the UI doesn't show an empty state while the
+ * Supabase data is still there. See REQ-AUTH-012.
  *
  * Errors are swallowed (the user is signing out anyway; a partial
  * cleanup is acceptable).
@@ -15,7 +17,7 @@ import { JOBS_FINDER_STORAGE_KEYS } from "./storageKeys";
 export function cleanupJobsFinderLocalStorage(): void {
   if (typeof window === "undefined") return;
 
-  const prefix = "jobs-finder-";
+  const prefix = STORAGE_KEY_PREFIX;
   try {
     const keys: string[] = [];
     for (let i = 0; i < window.localStorage.length; i++) {
