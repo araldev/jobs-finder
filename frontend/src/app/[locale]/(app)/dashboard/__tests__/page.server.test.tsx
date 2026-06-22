@@ -137,6 +137,46 @@ describe("RightSidebar — SCN-PDPRSC-002-C (RSC + server-only api-client)", () 
   });
 });
 
+describe("RightSidebar — SCN-PDPRSC-002-D (locale passed as prop, not hardcoded)", () => {
+  const source = fs.readFileSync(RIGHT_SIDEBAR_PATH, "utf8");
+
+  it("accepts a locale as a destructured function parameter", () => {
+    // The function signature must destructure `locale` from props.
+    // A server component cannot call `useLocale()` — the locale
+    // must arrive as a prop from the page (which has `params.locale`).
+    expect(source).toMatch(/\blocale\b.*:/);
+    expect(source).toMatch(/RightSidebar\(\s*\{/);
+  });
+
+  it("does NOT hardcode a literal string locale in formatRelativeDate calls", () => {
+    // Strip comments — the docstring explains the historical
+    // "es" hardcode. Only code references count as regression.
+    const codeOnly = source
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    expect(codeOnly).not.toMatch(
+      /formatRelativeDate\(\s*[^,]+,\s*["']es["']\s*\)/,
+    );
+  });
+});
+
+describe("dashboard/page.tsx — SCN-PDPRSC-002-E (passes locale prop to RightSidebar)", () => {
+  const source = fs.readFileSync(DASHBOARD_PAGE_PATH, "utf8");
+
+  it("renders <RightSidebar> with a locale prop", () => {
+    // The page must pass the locale (from params) to RightSidebar
+    // so it can format dates in the user's language.
+    expect(source).toMatch(/<RightSidebar\s+locale=/);
+  });
+
+  it("receives locale from page params", () => {
+    // Since localePrefix: 'never', the locale arrives via the
+    // [locale] dynamic route segment — the page must destructure
+    // `locale` from `params` (a Promise in Next.js 15).
+    expect(source).toMatch(/\bparams\b/);
+  });
+});
+
 describe("EngagementStatsRow — client island (edge case)", () => {
   it("file exists and starts with 'use client' (it uses localStorage-backed hooks)", () => {
     // EngagementStatsRow is the lone client island under the

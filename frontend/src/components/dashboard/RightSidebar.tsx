@@ -4,6 +4,7 @@ import { Activity, BarChart3, ArrowRight } from "lucide-react";
 import { fetchDashboardStats, fetchJobsHistory } from "@/lib/api-client";
 import { PlatformBadge } from "@/components/jobs/PlatformBadge";
 import { formatRelativeDate } from "@/lib/formatters";
+import type { Locale } from "@/i18n/routing";
 
 /**
  * RightSidebar — REQ-PDPRSC-002.
@@ -21,15 +22,13 @@ import { formatRelativeDate } from "@/lib/formatters";
  * the RSC tree. No client JS runs for the first paint of the
  * sidebar.
  *
- * Locale is hardcoded to `"es"` for the date formatter (the same
- * trade-off as `StatsCardsRow`). The summary numbers are
- * locale-agnostic (`.toLocaleString()` without an explicit locale
- * uses the server's default which is `en-US` on Linux; for the
- * dashboard's primary locale, the runtime difference is minor
- * for these numeric values).
+ * The `locale` prop arrives from `dashboard/page.tsx`, which
+ * reads it from `params.locale` (the `[locale]` dynamic route
+ * segment). Since `localePrefix: 'never'`, the locale is
+ * resolved by next-intl middleware from cookie or header.
  */
 
-export async function RightSidebar() {
+export async function RightSidebar({ locale }: { locale: Locale }) {
   const [stats, jobsData] = await Promise.all([
     fetchDashboardStats(),
     fetchJobsHistory({ limit: 5 }),
@@ -69,7 +68,7 @@ export async function RightSidebar() {
               <div className="flex items-baseline justify-between">
                 <dt className="text-muted-foreground">Last Sync</dt>
                 <dd className="font-mono text-xs">
-                  {formatRelativeDate(stats.last_sync, "es")}
+                  {formatRelativeDate(stats.last_sync, locale)}
                 </dd>
               </div>
             )}
@@ -96,7 +95,7 @@ export async function RightSidebar() {
                       <PlatformBadge platform={job.source} />
                       <span className="text-[10px] text-muted-foreground tabular-nums">
                         {job.posted_at
-                          ? formatRelativeDate(job.posted_at, "es")
+                          ? formatRelativeDate(job.posted_at, locale)
                           : "—"}
                       </span>
                     </div>

@@ -7,6 +7,7 @@ import { RightSidebar } from "@/components/dashboard/RightSidebar";
 import { JobsGrid } from "@/components/dashboard/JobsGrid";
 import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
 import { fetchJobsHistory } from "@/lib/api-client";
+import type { Locale } from "@/i18n/routing";
 
 /**
  * DashboardPage — REQ-PDPRSC-002.
@@ -45,8 +46,19 @@ import { fetchJobsHistory } from "@/lib/api-client";
  * Module-scope state in RSC would leak between concurrent
  * requests — different users would share one React Query cache
  * for the duration of a single render pass.
+ *
+ * **Locale**: the `[locale]` dynamic route segment provides
+ * `params.locale`, which is forwarded to `RightSidebar` as a prop
+ * so date formatting respects the user's language. Since
+ * `localePrefix: 'never'`, the locale is resolved by next-intl
+ * middleware (cookie or Accept-Language header).
  */
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  params,
+}: {
+  params: Promise<{ locale: Locale }>;
+}) {
+  const { locale } = await params;
   // Per-request QueryClient. NEVER hoist to module scope.
   const queryClient = new QueryClient();
 
@@ -85,8 +97,8 @@ export default async function DashboardPage() {
           </Suspense>
         </div>
 
-        {/* Right sidebar — async RSC, server-fetched */}
-        <RightSidebar />
+        {/* Right sidebar — async RSC, server-fetched, locale-aware dates */}
+        <RightSidebar locale={locale} />
       </div>
     </PageTransition>
   );
