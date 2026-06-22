@@ -12,6 +12,7 @@ import { ArrowLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { markJobAsOpened } from "@/lib/chat-storage";
 import { ChatDialog } from "@/components/chat/ChatDialog";
+import { Footer } from "@/components/layout/Footer";
 import type { Job } from "@/types/job";
 
 export default function PublicJobDetailPage() {
@@ -136,6 +137,7 @@ export default function PublicJobDetailPage() {
         )}
       </div>
       <ChatDialog />
+      <Footer />
     </div>
   );
 }

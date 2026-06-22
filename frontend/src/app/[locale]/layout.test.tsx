@@ -16,16 +16,8 @@ vi.mock("@/app/providers", () => ({
 
 // Minimal messages payload so getMessages resolves without errors.
 // The exact shape is irrelevant to the unit tests below.
-// `Footer` is mounted by the layout — include its keys so the test
-// doesn't emit MISSING_MESSAGE warnings for production code (W9 in
-// sdd/feat-frontend-i18n/verify-report).
 const dummyMessages = {
   Common: { loading: "Cargando…" },
-  Footer: {
-    privacyNote: "Solo en español",
-    privacy: "Privacidad",
-    copyright: "© Jobs Finder",
-  },
 };
 
 /**
@@ -33,14 +25,16 @@ const dummyMessages = {
  * expects a sync ReactElement. We invoke the layout function (returning a
  * Promise<ReactElement>) and pass the awaited element to render().
  *
- * In Next.js 15, layout `params` is a Promise. The new
+ * In Next.js 15, layout `params` is a Promise. The
  * `app/[locale]/layout.tsx` reads `locale` from `await params`, so we
  * pass `Promise.resolve({ locale: ... })` here.
  *
  * The `<html>` and `<body>` tags live in `app/layout.tsx` (Next.js
  * requires them at the root). These tests focus on the
- * locale-specific wrapping: `setRequestLocale`, `getMessages`,
- * `NextIntlClientProvider`, and `ConditionalFooter` mounting.
+ * locale-specific wrapping: `setRequestLocale` and the
+ * NextIntlClientProvider boundary. Footer mounting is the
+ * responsibility of each individual page now (added in the
+ * fix-frontend-root-layout-tags branch).
  */
 async function renderLayout(locale: string) {
   const { default: LocaleLayout } = await import("./layout");
@@ -68,14 +62,5 @@ describe("LocaleLayout — locale-specific wrapping", () => {
     await renderLayout("es");
 
     expect(screen.getByText("child")).toBeTruthy();
-  });
-
-  it("renders the ConditionalFooter on public routes (not the (app) segment)", async () => {
-    // useSelectedLayoutSegment("(app)") is null on public routes —
-    // ConditionalFooter renders the marketing Footer.
-    await renderLayout("es");
-
-    expect(screen.getByText(/Privacidad/)).toBeTruthy();
-    expect(screen.getByText(/Jobs Finder/)).toBeTruthy();
   });
 });
