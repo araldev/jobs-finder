@@ -351,11 +351,12 @@ uv run ruff format --check
 # Frontend
 cd frontend
 pnpm install
-pnpm run dev            # http://localhost:3000
+pnpm run dev            # http://localhost:3000 (desarrollo)
 pnpm run typecheck      # tsc --noEmit (strict + noUncheckedIndexedAccess)
 pnpm run lint           # next lint
 pnpm run test           # vitest run --passWithNoTests
-pnpm run build          # production build
+pnpm run build          # build de producción (next build)
+pnpm run start          # servidor de producción (next start, requiere build previo)
 ```
 
 ## Pre-commit

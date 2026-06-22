@@ -12,6 +12,7 @@
 | `GET /jobs/indeed`   | `es.indeed.com/jobs`     | `IndeedPlaywrightScraper` (closed source) |
 | `GET /jobs/infojobs` | `www.infojobs.net/ofertas-trabajo` | `InfoJobsPlaywrightScraper` |
 | `GET /jobs`          | aggregator over all 3 sources (dedup by `(title, company, location)`) | `SearchAllSourcesUseCase` |
+| `GET /jobs/stats`    | consolidated dashboard stats (total_jobs, jobs_today, platform_distribution) | `StatsAggregator` |
 
 Each source has its own Legal Notice and Manual Verification procedure —
 read them both before running. The aggregator is a thin composition
@@ -703,6 +704,52 @@ is considered a duplicate only when the **same source reports the same
 external ID** — a LinkedIn job and an Indeed job with identical title/company
 are stored as separate rows (different `source`). The aggregator endpoint
 (`/jobs`) applies its own cross-source dedup heuristic on top.
+
+### Dashboard Stats Endpoint
+
+`GET /jobs/stats` returns consolidated dashboard statistics in a SINGLE HTTP
+call (REQ-PDPRSC-003 of `perf-dashboard-rsc-migration`). The previous `/api/stats`
+did 6 fetches in 3 waterfall chains (~600ms TTFB on cache miss); this endpoint
+collapses everything into 1 outbound fetch via the `StatsAggregator`.
+
+#### Response shape
+
+```json
+{
+  "total_jobs": 147,
+  "jobs_today": 3,
+  "active_platforms": 3,
+  "last_sync": "2026-06-12T10:01:30+00:00",
+  "platform_distribution": {
+    "linkedin": 75,
+    "indeed": 71,
+    "infojobs": 19
+  }
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `total_jobs` | int | Cross-source count of every job in the repository. |
+| `jobs_today` | int | Count of jobs with `posted_at >= today UTC`. |
+| `active_platforms` | int | Number of sources with `platform_distribution[s] > 0`. |
+| `last_sync` | str \| null | Scheduler's last successful cycle end (null when disabled). |
+| `platform_distribution` | object | Per-source job counts. A timed-out source is omitted (not reported as 0). |
+
+#### Graceful degradation
+
+On any aggregator failure (timeout, transient DB error, missing scheduler),
+the endpoint returns HTTP 200 with `total_jobs: 0`, empty
+`platform_distribution`, and `last_sync: null`. The frontend `useStats`
+hook renders an EmptyState on `total_jobs == 0` rather than a hard error
+toast. This prevents a transient aggregator issue from breaking the
+dashboard UI.
+
+#### Example
+
+```bash
+curl -s http://localhost:8000/jobs/stats | jq
+```
 
 ## Stack
 
