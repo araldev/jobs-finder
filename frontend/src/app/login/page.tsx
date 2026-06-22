@@ -5,6 +5,7 @@ import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ArrowLeft } from "lucide-react";
 
 import { MagicLinkForm } from "@/components/auth/MagicLinkForm";
@@ -12,6 +13,9 @@ import { MagicLinkForm } from "@/components/auth/MagicLinkForm";
 export default function LoginPage() {
   const supabase = createClient();
   const router = useRouter();
+  const t = useTranslations("Auth.login");
+  const tCommon = useTranslations("Common");
+  const locale = useLocale();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   // Controlled email state (REQ-MAINT-017, ADR-006): the previous implementation
@@ -64,13 +68,13 @@ export default function LoginPage() {
     <div className="min-h-screen bg-background">
       {/* Back to home */}
       <div className="p-4">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Volver al inicio
-        </Link>
+<Link
+            href="/"
+            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            {tCommon("back")}
+          </Link>
       </div>
 
       <div className="mx-auto mt-8 max-w-sm space-y-6 px-4">
@@ -79,9 +83,9 @@ export default function LoginPage() {
             <Image src="/favicon.svg" alt="Jobs Finder" width={36} height={36} className="h-9 w-9" />
             <span className="font-display text-xl font-bold">Jobs Finder</span>
           </Link>
-          <h1 className="mt-4 text-2xl font-display font-bold">Iniciar sesión</h1>
+          <h1 className="mt-4 text-2xl font-display font-bold">{t("title")}</h1>
           <p className="text-sm text-muted-foreground">
-            Ingresá con tu cuenta o creá una nueva
+            {t("subtitle")}
           </p>
         </div>
 

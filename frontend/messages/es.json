@@ -146,6 +146,30 @@
       "networkError": "No pudimos enviar el correo. Intentalo de nuevo.",
       "rateLimit": "Demasiados intentos. Esperá unos minutos antes de volver a intentar.",
       "genericError": "Ocurrió un error. Intentalo de nuevo."
+    },
+    "login": {
+      "title": "Iniciar sesión en Jobs Finder",
+      "subtitle": "Bienvenido de vuelta. Iniciá sesión para encontrar tu próximo empleo.",
+      "emailLabel": "Correo electrónico",
+      "passwordLabel": "Contraseña",
+      "submit": "Iniciar sesión",
+      "forgotPassword": "¿Olvidaste tu contraseña?",
+      "noAccount": "¿No tenés cuenta?",
+      "signUp": "Registrate",
+      "orContinueWith": "O continuá con",
+      "continueWithGoogle": "Continuar con Google",
+      "magicLinkLabel": "Enviarme un enlace mágico por correo"
+    },
+    "signup": {
+      "title": "Creá tu cuenta",
+      "subtitle": "Encontrá tu próximo empleo en minutos.",
+      "emailLabel": "Correo electrónico",
+      "passwordLabel": "Contraseña",
+      "submit": "Crear cuenta",
+      "haveAccount": "¿Ya tenés cuenta?",
+      "signIn": "Iniciar sesión",
+      "orContinueWith": "O continuá con",
+      "continueWithGoogle": "Continuar con Google"
     }
   },
   "Validation": {
