@@ -10,6 +10,21 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => serverMock,
 }));
 
+// Mock next-intl/server so `getTranslations("Auth.resetPassword")` resolves
+// in the jsdom test environment (which has no Next.js request runtime).
+// The factory is hoisted by vitest but only evaluated when the page
+// module imports next-intl/server, by which point esMessages is loaded.
+vi.mock("next-intl/server", () => ({
+  getTranslations: async (namespace: string) => {
+    const parts = namespace.split(".");
+    let current: Record<string, unknown> = esMessages as Record<string, unknown>;
+    for (const part of parts) {
+      current = (current[part] ?? {}) as Record<string, unknown>;
+    }
+    return (key: string) => (current[key] as string | undefined) ?? key;
+  },
+}));
+
 // Stub the actual form so the page test is about the session branch.
 vi.mock("@/components/auth/ResetPasswordForm", () => ({
   ResetPasswordForm: () => (
