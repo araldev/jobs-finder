@@ -7,6 +7,8 @@
 
 `frontend-i18n` owns every piece of the localization infrastructure in the frontend workspace: the locale list, default locale, URL prefix policy, message-file storage, the `NextIntlClientProvider` boundary in `app/layout.tsx`, the locale-aware Supabase `publicPaths`, the `LanguageSwitcher` widget, the locale-aware `lib/formatters.ts` refactor, and the pluralization contract (ICU MessageFormat). It establishes a single integration point (`useTranslations` / `getTranslations`) so that domain capabilities (`frontend-dashboard`, `chat-frontend`, `favorites`) own their translation **content** while this capability owns translation **mechanism**. It does NOT translate the legal `privacidad` page in v1, does NOT reformat currency strings (backend contract is out of scope), does NOT add locales beyond `en` + `es`, and does NOT persist locale to the database (cookie + `localStorage` only).
 
+**v2 update (2026-06-22, `feat-frontend-i18n-locale-prefix-urls`)** — URL-prefix mode is now the runtime contract. v1 specified REQ-I18N-002 (`localePrefix: 'as-needed'`) and REQ-I18N-016 (locale-aware OAuth callback) in this file but shipped in cookie-only mode to keep v1 small. v2 flips `frontend/src/i18n/routing.ts` from `'never'` to `'as-needed'`, making canonical `/en/dashboard` and `/en/login` URLs the source of truth. Locale precedence (URL prefix > `NEXT_LOCALE` cookie > `Accept-Language` > `defaultLocale`) is verified in `next-intl@4.x` `resolveLocale.tsx` Prio 1. The delta appended at the end of this file narrows the gap from design-intent (v1) to runtime-evidence (v2).
+
 ## Requirements
 
 ### REQ-I18N-001: Locale list and default
@@ -314,3 +316,93 @@ One existing capability receives a non-breaking informational note:
 - [ ] Switcher visible on every page (Header on protected, Footer on public)
 - [ ] Both `es` and `en` render correctly end-to-end
 - [ ] OAuth flow lands on locale-correct dashboard
+
+## Delta — v2 (URL-prefix mode, applied 2026-06-22)
+
+This delta modifies the v1 spec to reflect the runtime behavior after flipping `frontend/src/i18n/routing.ts` from `localePrefix: 'never'` → `'as-needed'`. v1 specified URL prefixes in REQ-I18N-002 and REQ-I18N-016 but shipped in cookie-only mode to keep v1's 15-slice plan small. v2 (`feat-frontend-i18n-locale-prefix-urls`) makes the implementation match the spec.
+
+### Modified Requirements
+
+**REQ-I18N-002** (modified): Locale prefix policy is now `as-needed` (was `never`).
+
+- Default locale `es` URLs stay unprefixed: `/dashboard`, `/login`, `/`.
+- Non-default locale `en` URLs are prefixed: `/en/dashboard`, `/en/login`, `/en`.
+- Locale precedence (verified in `next-intl@4.x` `resolveLocale.tsx` Prio 1):
+  1. URL path prefix (`/en/...`)
+  2. `NEXT_LOCALE` cookie
+  3. `Accept-Language` header
+  4. `defaultLocale` (`es`)
+
+(Previously: requirement text was identical, but the v1 implementation set `localePrefix: 'never'` in `frontend/src/i18n/routing.ts:29`, so URL-prefixed URLs would 404 and the entire locale surface was carried by cookie + `localStorage`.)
+
+**REQ-I18N-016** (modified): OAuth callback `/auth/callback` redirects to locale-prefixed paths.
+
+- For default locale (`es` cookie or no cookie): redirect to `/dashboard`, `/reset-password`, etc. (no prefix).
+- For non-default locale (`en` cookie): redirect to `/en/dashboard`, `/en/reset-password`, etc.
+- Implementation: `localizePath(next, locale)` helper reads `NEXT_LOCALE` cookie and prefixes the redirect target; `locale` falls back to `Accept-Language` parsing → `'es'`.
+
+(Previously: v1 implemented cookie-only locale awareness; redirect targets carried no `/en/` prefix, so an `en` user landed on `/dashboard` rendered in English rather than `/en/dashboard`.)
+
+### New Requirements
+
+**REQ-I18N-020**: Supabase `updateSession` middleware MUST redirect unauthenticated users to a locale-aware login path.
+
+- For request on `/en/dashboard` (no user): redirect to `/en/login?error=...` (NOT `/login`).
+- For request on `/dashboard` (no user, default locale): redirect to `/login?error=...`.
+- Detection: `stripLocalePrefix(request.nextUrl.pathname)` then `startsWith('/en/')` → use `/en/` prefix on the redirect target.
+- Closes the locale-aware auth bounce gap identified in slice-16 (v1's `updateSession` always used `/login`, dropping the user out of the `/en/` namespace).
+
+**REQ-I18N-021**: `LanguageSwitcher` MUST navigate to the locale-prefixed URL on switch.
+
+- For target `en`: `router.push(\`/en${strippedPath}\`)`.
+- For target `es`: `router.push(strippedPath)` (no prefix for default locale).
+- Implementation re-introduces `usePathname()` + `stripLocalePrefix()` (both were removed in v1 slice-16 simplification).
+- Behavior: clicking the switcher changes the URL AND the locale atomically; `router.refresh()` follows to re-render RSC `<html lang>`.
+
+### Modified Scenarios
+
+**SCN-I18N-002** (modified): A first-time visitor with `Accept-Language: en-US` is redirected to `/en/dashboard`.
+
+- GIVEN no `NEXT_LOCALE` cookie
+- AND `Accept-Language: en-US,en;q=0.9,es;q=0.8`
+- WHEN the user navigates to `/dashboard`
+- THEN the response is HTTP 307/308 with `Location: /en/dashboard`
+- AND `/en/dashboard` renders in English (`<html lang="en">`)
+- (Previously: under v1 cookie-only mode, `/dashboard` rendered in English without a redirect; the URL never carried the locale. URL prefix is now the source of truth.)
+
+**SCN-I18N-003** (modified): Switcher selection persists locale AND navigates the URL.
+
+- GIVEN the user is on `/dashboard` with no cookie set
+- WHEN the user opens the switcher and selects "English"
+- THEN `document.cookie` contains `NEXT_LOCALE=en; path=/; max-age=31536000`
+- AND `localStorage.getItem("NEXT_LOCALE")` equals `"en"`
+- AND the URL becomes `/en/dashboard`
+- AND `router.refresh()` re-renders the RSC tree (`<html lang="en">`)
+- (Previously: under v1 cookie-only mode, the URL stayed at `/dashboard` and the user landed on the Spanish dashboard rendered in English, breaking bookmark/sharing semantics.)
+
+### New Scenarios
+
+**SCN-I18N-013**: URL prefix wins over cookie.
+
+- GIVEN a request to `GET /en/dashboard` with `NEXT_LOCALE=es` cookie
+- WHEN the middleware resolves the locale
+- THEN the response is HTTP 200 with `<html lang="en">`
+- AND no redirect is issued (URL prefix has priority Prio 1 in `resolveLocale.tsx`).
+
+**SCN-I18N-014**: Locale-aware auth bounce for non-default locale.
+
+- GIVEN an unauthenticated request to `GET /en/dashboard`
+- WHEN `updateSession` evaluates auth
+- THEN the response is HTTP 307 with `Location: /en/login?error=...`
+- AND NOT `/login?error=...`.
+
+**SCN-I18N-015**: Canonical redirect from cookie on root URL.
+
+- GIVEN a request to `GET /dashboard` with `NEXT_LOCALE=en` cookie
+- WHEN the middleware resolves the locale
+- THEN the response is HTTP 307 with `Location: /en/dashboard`
+- AND the canonical URL is preserved for bookmarking/sharing.
+
+### Rollback
+
+v2 satisfies v1's contract under the `NEXT_PUBLIC_I18N_ENABLED=false` kill-switch (URLs revert to cookie-only mode without code change). Single-PR revert is also clean — the 8-file diff reverts in one step. Cookie wipe (clear `NEXT_LOCALE` + `localStorage`) falls back to `Accept-Language` and root URLs.
