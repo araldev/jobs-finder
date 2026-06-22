@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { mockSupabaseAuth } from "@/lib/supabase/__mocks__/client";
-import { authCopy } from "@/lib/authCopy";
+import esMessages from "@/messages/es.json";
 import { renderWithIntl } from "@/test-utils";
 
 vi.mock("@/lib/supabase/client", () => ({
@@ -33,9 +33,9 @@ describe("EmailVerificationBanner — REQ-AUTH-006 / REQ-AUTH-007 / REQ-AUTH-008
     expect(
       await screen.findByRole("alert"),
     ).toBeInTheDocument();
-    expect(screen.getByText(authCopy.banner.title)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: authCopy.banner.resend })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: authCopy.banner.dismiss })).toBeInTheDocument();
+    expect(screen.getByText(esMessages.Auth.emailVerification.title)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: esMessages.Auth.emailVerification.resend })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: esMessages.Auth.emailVerification.dismiss })).toBeInTheDocument();
   });
 
   it("SCN-AUTH-006-2: NOT in DOM when email_confirmed_at is set", async () => {
@@ -54,7 +54,7 @@ describe("EmailVerificationBanner — REQ-AUTH-006 / REQ-AUTH-007 / REQ-AUTH-008
     await waitFor(() => {
       expect(container.querySelector('[role="alert"]')).toBeNull();
     });
-    expect(screen.queryByText(authCopy.banner.title)).not.toBeInTheDocument();
+    expect(screen.queryByText(esMessages.Auth.emailVerification.title)).not.toBeInTheDocument();
   });
 
   it("SCN-AUTH-007-2: calls getUser (NOT getSession) on mount", async () => {
@@ -104,7 +104,7 @@ describe("EmailVerificationBanner — REQ-AUTH-006 / REQ-AUTH-007 / REQ-AUTH-008
     }
 
     await waitFor(() => {
-      expect(screen.queryByText(authCopy.banner.title)).not.toBeInTheDocument();
+      expect(screen.queryByText(esMessages.Auth.emailVerification.title)).not.toBeInTheDocument();
     });
   });
 
@@ -118,7 +118,7 @@ describe("EmailVerificationBanner — REQ-AUTH-006 / REQ-AUTH-007 / REQ-AUTH-008
     mockSupabaseAuth.auth.resend.mockResolvedValueOnce({ data: {}, error: null });
 
     render(renderWithIntl(<EmailVerificationBanner />, { locale: "es" }));
-    const resendBtn = await screen.findByRole("button", { name: authCopy.banner.resend });
+    const resendBtn = await screen.findByRole("button", { name: esMessages.Auth.emailVerification.resend });
     fireEvent.click(resendBtn);
 
     await waitFor(() => {
@@ -140,7 +140,7 @@ describe("EmailVerificationBanner — REQ-AUTH-006 / REQ-AUTH-007 / REQ-AUTH-008
     const { unmount } = render(renderWithIntl(<EmailVerificationBanner />, { locale: "es" }));
     await screen.findByRole("alert");
 
-    const dismissBtn = screen.getByRole("button", { name: authCopy.banner.dismiss });
+    const dismissBtn = screen.getByRole("button", { name: esMessages.Auth.emailVerification.dismiss });
     fireEvent.click(dismissBtn);
 
     expect(sessionStorage.getItem("jf-verify-banner-dismissed")).toBe("1");
@@ -148,7 +148,7 @@ describe("EmailVerificationBanner — REQ-AUTH-006 / REQ-AUTH-007 / REQ-AUTH-008
     unmount();
     render(renderWithIntl(<EmailVerificationBanner />, { locale: "es" }));
     await waitFor(() => {
-      expect(screen.queryByText(authCopy.banner.title)).not.toBeInTheDocument();
+      expect(screen.queryByText(esMessages.Auth.emailVerification.title)).not.toBeInTheDocument();
     });
 
     sessionStorage.clear();
@@ -169,7 +169,7 @@ describe("EmailVerificationBanner — REQ-AUTH-006 / REQ-AUTH-007 / REQ-AUTH-008
     await screen.findByRole("alert");
     // The component must not import next/navigation router hooks.
     // This test passes as long as the banner renders without throwing.
-    expect(screen.getByText(authCopy.banner.title)).toBeInTheDocument();
+    expect(screen.getByText(esMessages.Auth.emailVerification.title)).toBeInTheDocument();
   });
 
   it("REQ-AUTH-026: no console.log call contains an email or @example.com", async () => {

@@ -9,8 +9,6 @@ import { createClient } from "@/lib/supabase/client";
 
 /**
  * GlobalSignoutButton — REQ-AUTH-019.
- *
- * Slice 5: migrated from `authCopy` to `useTranslations`.
  */
 export function GlobalSignoutButton() {
   const supabase = createClient();

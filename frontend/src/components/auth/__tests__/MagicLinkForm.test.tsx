@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockSupabaseAuth } from "@/lib/supabase/__mocks__/client";
-import { authCopy } from "@/lib/authCopy";
+import esMessages from "@/messages/es.json";
 import { renderWithIntl } from "@/test-utils";
 
 vi.mock("@/lib/supabase/client", () => ({
@@ -19,12 +19,12 @@ describe("MagicLinkForm — REQ-AUTH-017 / REQ-AUTH-018", () => {
   it("renders the email input + submit button", () => {
     render(renderWithIntl(<MagicLinkForm />, { locale: "es" }));
     expect(screen.getByLabelText("Email")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: authCopy.magicLink.submit })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: esMessages.Auth.magicLink.submit })).toBeInTheDocument();
   });
 
   it("SCN-AUTH-017-2: empty email keeps button disabled", () => {
     render(renderWithIntl(<MagicLinkForm />, { locale: "es" }));
-    const submit = screen.getByRole("button", { name: authCopy.magicLink.submit });
+    const submit = screen.getByRole("button", { name: esMessages.Auth.magicLink.submit });
     expect(submit).toBeDisabled();
   });
 
@@ -33,7 +33,7 @@ describe("MagicLinkForm — REQ-AUTH-017 / REQ-AUTH-018", () => {
     render(renderWithIntl(<MagicLinkForm />, { locale: "es" }));
 
     await user.type(screen.getByLabelText("Email"), "user@example.com");
-    await user.click(screen.getByRole("button", { name: authCopy.magicLink.submit }));
+    await user.click(screen.getByRole("button", { name: esMessages.Auth.magicLink.submit }));
 
     await waitFor(() => {
       expect(mockSupabaseAuth.auth.signInWithOtp).toHaveBeenCalledTimes(1);
@@ -44,7 +44,7 @@ describe("MagicLinkForm — REQ-AUTH-017 / REQ-AUTH-018", () => {
     expect(callArgs?.email).toBe("user@example.com");
     expect(callArgs?.options?.emailRedirectTo).toMatch(/\/auth\/callback\?next=\/dashboard$/);
     expect(
-      await screen.findByRole("heading", { name: authCopy.magicLink.successTitle }),
+      await screen.findByRole("heading", { name: esMessages.Auth.magicLink.successTitle }),
     ).toBeInTheDocument();
   });
 
@@ -58,7 +58,7 @@ describe("MagicLinkForm — REQ-AUTH-017 / REQ-AUTH-018", () => {
     render(renderWithIntl(<MagicLinkForm />, { locale: "es" }));
 
     await user.type(screen.getByLabelText("Email"), "user@example.com");
-    await user.click(screen.getByRole("button", { name: authCopy.magicLink.submit }));
+    await user.click(screen.getByRole("button", { name: esMessages.Auth.magicLink.submit }));
 
     await waitFor(() => {
       expect(mockSupabaseAuth.auth.signInWithOtp).toHaveBeenCalledTimes(1);

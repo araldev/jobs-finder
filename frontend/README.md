@@ -101,10 +101,12 @@ languages stay grammatically correct:
 
 All auth-related copy lives in `messages/{en,es}.json` under the
 `Auth` and `Validation` namespaces. Use `useTranslations('Auth.<area>')`
-in auth/settings components. The legacy `src/lib/authCopy.ts` file
-is marked `@deprecated` and will be deleted once the test files
-migrate off the `authCopy.X.Y` lookups. New code MUST use
-`useTranslations`.
+in auth/settings components. Server components (e.g. the reset-password
+page) use `getTranslations` from `next-intl/server` instead.
+
+The legacy `src/lib/authCopy.ts` seed dictionary was removed in
+`chore-frontend-i18n-cleanup` (June 2026). New code MUST use
+`useTranslations` / `getTranslations` — never import a copy seed.
 
 `useTranslations('Dashboard').then(t => t('stats.totalJobs', { count: 5 }))`
 → ES `"5 trabajos"` · EN `"5 jobs"`.

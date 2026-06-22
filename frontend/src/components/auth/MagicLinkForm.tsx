@@ -17,9 +17,9 @@ import { magicLinkSchema, type MagicLinkValues } from "@/lib/validation/authSche
  * Calls `supabase.auth.signInWithOtp({ email, options: { emailRedirectTo } })`
  * with `emailRedirectTo = ${origin}/auth/callback?next=/dashboard`.
  *
- * Slice 5: migrated from `authCopy` to `useTranslations`. The "tu@email.com"
- * placeholder is now a translation key (`Auth.magicLink.placeholder` would
- * be added in a follow-up if we want to localize it).
+ * The "tu@email.com" placeholder is a translation key
+ * (`Auth.magicLink.placeholder` would be added in a follow-up if we want
+ * to localize it).
  */
 export interface MagicLinkFormProps {
   /** Pre-fill the email input from the parent's email field (optional). */

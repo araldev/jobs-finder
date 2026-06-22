@@ -20,8 +20,6 @@ import { resetPasswordSchema, type ResetPasswordValues } from "@/lib/validation/
  *
  * On success: `supabase.auth.updateUser({ password })` then
  * `router.replace('/dashboard')`. On error: localized toast.
- *
- * Slice 5: migrated from `authCopy` to `useTranslations`.
  */
 export function ResetPasswordForm() {
   const supabase = createClient();

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockSupabaseAuth } from "@/lib/supabase/__mocks__/client";
-import { authCopy } from "@/lib/authCopy";
+import esMessages from "@/messages/es.json";
 import { cleanupJobsFinderLocalStorage } from "@/lib/auth/cleanupJobsFinderLocalStorage";
 import { renderWithIntl } from "@/test-utils";
 
@@ -79,7 +79,7 @@ describe("DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013", (
     render(renderWithIntl(<DeleteAccountDialog userEmail={USER_EMAIL} />, { locale: "es" }));
 
     // Open the dialog
-    await user.click(screen.getByRole("button", { name: authCopy.delete.triggerLabel }));
+    await user.click(screen.getByRole("button", { name: esMessages.Auth.deleteAccount.triggerLabel }));
 
     await waitFor(() => {
       expect(
@@ -92,7 +92,7 @@ describe("DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013", (
     const user = userEvent.setup();
     render(renderWithIntl(<DeleteAccountDialog userEmail={USER_EMAIL} />, { locale: "es" }));
 
-    await user.click(screen.getByRole("button", { name: authCopy.delete.triggerLabel }));
+    await user.click(screen.getByRole("button", { name: esMessages.Auth.deleteAccount.triggerLabel }));
 
     // Wait for the dialog to open
     await waitFor(() => {
@@ -104,17 +104,17 @@ describe("DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013", (
     const input = screen.getByTestId("delete-account-confirm-input");
     await user.type(input, "different@example.com");
 
-    const confirmBtn = screen.getByRole("button", { name: authCopy.delete.confirmSubmit });
+    const confirmBtn = screen.getByRole("button", { name: esMessages.Auth.deleteAccount.confirmSubmit });
     expect(confirmBtn).toBeDisabled();
     expect(confirmBtn).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByText(authCopy.validation.deleteEmailMismatch)).toBeInTheDocument();
+    expect(screen.getByText(esMessages.Validation.deleteEmailMismatch)).toBeInTheDocument();
   });
 
   it("SCN-AUTH-011-2: case-insensitive trim match → confirm enabled", async () => {
     const user = userEvent.setup();
     render(renderWithIntl(<DeleteAccountDialog userEmail={USER_EMAIL} />, { locale: "es" }));
 
-    await user.click(screen.getByRole("button", { name: authCopy.delete.triggerLabel }));
+    await user.click(screen.getByRole("button", { name: esMessages.Auth.deleteAccount.triggerLabel }));
 
     await waitFor(() => {
       expect(
@@ -125,7 +125,7 @@ describe("DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013", (
     const input = screen.getByTestId("delete-account-confirm-input");
     await user.type(input, "  USER@EXAMPLE.COM  ");
 
-    const confirmBtn = screen.getByRole("button", { name: authCopy.delete.confirmSubmit });
+    const confirmBtn = screen.getByRole("button", { name: esMessages.Auth.deleteAccount.confirmSubmit });
     expect(confirmBtn).not.toBeDisabled();
   });
 
@@ -138,7 +138,7 @@ describe("DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013", (
     mockSupabaseAuth.rpc.mockResolvedValueOnce({ data: null, error: null });
 
     render(renderWithIntl(<DeleteAccountDialog userEmail={USER_EMAIL} />, { locale: "es" }));
-    await user.click(screen.getByRole("button", { name: authCopy.delete.triggerLabel }));
+    await user.click(screen.getByRole("button", { name: esMessages.Auth.deleteAccount.triggerLabel }));
 
     await waitFor(() => {
       expect(
@@ -149,7 +149,7 @@ describe("DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013", (
     const input = screen.getByTestId("delete-account-confirm-input");
     await user.type(input, USER_EMAIL);
 
-    const confirmBtn = screen.getByRole("button", { name: authCopy.delete.confirmSubmit });
+    const confirmBtn = screen.getByRole("button", { name: esMessages.Auth.deleteAccount.confirmSubmit });
     await user.click(confirmBtn);
 
     await waitFor(() => {
@@ -190,7 +190,7 @@ describe("DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013", (
     });
 
     render(renderWithIntl(<DeleteAccountDialog userEmail={USER_EMAIL} />, { locale: "es" }));
-    await user.click(screen.getByRole("button", { name: authCopy.delete.triggerLabel }));
+    await user.click(screen.getByRole("button", { name: esMessages.Auth.deleteAccount.triggerLabel }));
 
     await waitFor(() => {
       expect(
@@ -201,7 +201,7 @@ describe("DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013", (
     const input = screen.getByTestId("delete-account-confirm-input");
     await user.type(input, USER_EMAIL);
 
-    const confirmBtn = screen.getByRole("button", { name: authCopy.delete.confirmSubmit });
+    const confirmBtn = screen.getByRole("button", { name: esMessages.Auth.deleteAccount.confirmSubmit });
     fireEvent.click(confirmBtn);
 
     await waitFor(() => {
@@ -234,7 +234,7 @@ describe("DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013", (
     });
 
     render(renderWithIntl(<DeleteAccountDialog userEmail={USER_EMAIL} />, { locale: "es" }));
-    await user.click(screen.getByRole("button", { name: authCopy.delete.triggerLabel }));
+    await user.click(screen.getByRole("button", { name: esMessages.Auth.deleteAccount.triggerLabel }));
 
     await waitFor(() => {
       expect(
@@ -245,7 +245,7 @@ describe("DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013", (
     const input = screen.getByTestId("delete-account-confirm-input");
     await user.type(input, USER_EMAIL);
 
-    const confirmBtn = screen.getByRole("button", { name: authCopy.delete.confirmSubmit });
+    const confirmBtn = screen.getByRole("button", { name: esMessages.Auth.deleteAccount.confirmSubmit });
     fireEvent.click(confirmBtn);
 
     await waitFor(() => {

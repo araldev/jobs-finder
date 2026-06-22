@@ -12,8 +12,6 @@ import { changePasswordSchema, type ChangePasswordValues } from "@/lib/validatio
 
 /**
  * ChangePasswordForm — REQ-AUTH-015 / REQ-AUTH-016.
- *
- * Slice 5: migrated from `authCopy` to `useTranslations`.
  */
 export function ChangePasswordForm() {
   const supabase = createClient();
