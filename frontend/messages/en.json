@@ -40,5 +40,36 @@
       "description": "The page you're looking for doesn't exist or has moved.",
       "home": "Back to home"
     }
+  },
+  "Navigation": {
+    "dashboard": {
+      "label": "Dashboard",
+      "description": "Overview of your job listings",
+      "screenReader": "Dashboard, current page"
+    },
+    "search": {
+      "label": "Search",
+      "description": "Find jobs by keyword, location, or source",
+      "screenReader": "Search, current page"
+    },
+    "favorites": {
+      "label": "Favorites",
+      "description": "Jobs you saved for later",
+      "screenReader": "Favorites, current page"
+    },
+    "jobDetail": {
+      "label": "Job Detail",
+      "description": "Full posting information",
+      "screenReader": "Job detail, current page"
+    },
+    "settings": {
+      "label": "Settings",
+      "description": "Platform configuration and preferences",
+      "screenReader": "Settings, current page"
+    },
+    "fallback": {
+      "label": "Jobs Finder",
+      "description": "Smart job discovery across LinkedIn, Indeed, and InfoJobs"
+    }
   }
 }
