@@ -25,8 +25,16 @@ export function stripLocalePrefix(path: string): string {
   return path;
 }
 
-export async function updateSession(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request });
+export async function updateSession(
+  request: NextRequest,
+  baseResponse?: NextResponse,
+): Promise<NextResponse> {
+  // Use the caller-provided response as the base so middleware-chain
+  // callers (e.g. next-intl) can pre-set headers like `x-middleware-rewrite`
+  // that must survive into the final response. When called standalone
+  // (e.g. from tests or the kill-switch branch), fall back to a fresh
+  // NextResponse.next() so the original contract is preserved.
+  const response = baseResponse ?? NextResponse.next({ request });
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -40,9 +48,8 @@ export async function updateSession(request: NextRequest) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value),
           );
-          supabaseResponse = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options),
+            response.cookies.set(name, value, options),
           );
         },
       },
@@ -118,5 +125,5 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  return supabaseResponse;
+  return response;
 }
