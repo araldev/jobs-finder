@@ -3,30 +3,34 @@ import { defineRouting } from "next-intl/routing";
 /**
  * Single source of truth for the locale routing config.
  *
- * v1 — pragmatic mode (`localePrefix: 'never'`):
+ * v2 — `localePrefix: 'as-needed'` (canonical URL mode):
  * - Locales: only Spanish and English.
  * - `defaultLocale: 'es'`: preserves the current audience + existing
- *   `<html lang="es">` baseline. With `localePrefix: 'never'`, every
- *   page URL stays unprefixed (`/dashboard`, `/login`).
- * - Locale is resolved by the next-intl middleware from the
- *   `NEXT_LOCALE` cookie first, then the `Accept-Language` header,
- *   then defaults to `es`. The middleware sets the cookie and tells
- *   the render tree which locale to use via `setRequestLocale(locale)`
- *   + `getMessages()` in `[locale]/layout.tsx`.
- * - The LanguageSwitcher writes `NEXT_LOCALE=en`, calls `router.refresh()`,
- *   and the page re-renders in English. URL stays the same.
+ *   `<html lang="es">` baseline. Default-locale URLs stay unprefixed
+ *   (`/dashboard`, `/login`).
+ * - Non-default locales get a prefix (`/en/dashboard`, `/en/login`)
+ *   — these are canonical, shareable, SaaS-grade URLs.
+ * - Locale precedence (verified in next-intl 4.x `resolveLocale.tsx`
+ *   Prio 1):
+ *   1. URL path prefix (`/en/...`)
+ *   2. `NEXT_LOCALE` cookie
+ *   3. `Accept-Language` header
+ *   4. `defaultLocale` (`es`)
  *
- * v2 candidate (deferred): `localePrefix: 'as-needed'` WITH the
- * `[locale]/` route segment — gives canonical shareable URLs like
- * `/en/dashboard`. Requires moving every page under `app/[locale]/...`
- * (tracked as follow-up `feat-frontend-i18n-locale-prefix-urls`).
+ * The `[locale]/` route segment was added in slice 16 so these URLs
+ * actually resolve to real routes (previously this config caused 404s).
+ * The middleware chain in `frontend/src/middleware.ts` uses the
+ * `baseResponse` pattern so the intl middleware's `x-middleware-rewrite`
+ * header survives into the final response — Supabase's `updateSession`
+ * reads it to build locale-aware auth redirects (e.g. unauth on
+ * `/en/dashboard` → `/en/login`, not `/login`).
  *
- * Closes REQ-I18N-001, REQ-I18N-002, REQ-I18N-003, REQ-I18N-004.
+ * Closes REQ-I18N-001, REQ-I18N-002 (modified), REQ-I18N-003, REQ-I18N-004.
  */
 export const routing = defineRouting({
   locales: ["es", "en"] as const,
   defaultLocale: "es",
-  localePrefix: "never",
+  localePrefix: "as-needed",
   localeDetection: true,
 });
 
