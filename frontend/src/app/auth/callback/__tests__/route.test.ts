@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { NextRequest } from "next/server";
+import { NextRequest } from "next/server";
 import { GET } from "../route";
 import { authCopy } from "@/lib/authCopy";
 
@@ -27,8 +27,26 @@ beforeEach(() => {
   });
 });
 
-function makeRequest(path: string): NextRequest {
-  return new Request(`http://localhost:3000${path}`) as unknown as NextRequest;
+/**
+ * Build a NextRequest that may include a `NEXT_LOCALE` cookie (mimicking
+ * the cookie the LanguageSwitcher writes client-side, REQ-I18N-016).
+ *
+ * `new NextRequest(url, { headers })` is required (NOT `new Request(...)`)
+ * because the callback reads `request.cookies.get(...)`, which only exists
+ * on the NextRequest class — the underlying Request polyfill doesn't have
+ * a `cookies` property, so a `Request`-cast throws "Cannot read properties
+ * of undefined (reading 'get')".
+ */
+function makeRequest(
+  path: string,
+  options: { locale?: "es" | "en" } = {},
+): NextRequest {
+  const url = `http://localhost:3000${path}`;
+  const headers = new Headers();
+  if (options.locale) {
+    headers.append("cookie", `NEXT_LOCALE=${options.locale}`);
+  }
+  return new NextRequest(url, { headers });
 }
 
 describe("auth/callback — ?next= open-redirect defense (REQ-AUTH-022)", () => {
@@ -87,5 +105,87 @@ describe("auth/callback — ?next= open-redirect defense (REQ-AUTH-022)", () => 
 
   it("regression: preserves authCopy import (no dead imports)", () => {
     expect(authCopy.forgot.title).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Locale-aware redirect target (REQ-I18N-016). v1 uses
+// `localePrefix: 'never'`, so URLs never carry a locale prefix. The
+// active locale flows via the `NEXT_LOCALE` cookie (read by the next-intl
+// middleware on the next request) and is reflected in `<html lang>` +
+// translated strings — NOT in the URL itself. The callback therefore
+// always lands on the canonical unprefixed path; the locale middleware
+// picks up the cookie on the next request.
+//
+// This is a regression block — it documents the v1 contract so a future
+// `feat-frontend-i18n-locale-prefix-urls` follow-up (which would
+// reintroduce `/[locale]/` segments + URL prefixes) updates these tests
+// in lockstep with the route migration.
+// ---------------------------------------------------------------------------
+
+describe("auth/callback — locale-aware redirect (REQ-I18N-016, v1 contract)", () => {
+  it("no NEXT_LOCALE cookie → /dashboard (default locale)", async () => {
+    const res = await GET(makeRequest("/auth/callback?code=abc"));
+    expect(res.headers.get("location")).toBe("http://localhost:3000/dashboard");
+  });
+
+  it("NEXT_LOCALE=es cookie → /dashboard (default locale)", async () => {
+    const res = await GET(
+      makeRequest("/auth/callback?code=abc", { locale: "es" }),
+    );
+    expect(res.headers.get("location")).toBe("http://localhost:3000/dashboard");
+  });
+
+  it("NEXT_LOCALE=en cookie + no next → /dashboard (locale is in cookie, not URL)", async () => {
+    const res = await GET(
+      makeRequest("/auth/callback?code=abc", { locale: "en" }),
+    );
+    expect(res.headers.get("location")).toBe("http://localhost:3000/dashboard");
+  });
+
+  it("NEXT_LOCALE=en cookie + next=/reset-password → /reset-password", async () => {
+    const res = await GET(
+      makeRequest("/auth/callback?code=abc&next=/reset-password", {
+        locale: "en",
+      }),
+    );
+    expect(res.headers.get("location")).toBe(
+      "http://localhost:3000/reset-password",
+    );
+  });
+
+  it("NEXT_LOCALE=en cookie + next=/jobs/123 → /jobs/123", async () => {
+    const res = await GET(
+      makeRequest("/auth/callback?code=abc&next=/jobs/123", { locale: "en" }),
+    );
+    expect(res.headers.get("location")).toBe(
+      "http://localhost:3000/jobs/123",
+    );
+  });
+
+  it("NEXT_LOCALE=en cookie + exchangeCodeForSession rejects → /login?error=…", async () => {
+    exchangeCodeForSession.mockResolvedValueOnce({
+      data: { user: { id: "user-1", email: "u@example.com" } },
+      error: new Error("bad code"),
+    });
+    const res = await GET(
+      makeRequest("/auth/callback?code=bad&next=/dashboard", { locale: "en" }),
+    );
+    expect(res.headers.get("location")).toBe(
+      `http://localhost:3000/login?error=${encodeURIComponent("bad code")}`,
+    );
+  });
+
+  it("NEXT_LOCALE=fr (unknown) → still /dashboard (locale cookie is ignored, no /fr/ URL is produced)", async () => {
+    // Unknown locale values are harmless: no prefix is added because
+    // the v1 contract is "URLs never carry a locale prefix". The
+    // cookie itself is opaque to this route — the next-intl middleware
+    // ignores unknown values.
+    const url = "http://localhost:3000/auth/callback?code=abc";
+    const headers = new Headers();
+    headers.append("cookie", "NEXT_LOCALE=fr");
+    const req = new NextRequest(url, { headers });
+    const res = await GET(req);
+    expect(res.headers.get("location")).toBe("http://localhost:3000/dashboard");
   });
 });

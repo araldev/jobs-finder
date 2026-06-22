@@ -39,32 +39,38 @@ export async function middleware(request: NextRequest) {
     return await updateSession(request);
   }
 
+  // Run the next-intl middleware first. With `localePrefix: 'as-needed'`
+  // and no `[locale]/` route segment, this issues an INTERNAL REWRITE
+  // (header `x-middleware-rewrite`) for non-default locales so the URL
+  // the browser sees (`/en/dashboard`) maps to the canonical app route
+  // (`/dashboard`) at render time. We must pass that response as the
+  // `baseResponse` to `updateSession` so the rewrite header survives —
+  // otherwise we'd discard it and the user would see a 404 on every
+  // `/en/*` URL (REQ-I18N-002 + REQ-I18N-015).
   const intlResponse = intlMiddleware(request);
-  const supabaseResponse = await updateSession(request);
 
-  // Preserve any NEXT_LOCALE cookie that next-intl set.
-  intlResponse.cookies.getAll().forEach(({ name, value }) =>
-    supabaseResponse.cookies.set(name, value),
-  );
-
-  return supabaseResponse;
+  // `updateSession` mutates the base response (adds Supabase cookies).
+  // When auth forces a redirect (e.g. protected /dashboard with no user),
+  // it returns a fresh NextResponse.redirect() that overrides the base —
+  // the intl redirect target is locale-aware so the bounce lands on the
+  // correct-locale login page.
+  return await updateSession(request, intlResponse);
 }
 
 export const config = {
   matcher: [
     /*
      * Match all request paths except:
+     * - /api/*  (server-side proxies; never translated, never redirected)
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.svg (favicon)
      * - public folder files (.svg, .png, etc.)
      *
-     * Note: we intentionally do NOT exclude `/api/*` here because the
-     * Supabase `updateSession` middleware short-circuits API routes
-     * internally (it never redirects them and always allows access).
-     * next-intl's middleware is also safe on API routes — it only sets
-     * a cookie and never rewrites non-page URLs.
+     * We MUST exclude /api/* because the intl middleware would otherwise
+     * rewrite `/api/jobs` → `/en/api/jobs` for an English-locale visitor,
+     * breaking the route handlers that the browser fetches via fetch().
      */
-    "/((?!_next/static|_next/image|favicon.svg|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!api|_next/static|_next/image|favicon.svg|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

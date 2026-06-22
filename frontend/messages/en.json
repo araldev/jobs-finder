@@ -346,7 +346,7 @@
       "rateLimit": "Too many chat requests. Wait a moment and try again."
     }
   },
-  "Jobs.errors": {
+  "JobsErrors": {
     "loadFailed": "Could not load jobs. Please try again.",
     "detailFailed": "Could not load job details.",
     "statsFailed": "Could not load stats."
@@ -429,5 +429,10 @@
       "tooBig": "File must be under 5MB",
       "mustSignIn": "Sign in to upload your CV"
     }
+  },
+  "Footer": {
+    "privacyNote": "Spanish only — English version coming soon",
+    "privacy": "Privacy policy",
+    "copyright": "© 2024 Jobs Finder. All rights reserved."
   }
 }

@@ -74,3 +74,4 @@ describe("updateSession — publicPaths whitelist (REQ-AUTH-021)", () => {
     expect(res.status).toBe(200);
   });
 });
+

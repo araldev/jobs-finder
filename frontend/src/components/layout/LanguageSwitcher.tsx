@@ -1,25 +1,11 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Languages, Check } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { routing, LOCALE_LABELS, type Locale } from "@/i18n/routing";
-
-/**
- * Re-implementation of the strip-prefix helper for client-side use.
- * Identical to the one in `@/lib/supabase/middleware.ts` but kept local
- * so the LanguageSwitcher doesn't need to import from the middleware
- * (which is server-only conceptually). Tests assert identical behavior.
- */
-function stripLocalePrefix(path: string): string {
-  for (const l of routing.locales) {
-    if (path === `/${l}`) return "/";
-    if (path.startsWith(`/${l}/`)) return path.slice(l.length + 1);
-  }
-  return path;
-}
 
 interface LanguageSwitcherProps {
   /** True when mounted in the footer (text + icon variant) vs the header (icon-only). */
@@ -46,20 +32,19 @@ export function LanguageSwitcher({ inFooter = false }: LanguageSwitcherProps) {
   const t = useTranslations("Common");
   const locale = useLocale() as Locale;
   const router = useRouter();
-  const pathname = usePathname();
   const reducedMotion = useReducedMotion();
 
   function switchTo(target: Locale) {
+    // v1 uses `localePrefix: 'never'`, so URLs never carry a locale prefix.
+    // The switcher only needs to set the NEXT_LOCALE cookie (so the
+    // next-intl middleware picks it up on the next request) and force
+    // the RSC tree to re-render via router.refresh(). No router.push().
     document.cookie = `NEXT_LOCALE=${target}; path=/; max-age=31536000; SameSite=Lax`;
     try {
       localStorage.setItem("NEXT_LOCALE", target);
     } catch {
       // localStorage may throw in private mode / SSR mocks — ignore.
     }
-    const stripped = stripLocalePrefix(pathname);
-    const nextPath =
-      target === routing.defaultLocale ? stripped : `/${target}${stripped}`;
-    router.push(nextPath);
     router.refresh();
   }
 

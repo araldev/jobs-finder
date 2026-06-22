@@ -1,51 +1,32 @@
 import type { Metadata } from "next";
-import { getLocale, getMessages, setRequestLocale } from "next-intl/server";
-import { NextIntlClientProvider } from "next-intl";
-import "./globals.css";
-import { Providers } from "./providers";
+
+/**
+ * Root layout — required by Next.js, but minimal.
+ *
+ * All locale-specific layout lives in `app/[locale]/layout.tsx`
+ * (which sets the dynamic `<html lang>`, wraps children in
+ * `NextIntlClientProvider`, and renders the providers chain).
+ *
+ * The reason for the split is next-intl 4.x's standard pattern:
+ * `app/[locale]/` is the localized segment, so the locale parameter
+ * is available to `setRequestLocale(locale)` and `getMessages()`
+ * before the children render. The root layout exists only to
+ * satisfy Next.js's requirement that `app/layout.tsx` be present.
+ *
+ * See: https://next-intl.dev/docs/getting-started/app-router/with-i18n-routing
+ */
 
 export const metadata: Metadata = {
   title: "Jobs Finder",
-  description: "Encuentra tu próximo empleo. Busca en LinkedIn, Indeed e InfoJobs simultáneamente.",
+  description:
+    "Find your next job across LinkedIn, Indeed, and InfoJobs.",
   icons: {
     icon: "/favicon.svg",
   },
 };
 
-/**
- * Root layout — RSC (no 'use client' directive). Resolves the active
- * locale from next-intl's middleware-set request context and wraps the
- * tree in `<NextIntlClientProvider>` so client components can call
- * `useTranslations('Namespace')` from anywhere downstream.
- *
- * `setRequestLocale(locale)` is REQUIRED by next-intl 3.x+ for static
- * rendering — without it, every child that calls `useTranslations` from
- * a server component would log "static rendering not enabled" warnings
- * (design §Provider Boundary, D7).
- *
- * `<html lang={locale}>` flips ES ↔ EN so screen readers and search
- * engines see the right document language.
- *
- * Closes REQ-I18N-005 (dynamic `<html lang>`) and REQ-I18N-018 (the
- * `NextIntlClientProvider` boundary so client components can translate).
- */
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  const locale = await getLocale();
-  const messages = await getMessages();
-  // Make the locale available to all server-side child renders in this
-  // request. next-intl's static rendering requires this — see
-  // https://next-intl.dev/docs/getting-started/app-router#static-rendering
-  setRequestLocale(locale);
-
-  return (
-    <html lang={locale} suppressHydrationWarning>
-      <body className="font-sans antialiased">
-        <NextIntlClientProvider locale={locale} messages={messages}>
-          <Providers>{children}</Providers>
-        </NextIntlClientProvider>
-      </body>
-    </html>
-  );
+  return children;
 }

@@ -25,8 +25,16 @@ export function stripLocalePrefix(path: string): string {
   return path;
 }
 
-export async function updateSession(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request });
+export async function updateSession(
+  request: NextRequest,
+  baseResponse?: NextResponse,
+): Promise<NextResponse> {
+  // Use the caller-provided response as the base so middleware-chain
+  // callers (e.g. next-intl) can pre-set headers like `x-middleware-rewrite`
+  // that must survive into the final response. When called standalone
+  // (e.g. from tests or the kill-switch branch), fall back to a fresh
+  // NextResponse.next() so the original contract is preserved.
+  const response = baseResponse ?? NextResponse.next({ request });
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -40,9 +48,8 @@ export async function updateSession(request: NextRequest) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value),
           );
-          supabaseResponse = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options),
+            response.cookies.set(name, value, options),
           );
         },
       },
@@ -58,9 +65,10 @@ export async function updateSession(request: NextRequest) {
   // are part of the public auth flow (REQ-AUTH-021) so an unauthenticated
   // user can request + complete a password reset without bouncing to /login.
   //
-  // With i18n enabled, the request may carry a locale prefix (`/en/dashboard`).
-  // Strip it before comparing so `publicPaths.some(...)` still matches the
-  // canonical Spanish-path shape (REQ-I18N-004).
+  // v1 uses `localePrefix: 'never'`, so URLs never carry a locale prefix.
+  // The `stripLocalePrefix` helper remains as a defensive no-op for the
+  // future `feat-frontend-i18n-locale-prefix-urls` follow-up that will
+  // reintroduce the `[locale]/` route segment.
   const publicPaths = [
     "/jobs",
     "/login",
@@ -80,43 +88,22 @@ export async function updateSession(request: NextRequest) {
   // Las APIs son siempre accesibles
   const isApi = request.nextUrl.pathname.startsWith("/api");
 
-  // Si la ruta NO es pública, NO es la raíz, NO es API, y NO hay usuario → redirect a /login
-  // The redirect target MUST be locale-aware: if the user was on `/en/dashboard`,
-  // they should be bounced to `/en/login`, not `/login`.
+  // Si la ruta NO es pública, NO es la raíz, NO es API, y NO hay usuario → redirect a /login.
   if (!user && !isPublic && !isRoot && !isApi) {
     const url = request.nextUrl.clone();
-    // Re-derive the locale prefix from the original pathname so the
-    // bounce lands on the right locale. For non-default locales we
-    // preserve the `/<locale>` prefix; for the default locale (es)
-    // and unprefixed routes the path stays as-is.
-    const localePrefix = routing.locales.find(
-      (l) =>
-        request.nextUrl.pathname === `/${l}` ||
-        request.nextUrl.pathname.startsWith(`/${l}/`),
-    );
-    url.pathname = localePrefix && localePrefix !== routing.defaultLocale
-      ? `/${localePrefix}/login`
-      : "/login";
+    url.pathname = "/login";
     return NextResponse.redirect(url);
   }
 
-  // Si está logueado y va a /login → redirect a /dashboard
-  // Mirror the same locale-aware redirect.
+  // Si está logueado y va a /login → redirect a /dashboard.
   if (
     user &&
     (strippedPath === "/login" || strippedPath.startsWith("/login/"))
   ) {
     const url = request.nextUrl.clone();
-    const localePrefix = routing.locales.find(
-      (l) =>
-        request.nextUrl.pathname === `/${l}` ||
-        request.nextUrl.pathname.startsWith(`/${l}/`),
-    );
-    url.pathname = localePrefix && localePrefix !== routing.defaultLocale
-      ? `/${localePrefix}/dashboard`
-      : "/dashboard";
+    url.pathname = "/dashboard";
     return NextResponse.redirect(url);
   }
 
-  return supabaseResponse;
+  return response;
 }
