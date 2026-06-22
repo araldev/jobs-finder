@@ -2,6 +2,7 @@
 
 import { keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
 import type { HistoryResponse } from "@/types/job";
+import { sharedJobsArgs } from "./_queryKeys";
 
 interface UseJobsInfiniteArgs {
   q?: string;
@@ -15,7 +16,13 @@ export function useJobsInfinite(args: UseJobsInfiniteArgs = {}) {
   const { q, location, sources, pageSize = 20, enabled = true } = args;
 
   return useInfiniteQuery<HistoryResponse>({
-    queryKey: ["jobs", "infinite", q, location, sources, pageSize],
+    queryKey: [
+      "jobs",
+      "list",
+      sharedJobsArgs({ q, location, sources }),
+      "infinite",
+      pageSize,
+    ],
     placeholderData: keepPreviousData,
     queryFn: async ({ pageParam }) => {
       const params = new URLSearchParams();

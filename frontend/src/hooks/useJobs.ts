@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import type { HistoryResponse } from "@/types/job";
+import { sharedJobsArgs } from "./_queryKeys";
 
 interface UseJobsArgs {
   q?: string;
@@ -20,7 +21,17 @@ export function useJobs(args: UseJobsArgs = {}) {
   const qs = params.toString();
 
   return useQuery<HistoryResponse>({
-    queryKey: ["jobs", args.q, args.location, args.limit, args.sources],
+    queryKey: [
+      "jobs",
+      "list",
+      sharedJobsArgs({
+        q: args.q,
+        location: args.location,
+        sources: args.sources,
+      }),
+      "single",
+      args.limit ?? null,
+    ],
     queryFn: async () => {
       const res = await fetch(`/api/jobs${qs ? `?${qs}` : ""}`);
       if (!res.ok) throw new Error(`Failed to fetch jobs: ${res.status}`);
