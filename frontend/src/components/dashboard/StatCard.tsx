@@ -47,7 +47,6 @@ export function StatCard({
       }}
       className="relative overflow-hidden rounded-xl bg-gradient-to-br from-card to-card/50 p-4 ring-1 ring-border/50"
     >
-      {/* Top accent bar */}
       <div
         className={cn(
           "absolute inset-x-0 top-0 h-1",

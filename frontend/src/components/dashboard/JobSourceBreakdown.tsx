@@ -1,16 +1,13 @@
 "use client";
 
 import { useStats } from "@/hooks/useStats";
+import { useTranslations } from "next-intl";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState } from "@/components/shared/ErrorState";
 import { getPlatformColorClass } from "@/lib/formatters";
 import { formatRelativeDate } from "@/lib/formatters";
-
-const PLATFORM_LABELS: Record<string, string> = {
-  linkedin: "LinkedIn",
-  indeed: "Indeed",
-  infojobs: "InfoJobs",
-};
+import { useLocale } from "next-intl";
+import type { Locale } from "@/i18n/routing";
 
 const PLATFORM_ICONS: Record<string, string> = {
   linkedin: "in",
@@ -20,6 +17,8 @@ const PLATFORM_ICONS: Record<string, string> = {
 
 export function JobSourceBreakdown() {
   const { data, isLoading, isError, refetch } = useStats();
+  const t = useTranslations("Dashboard");
+  const locale = useLocale() as Locale;
 
   if (isLoading) {
     return (
@@ -32,7 +31,7 @@ export function JobSourceBreakdown() {
   }
 
   if (isError || !data) {
-    return null;
+    return <ErrorState message="Failed to load stats" onRetry={() => refetch()} />;
   }
 
   const distribution = data.platform_distribution ?? {};
@@ -43,7 +42,7 @@ export function JobSourceBreakdown() {
     return (
       <div className="rounded-xl border bg-card p-4 shadow-sm">
         <p className="py-4 text-center text-sm text-muted-foreground">
-          No platform data available yet
+          {t("platforms.noData")}
         </p>
       </div>
     );
@@ -53,7 +52,7 @@ export function JobSourceBreakdown() {
     <div className="rounded-xl border bg-card p-4 shadow-sm">
       <div className="grid grid-cols-3 gap-4">
         {entries.map(([platform, count]) => {
-          const label = PLATFORM_LABELS[platform] ?? platform;
+          const label = t(`platforms.${platform}` as never);
           const pct = total > 0 ? Math.round((count / total) * 100) : 0;
           return (
             <div
@@ -65,12 +64,12 @@ export function JobSourceBreakdown() {
               >
                 {PLATFORM_ICONS[platform] ?? platform.charAt(0).toUpperCase()}
               </span>
-              <span className="text-sm font-medium capitalize">{label}</span>
+              <span className="text-sm font-medium">{label}</span>
               <span className="font-mono text-lg font-bold tracking-tight">
                 {count}
               </span>
               <span className="text-xs text-muted-foreground">
-                {pct}% of total
+                {t("platforms.percentOfTotal", { pct })}
               </span>
             </div>
           );
@@ -78,7 +77,7 @@ export function JobSourceBreakdown() {
       </div>
       {data.last_sync && (
         <p className="mt-3 text-center text-xs text-muted-foreground">
-          Last synced {formatRelativeDate(data.last_sync)}
+          {t("stats.lastSync.label")} {formatRelativeDate(data.last_sync, locale)}
         </p>
       )}
     </div>

@@ -160,5 +160,49 @@
     "forgotEmailRequired": "Ingresá tu correo electrónico",
     "resetTokenRequired": "El token de restablecimiento es obligatorio",
     "deleteConfirmRequired": "Escribí tu correo para confirmar"
+  },
+  "Dashboard": {
+    "stats": {
+      "totalJobs": {
+        "label": "Total en base de datos",
+        "plural": "{count, plural, =0 {Sin trabajos} one {# trabajo} other {# trabajos}}"
+      },
+      "newJobs": {
+        "label": "Trabajos de hoy",
+        "plural": "{count, plural, =0 {Sin trabajos hoy} one {# trabajo hoy} other {# trabajos hoy}}"
+      },
+      "lastSync": {
+        "label": "Última sincronización"
+      },
+      "openedJobs": {
+        "label": "Ofertas clicadas",
+        "plural": "{count, plural, =0 {Sin clics aún} one {# oferta clickada} other {# ofertas clickadas}}"
+      },
+      "cvsAdapted": {
+        "label": "CVs adaptados",
+        "plural": "{count, plural, =0 {Sin CVs aún} one {# CV adaptado} other {# CVs adaptados}}"
+      },
+      "favorites": {
+        "label": "Favoritos",
+        "plural": "{count, plural, =0 {Sin favoritos aún} one {# favorito} other {# favoritos}}"
+      }
+    },
+    "rightSidebar": {
+      "summary": "Resumen",
+      "totalJobs": "Total de trabajos",
+      "sources": "Fuentes",
+      "lastSync": "Última sincronización",
+      "latestJobs": "Trabajos recientes",
+      "viewAllJobs": "Ver todos los trabajos",
+      "noJobsYet": "Aún no hay trabajos",
+      "jobsPerPlatform": "Trabajos por plataforma"
+    },
+    "platforms": {
+      "linkedin": "LinkedIn",
+      "indeed": "Indeed",
+      "infojobs": "InfoJobs",
+      "percentOfTotal": "{pct}% del total",
+      "noData": "Aún no hay datos de plataforma"
+    }
   }
 }

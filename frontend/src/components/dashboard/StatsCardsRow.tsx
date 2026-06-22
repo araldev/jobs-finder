@@ -1,6 +1,8 @@
 "use client";
 
 import { Briefcase, Clock, TrendingUp, Eye, FileText, Heart } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
+import type { Locale } from "@/i18n/routing";
 import { StatCard } from "./StatCard";
 import { useStats } from "@/hooks/useStats";
 import { useOpenedJobs } from "@/lib/chat-storage";
@@ -16,12 +18,6 @@ const PLATFORM_COLORS: Record<string, string> = {
   infojobs: "bg-[#e5335b]",
 };
 
-const PLATFORM_LABELS: Record<string, string> = {
-  linkedin: "LinkedIn",
-  indeed: "Indeed",
-  infojobs: "InfoJobs",
-};
-
 const PLATFORM_ICONS: Record<string, string> = {
   linkedin: "in",
   indeed: "i",
@@ -33,6 +29,8 @@ export function StatsCardsRow() {
   const openedJobIds = useOpenedJobs();
   const { favoriteCount } = useFavorites();
   const { cvAdaptedCount } = useCVAdapted();
+  const t = useTranslations("Dashboard");
+  const locale = useLocale() as Locale;
 
   if (isLoading) {
     return (
@@ -69,22 +67,22 @@ export function StatsCardsRow() {
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard
           icon={Briefcase}
-          label="Total en base de datos"
+          label={t("stats.totalJobs.label")}
           value={data.total_jobs > 0 ? data.total_jobs.toLocaleString() : "—"}
           accent="primary"
           delay={0}
         />
         <StatCard
           icon={TrendingUp}
-          label="Jobs de hoy"
+          label={t("stats.newJobs.label")}
           value={data.jobs_today > 0 ? data.jobs_today.toLocaleString() : "—"}
           accent="secondary"
           delay={0.05}
         />
         <StatCard
           icon={Clock}
-          label="Última sincronización"
-          value={data.last_sync ? formatRelativeDate(data.last_sync) : "—"}
+          label={t("stats.lastSync.label")}
+          value={data.last_sync ? formatRelativeDate(data.last_sync, locale) : "—"}
           accent="muted"
           delay={0.1}
         />
@@ -94,21 +92,21 @@ export function StatsCardsRow() {
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard
           icon={Eye}
-          label="Ofertas clicadas"
+          label={t("stats.openedJobs.label")}
           value={openedJobIds.size > 0 ? openedJobIds.size.toLocaleString() : "—"}
           accent="primary"
           delay={0.15}
         />
         <StatCard
           icon={FileText}
-          label="CVs adaptados"
+          label={t("stats.cvsAdapted.label")}
           value={cvAdaptedCount > 0 ? cvAdaptedCount.toLocaleString() : "—"}
           accent="secondary"
           delay={0.2}
         />
         <StatCard
           icon={Heart}
-          label="Favoritos"
+          label={t("stats.favorites.label")}
           value={favoriteCount > 0 ? favoriteCount.toLocaleString() : "—"}
           accent="muted"
           delay={0.25}
@@ -119,11 +117,11 @@ export function StatsCardsRow() {
       {platforms.length > 0 ? (
         <div className="rounded-xl bg-card p-3 ring-1 ring-border/50">
           <div className="mb-2 text-xs font-medium text-muted-foreground">
-            Jobs por plataforma
+            {t("rightSidebar.jobsPerPlatform")}
           </div>
           <div className="flex gap-4">
             {platforms.map(([platform, count]) => {
-              const label = PLATFORM_LABELS[platform] ?? platform;
+              const label = t(`platforms.${platform}` as never);
               const pct = data.total_jobs > 0 ? Math.round((count / data.total_jobs) * 100) : 0;
               return (
                 <div key={platform} className="flex items-center gap-2">
