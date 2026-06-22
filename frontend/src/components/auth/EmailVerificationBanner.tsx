@@ -14,8 +14,6 @@ import { createClient } from "@/lib/supabase/client";
  * when the signed-in user's email is still unverified. Does NOT block
  * routes — the user can use every (app) feature while the banner is
  * visible.
- *
- * Slice 5: migrated from `authCopy` to `useTranslations`.
  */
 const DISMISS_KEY = "jf-verify-banner-dismissed";
 

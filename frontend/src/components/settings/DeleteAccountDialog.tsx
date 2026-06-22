@@ -31,8 +31,6 @@ import { cleanupJobsFinderLocalStorage } from "@/lib/auth/cleanupJobsFinderLocal
 
 /**
  * DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013.
- *
- * Slice 5: migrated from `authCopy` to `useTranslations`.
  */
 export interface DeleteAccountDialogProps {
   /** The current user's email. Used for the typed-email safeguard. */

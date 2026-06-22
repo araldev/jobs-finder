@@ -23,7 +23,6 @@ import { forgotPasswordSchema, type ForgotPasswordValues } from "@/lib/validatio
  * No user-enumeration disclosure (REQ-AUTH-003): the success state is
  * byte-identical for known and unknown emails.
  *
- * Slice 5: replaces the `authCopy` imports with `useTranslations`.
  * Validation errors come back from Zod as translation KEYS (see
  * `lib/validation/authSchemas.ts`) and are resolved at render time via
  * `useTranslations('Validation')`.
