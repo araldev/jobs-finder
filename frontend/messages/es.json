@@ -204,5 +204,37 @@
       "percentOfTotal": "{pct}% del total",
       "noData": "Aún no hay datos de plataforma"
     }
+  },
+  "Jobs": {
+    "card": {
+      "view": "Ver",
+      "apply": "Aplicar ahora",
+      "posted": "Publicado {date}",
+      "location": "Ubicación",
+      "source": "Fuente",
+      "openExternal": "Abrir oferta de empleo"
+    },
+    "count": "{count, plural, =0 {Sin trabajos} one {# trabajo} other {# trabajos}}",
+    "applicants": "{count, plural, =0 {Sin aplicantes} one {# aplicante} other {# aplicantes}}",
+    "detail": {
+      "description": "Descripción",
+      "requirements": "Requisitos",
+      "benefits": "Beneficios",
+      "applyNow": "Aplicar ahora",
+      "backToList": "Volver a trabajos"
+    },
+    "modal": {
+      "generate": "Generar CV adaptado",
+      "downloading": "Generando…",
+      "consent": "Usaré este CV para generar una versión adaptada para este trabajo.",
+      "title": "Generar CV adaptado"
+    },
+    "favorite": {
+      "add": "Guardar en favoritos",
+      "remove": "Quitar de favoritos"
+    },
+    "noJobs": "No se encontraron trabajos",
+    "salary": "Salario",
+    "notSpecified": "No especificado"
   }
 }

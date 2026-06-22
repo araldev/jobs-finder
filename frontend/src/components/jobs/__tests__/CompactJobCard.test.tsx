@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { CompactJobCard } from "../CompactJobCard";
+import { renderWithIntl } from "@/test-utils";
 import type { Job } from "@/types/job";
 
 const mockJob: Job = {
@@ -37,36 +38,36 @@ afterEach(() => {
 
 describe("CompactJobCard", () => {
   it("renders job title and company", () => {
-    render(<CompactJobCard job={mockJob} />);
+    render(renderWithIntl(<CompactJobCard job={mockJob} />, { locale: "es" }));
     expect(screen.getByText("Software Engineer")).toBeInTheDocument();
     expect(screen.getByText("Acme Inc")).toBeInTheDocument();
   });
 
   it("renders location with MapPin icon", () => {
-    render(<CompactJobCard job={mockJob} />);
+    render(renderWithIntl(<CompactJobCard job={mockJob} />, { locale: "es" }));
     expect(screen.getByText("Remote")).toBeInTheDocument();
   });
 
   it("renders ExternalLink button", () => {
-    render(<CompactJobCard job={mockJob} />);
-    const button = screen.getByLabelText("Open job posting");
+    render(renderWithIntl(<CompactJobCard job={mockJob} />, { locale: "es" }));
+    const button = screen.getByLabelText("Abrir oferta de empleo");
     expect(button).toBeInTheDocument();
     expect(button).toHaveAttribute("type", "button");
   });
 
   it("renders FavoriteButton", () => {
-    render(<CompactJobCard job={mockJob} />);
-    const favButton = screen.getByLabelText("Save to favorites");
+    render(renderWithIntl(<CompactJobCard job={mockJob} />, { locale: "es" }));
+    const favButton = screen.getByLabelText("Guardar en favoritos");
     expect(favButton).toBeInTheDocument();
   });
 
   it("renders PlatformBadge", () => {
-    render(<CompactJobCard job={mockJob} />);
-    expect(screen.getByText("Linkedin")).toBeInTheDocument();
+    render(renderWithIntl(<CompactJobCard job={mockJob} />, { locale: "es" }));
+    expect(screen.getByText("LinkedIn")).toBeInTheDocument();
   });
 
   it("renders date", () => {
-    render(<CompactJobCard job={mockJob} />);
+    render(renderWithIntl(<CompactJobCard job={mockJob} />, { locale: "es" }));
     // Default locale is now Spanish (i18n slice 4). The date is "10 de jun. de 2026"
     // in ES or "Jun 10, 2026" in EN. Slice 8 will migrate the callsite to pass
     // the active locale explicitly; for now we accept either format.
@@ -74,7 +75,7 @@ describe("CompactJobCard", () => {
   });
 
   it("links to job detail page", () => {
-    render(<CompactJobCard job={mockJob} />);
+    render(renderWithIntl(<CompactJobCard job={mockJob} />, { locale: "es" }));
     const link = screen.getByRole("link", { name: /Software Engineer/ });
     expect(link).toHaveAttribute("href", "/jobs/job-1");
   });

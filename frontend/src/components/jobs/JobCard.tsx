@@ -2,8 +2,10 @@
 
 import { motion } from "framer-motion";
 import Link from "next/link";
+import { useLocale, useTranslations } from "next-intl";
 import { ExternalLink, MapPin, Calendar, Check } from "lucide-react";
 import type { Job } from "@/types/job";
+import type { Locale } from "@/i18n/routing";
 import { PlatformBadge } from "./PlatformBadge";
 import { FavoriteButton } from "./FavoriteButton";
 import { formatRelativeDate } from "@/lib/formatters";
@@ -15,6 +17,8 @@ interface JobCardProps {
 }
 
 export function JobCard({ job, index = 0, openedJobIds }: JobCardProps) {
+  const t = useTranslations("Jobs");
+  const locale = useLocale() as Locale;
   const isOpened = openedJobIds?.has(job.id);
   return (
     <motion.div
@@ -38,7 +42,7 @@ export function JobCard({ job, index = 0, openedJobIds }: JobCardProps) {
           {isOpened && (
             <span className="inline-flex items-center gap-1 rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-700">
               <Check className="h-3 w-3" />
-              Abierta
+              {t("detail.applyNow")}
             </span>
           )}
         </div>
@@ -63,7 +67,7 @@ export function JobCard({ job, index = 0, openedJobIds }: JobCardProps) {
         <div className="mt-3 flex items-center justify-between border-t pt-3">
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <Calendar className="h-3 w-3" />
-            {job.posted_at ? formatRelativeDate(job.posted_at) : "Unknown"}
+            {job.posted_at ? formatRelativeDate(job.posted_at, locale) : t("notSpecified")}
           </div>
           <div className="flex items-center gap-1">
             <FavoriteButton job={job} size="sm" />
@@ -76,10 +80,11 @@ export function JobCard({ job, index = 0, openedJobIds }: JobCardProps) {
                   window.open(job.url, "_blank", "noopener,noreferrer");
                 }}
                 className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground hover:bg-muted"
-                title="Open original posting"
+                title={t("card.openExternal")}
+                aria-label={t("card.openExternal")}
               >
                 <ExternalLink className="h-3.5 w-3.5" />
-                Apply
+                {t("card.apply")}
               </button>
             )}
           </div>

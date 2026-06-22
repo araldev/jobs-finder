@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { FavoriteButton } from "../FavoriteButton";
+import { renderWithIntl } from "@/test-utils";
 import type { Job } from "@/types/job";
 
 const mockJob: Job = {
@@ -30,53 +31,47 @@ afterEach(() => {
 
 describe("FavoriteButton", () => {
   it("renders outline heart when not favorited", () => {
-    render(<FavoriteButton job={mockJob} />);
+    render(renderWithIntl(<FavoriteButton job={mockJob} />, { locale: "es" }));
     const button = screen.getByRole("button");
     expect(button).toBeInTheDocument();
-    expect(button).toHaveAttribute("aria-label", "Save to favorites");
-    expect(button).toHaveAttribute("title", "Save to favorites");
+    expect(button).toHaveAttribute("aria-label", "Guardar en favoritos");
+    expect(button).toHaveAttribute("title", "Guardar en favoritos");
   });
 
   it("renders filled heart when favorited", () => {
-    render(<FavoriteButton job={mockJob} />);
+    render(renderWithIntl(<FavoriteButton job={mockJob} />, { locale: "es" }));
     const button = screen.getByRole("button");
 
-    // Click to favorite
     fireEvent.click(button);
 
-    // After toggle, should show filled state
-    expect(button).toHaveAttribute("aria-label", "Remove from favorites");
-    expect(button).toHaveAttribute("title", "Remove from favorites");
+    expect(button).toHaveAttribute("aria-label", "Quitar de favoritos");
+    expect(button).toHaveAttribute("title", "Quitar de favoritos");
   });
 
   it("click toggles state", () => {
-    render(<FavoriteButton job={mockJob} />);
+    render(renderWithIntl(<FavoriteButton job={mockJob} />, { locale: "es" }));
     const button = screen.getByRole("button");
 
-    // Initially not favorited
-    expect(button).toHaveAttribute("aria-label", "Save to favorites");
+    expect(button).toHaveAttribute("aria-label", "Guardar en favoritos");
 
-    // Click to favorite
     fireEvent.click(button);
-    expect(button).toHaveAttribute("aria-label", "Remove from favorites");
+    expect(button).toHaveAttribute("aria-label", "Quitar de favoritos");
 
-    // Click again to unfavorite
     fireEvent.click(button);
-    expect(button).toHaveAttribute("aria-label", "Save to favorites");
+    expect(button).toHaveAttribute("aria-label", "Guardar en favoritos");
   });
 
   it("click does not propagate", () => {
     const parentClick = vi.fn();
     const { container } = render(
       <div onClick={parentClick}>
-        <FavoriteButton job={mockJob} />
+        {renderWithIntl(<FavoriteButton job={mockJob} />, { locale: "es" })}
       </div>,
     );
 
     const button = container.querySelector("button")!;
     fireEvent.click(button);
 
-    // Parent click should not fire
     expect(parentClick).not.toHaveBeenCalled();
   });
 });
