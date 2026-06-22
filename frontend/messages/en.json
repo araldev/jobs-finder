@@ -294,5 +294,37 @@
       "signOut": "Sign out",
       "cV": "Your CV"
     }
+  },
+  "Chat": {
+    "fab": {
+      "label": "Open chat assistant"
+    },
+    "dialog": {
+      "title": "Chat with Jobs Finder"
+    },
+    "panel": {
+      "header": "AI Job Assistant"
+    },
+    "messages": {
+      "lookingFor": "Looking for:",
+      "matchingJobs": "Matching jobs",
+      "done": "Done",
+      "noMatches": "No matches yet"
+    },
+    "input": {
+      "placeholder": "Ask about jobs, e.g. \"remote React roles in Madrid\"",
+      "sendAriaLabel": "Send message"
+    },
+    "errors": {
+      "streamFailed": "The chat stream failed. Please try again.",
+      "connectionFailed": "Could not connect to the chat service.",
+      "generic": "The chat assistant is unavailable right now.",
+      "rateLimit": "Too many chat requests. Wait a moment and try again."
+    }
+  },
+  "Jobs.errors": {
+    "loadFailed": "Could not load jobs. Please try again.",
+    "detailFailed": "Could not load job details.",
+    "statsFailed": "Could not load stats."
   }
 }
