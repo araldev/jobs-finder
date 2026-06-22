@@ -3,16 +3,13 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { renderWithIntl } from "@/test-utils";
 
-const routerPushMock = vi.fn();
 const routerRefreshMock = vi.fn();
-const pathnameMock = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
-    push: routerPushMock,
     refresh: routerRefreshMock,
   }),
-  usePathname: () => pathnameMock(),
+  usePathname: () => "/dashboard",
 }));
 
 vi.mock("framer-motion", () => ({
@@ -27,12 +24,9 @@ vi.mock("framer-motion", () => ({
 // Import AFTER the mocks are registered.
 import { LanguageSwitcher } from "./LanguageSwitcher";
 
-describe("LanguageSwitcher — bilingual behavior", () => {
+describe("LanguageSwitcher — v1 cookie-based locale switching", () => {
   beforeEach(() => {
-    routerPushMock.mockClear();
     routerRefreshMock.mockClear();
-    pathnameMock.mockReset();
-    pathnameMock.mockReturnValue("/dashboard");
     document.cookie = "NEXT_LOCALE=; path=/; max-age=0";
     localStorage.clear();
   });
@@ -47,24 +41,21 @@ describe("LanguageSwitcher — bilingual behavior", () => {
     expect(screen.getByRole("button", { name: /idioma|language/i })).toBeTruthy();
   });
 
-  it("clicking 'English' sets NEXT_LOCALE=en cookie, localStorage, and routes to /en/<path>", async () => {
-    pathnameMock.mockReturnValue("/dashboard");
+  it("clicking 'English' sets NEXT_LOCALE=en cookie, localStorage, and triggers router.refresh()", async () => {
     const user = userEvent.setup();
 
     render(renderWithIntl(<LanguageSwitcher />, { locale: "es" }));
-    // Open the dropdown
     await user.click(screen.getByRole("button", { name: /idioma/i }));
-    // Click "English"
     await user.click(screen.getByRole("menuitemradio", { name: /english/i }));
 
     expect(document.cookie).toMatch(/NEXT_LOCALE=en/);
     expect(localStorage.getItem("NEXT_LOCALE")).toBe("en");
-    expect(routerPushMock).toHaveBeenCalledWith("/en/dashboard");
+    // v1 uses localePrefix: 'never', so the URL is NOT changed — only the
+    // cookie + refresh trigger the RSC tree re-render in the new locale.
     expect(routerRefreshMock).toHaveBeenCalled();
   });
 
-  it("clicking 'Español' on an /en/ route stays unprefixed (default locale = no prefix)", async () => {
-    pathnameMock.mockReturnValue("/en/dashboard");
+  it("clicking 'Español' sets NEXT_LOCALE=es cookie and triggers router.refresh()", async () => {
     const user = userEvent.setup();
 
     render(renderWithIntl(<LanguageSwitcher />, { locale: "en" }));
@@ -73,19 +64,7 @@ describe("LanguageSwitcher — bilingual behavior", () => {
 
     expect(document.cookie).toMatch(/NEXT_LOCALE=es/);
     expect(localStorage.getItem("NEXT_LOCALE")).toBe("es");
-    expect(routerPushMock).toHaveBeenCalledWith("/dashboard");
     expect(routerRefreshMock).toHaveBeenCalled();
-  });
-
-  it("strips locale prefix from sub-paths correctly", async () => {
-    pathnameMock.mockReturnValue("/en/jobs/abc-123");
-    const user = userEvent.setup();
-
-    render(renderWithIntl(<LanguageSwitcher />, { locale: "en" }));
-    await user.click(screen.getByRole("button", { name: /language/i }));
-    await user.click(screen.getByRole("menuitemradio", { name: /español/i }));
-
-    expect(routerPushMock).toHaveBeenCalledWith("/jobs/abc-123");
   });
 
   it("supports keyboard navigation (Tab → Enter → ArrowDown → Enter)", async () => {
@@ -100,23 +79,11 @@ describe("LanguageSwitcher — bilingual behavior", () => {
     await user.keyboard("{ArrowDown}"); // Move to first radio item
     await user.keyboard("{Enter}"); // Select
 
-    // Should have called push at least once with a locale-prefixed path
-    expect(routerPushMock).toHaveBeenCalled();
-  });
-
-  it("strips a leading /en/ prefix on /en", async () => {
-    pathnameMock.mockReturnValue("/en");
-    const user = userEvent.setup();
-
-    render(renderWithIntl(<LanguageSwitcher />, { locale: "en" }));
-    await user.click(screen.getByRole("button", { name: /language/i }));
-    await user.click(screen.getByRole("menuitemradio", { name: /español/i }));
-
-    expect(routerPushMock).toHaveBeenCalledWith("/");
+    // Selection triggers router.refresh(), not router.push() (v1).
+    expect(routerRefreshMock).toHaveBeenCalled();
   });
 
   it("survives prefers-reduced-motion (no spring, just opacity)", () => {
-    // Re-mock framer-motion to assert the reduced-motion branch is hit.
     vi.doMock("framer-motion", () => ({
       motion: {
         div: ({ children, transition, ...props }: { children: React.ReactNode; transition?: Record<string, unknown>; [key: string]: unknown }) => (

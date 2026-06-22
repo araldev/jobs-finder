@@ -346,7 +346,7 @@
       "rateLimit": "Demasiadas solicitudes de chat. Esperá un momento y volvé a intentar."
     }
   },
-  "Jobs.errors": {
+  "JobsErrors": {
     "loadFailed": "No pudimos cargar los trabajos. Intentá de nuevo.",
     "detailFailed": "No pudimos cargar los detalles del trabajo.",
     "statsFailed": "No pudimos cargar las estadísticas."
