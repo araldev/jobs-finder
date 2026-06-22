@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { Activity, BarChart3, ArrowRight } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
+import type { Locale } from "@/i18n/routing";
 import { useStats } from "@/hooks/useStats";
 import { useJobs } from "@/hooks/useJobs";
 import { PlatformBadge } from "@/components/jobs/PlatformBadge";
@@ -11,6 +13,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 export function RightSidebar() {
   const { data: stats, isLoading: statsLoading } = useStats();
   const { data: jobsData } = useJobs({ limit: 5 });
+  const t = useTranslations("Dashboard");
+  const locale = useLocale() as Locale;
 
   const sourceCount = stats?.platform_distribution
     ? Object.keys(stats.platform_distribution).length
@@ -19,12 +23,12 @@ export function RightSidebar() {
   return (
     <aside className="hidden w-72 flex-shrink-0 lg:block">
       <div className="sticky top-6 space-y-6">
-        {/* Summary — pure metric list (no card chrome, different from job cards) */}
+        {/* Summary */}
         <section>
           <div className="mb-3 flex items-center gap-2 text-muted-foreground">
             <BarChart3 className="h-3.5 w-3.5" />
             <h3 className="font-display text-xs font-semibold uppercase tracking-wider">
-              Summary
+              {t("rightSidebar.summary")}
             </h3>
           </div>
           {statsLoading ? (
@@ -35,22 +39,22 @@ export function RightSidebar() {
           ) : (
             <dl className="space-y-2 text-sm">
               <div className="flex items-baseline justify-between border-b border-dashed border-border/60 pb-2">
-                <dt className="text-muted-foreground">Total jobs</dt>
+                <dt className="text-muted-foreground">{t("rightSidebar.totalJobs")}</dt>
                 <dd className="font-mono font-semibold tabular-nums">
                   {stats?.total_jobs?.toLocaleString() ?? "—"}
                 </dd>
               </div>
               <div className="flex items-baseline justify-between border-b border-dashed border-border/60 pb-2">
-                <dt className="text-muted-foreground">Sources</dt>
+                <dt className="text-muted-foreground">{t("rightSidebar.sources")}</dt>
                 <dd className="font-mono font-semibold tabular-nums">
                   {sourceCount || "—"}
                 </dd>
               </div>
               {stats?.last_sync && (
                 <div className="flex items-baseline justify-between">
-                  <dt className="text-muted-foreground">Last sync</dt>
+                  <dt className="text-muted-foreground">{t("rightSidebar.lastSync")}</dt>
                   <dd className="font-mono text-xs">
-                    {formatRelativeDate(stats.last_sync)}
+                    {formatRelativeDate(stats.last_sync, locale)}
                   </dd>
                 </div>
               )}
@@ -58,12 +62,12 @@ export function RightSidebar() {
           )}
         </section>
 
-        {/* Latest Jobs — list style (rows, not cards) */}
+        {/* Latest Jobs */}
         <section>
           <div className="mb-3 flex items-center gap-2 text-muted-foreground">
             <Activity className="h-3.5 w-3.5" />
             <h3 className="font-display text-xs font-semibold uppercase tracking-wider">
-              Latest Jobs
+              {t("rightSidebar.latestJobs")}
             </h3>
           </div>
           {jobsData?.items && jobsData.items.length > 0 ? (
@@ -78,7 +82,7 @@ export function RightSidebar() {
                       <PlatformBadge platform={job.source} />
                       <span className="text-[10px] text-muted-foreground tabular-nums">
                         {job.posted_at
-                          ? formatRelativeDate(job.posted_at)
+                          ? formatRelativeDate(job.posted_at, locale)
                           : "—"}
                       </span>
                     </div>
@@ -94,7 +98,7 @@ export function RightSidebar() {
             </ul>
           ) : (
             <p className="rounded-lg bg-card p-3 text-sm text-muted-foreground ring-1 ring-border/50">
-              No jobs yet
+              {t("rightSidebar.noJobsYet")}
             </p>
           )}
 
@@ -103,7 +107,7 @@ export function RightSidebar() {
               href="/search"
               className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-primary"
             >
-              View all jobs
+              {t("rightSidebar.viewAllJobs")}
               <ArrowRight className="h-3 w-3" />
             </Link>
           )}

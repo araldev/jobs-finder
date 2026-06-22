@@ -1,23 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JobSourceBreakdown } from "../JobSourceBreakdown";
-import type { ReactNode } from "react";
-
-function createWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-    },
-  });
-  return function Wrapper({ children }: { children: ReactNode }) {
-    return (
-      <QueryClientProvider client={queryClient}>
-        {children}
-      </QueryClientProvider>
-    );
-  };
-}
+import { renderWithIntl } from "@/test-utils";
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn());
@@ -37,11 +21,8 @@ describe("JobSourceBreakdown", () => {
         }),
     );
 
-    const { container } = render(<JobSourceBreakdown />, {
-      wrapper: createWrapper(),
-    });
+    const { container } = render(renderWithIntl(<JobSourceBreakdown />, { locale: "es" }));
 
-    // Should render skeleton elements
     const skeletons = container.querySelectorAll(".animate-pulse");
     expect(skeletons.length).toBeGreaterThanOrEqual(3);
   });
@@ -64,36 +45,30 @@ describe("JobSourceBreakdown", () => {
       ),
     );
 
-    render(<JobSourceBreakdown />, {
-      wrapper: createWrapper(),
-    });
+    render(renderWithIntl(<JobSourceBreakdown />, { locale: "es" }));
 
-    // Wait for data to load
     const linkedinLabel = await screen.findByText("LinkedIn");
     expect(linkedinLabel).toBeInTheDocument();
 
     expect(screen.getByText("Indeed")).toBeInTheDocument();
     expect(screen.getByText("InfoJobs")).toBeInTheDocument();
 
-    // Counts should be visible
     expect(screen.getByText("80")).toBeInTheDocument();
     expect(screen.getByText("50")).toBeInTheDocument();
     expect(screen.getByText("20")).toBeInTheDocument();
 
-    // Percentages
-    expect(screen.getByText("53% of total")).toBeInTheDocument();
+    expect(screen.getByText("53% del total")).toBeInTheDocument();
   });
 
   it("renders nothing on error", async () => {
     vi.mocked(fetch).mockRejectedValueOnce(new Error("Network error"));
 
-    const { container } = render(<JobSourceBreakdown />, {
-      wrapper: createWrapper(),
-    });
+    const { container } = render(renderWithIntl(<JobSourceBreakdown />, { locale: "es" }));
 
-    // Wait for the error state to resolve
     await vi.waitFor(() => {
-      expect(container.textContent).toBe("");
+      // ErrorState is now rendered (with retry button) — verify the empty
+      // skeleton state is gone.
+      expect(container.querySelector(".animate-pulse")).toBeNull();
     });
   });
 });

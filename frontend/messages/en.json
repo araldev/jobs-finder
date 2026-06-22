@@ -160,5 +160,49 @@
     "forgotEmailRequired": "Enter your email",
     "resetTokenRequired": "Reset token is required",
     "deleteConfirmRequired": "Type your email to confirm"
+  },
+  "Dashboard": {
+    "stats": {
+      "totalJobs": {
+        "label": "Total in database",
+        "plural": "{count, plural, =0 {No jobs} one {# job} other {# jobs}}"
+      },
+      "newJobs": {
+        "label": "Today's jobs",
+        "plural": "{count, plural, =0 {No jobs today} one {# job today} other {# jobs today}}"
+      },
+      "lastSync": {
+        "label": "Last sync"
+      },
+      "openedJobs": {
+        "label": "Clicked jobs",
+        "plural": "{count, plural, =0 {No clicks yet} one {# clicked job} other {# clicked jobs}}"
+      },
+      "cvsAdapted": {
+        "label": "Adapted CVs",
+        "plural": "{count, plural, =0 {No CVs yet} one {# adapted CV} other {# adapted CVs}}"
+      },
+      "favorites": {
+        "label": "Favorites",
+        "plural": "{count, plural, =0 {No favorites yet} one {# favorite} other {# favorites}}"
+      }
+    },
+    "rightSidebar": {
+      "summary": "Summary",
+      "totalJobs": "Total jobs",
+      "sources": "Sources",
+      "lastSync": "Last sync",
+      "latestJobs": "Latest Jobs",
+      "viewAllJobs": "View all jobs",
+      "noJobsYet": "No jobs yet",
+      "jobsPerPlatform": "Jobs per platform"
+    },
+    "platforms": {
+      "linkedin": "LinkedIn",
+      "indeed": "Indeed",
+      "infojobs": "InfoJobs",
+      "percentOfTotal": "{pct}% of total",
+      "noData": "No platform data available yet"
+    }
   }
 }
