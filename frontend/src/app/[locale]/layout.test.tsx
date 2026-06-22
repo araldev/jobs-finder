@@ -12,6 +12,15 @@ vi.mock("next-intl/server", () => ({
   setRequestLocale: (locale: string) => setRequestLocaleMock(locale),
 }));
 
+// The new ConditionalFooter client component calls
+// useSelectedLayoutSegment("(app)") to decide whether to render. Default
+// to "no active (app) segment" (i.e. a public route) so the existing
+// layout assertions (lang attribute, children present) keep working
+// without us having to mock next/navigation in every test.
+vi.mock("next/navigation", () => ({
+  useSelectedLayoutSegment: () => null,
+}));
+
 vi.mock("@/app/providers", () => ({
   Providers: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));

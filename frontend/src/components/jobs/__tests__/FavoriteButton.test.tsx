@@ -74,4 +74,15 @@ describe("FavoriteButton", () => {
 
     expect(parentClick).not.toHaveBeenCalled();
   });
+
+  it("renders English copy when locale='en' (bilingual parity)", () => {
+    render(renderWithIntl(<FavoriteButton job={mockJob} />, { locale: "en" }));
+    const button = screen.getByRole("button");
+    expect(button).toHaveAttribute("aria-label", "Save to favorites");
+    expect(button).toHaveAttribute("title", "Save to favorites");
+
+    fireEvent.click(button);
+    expect(button).toHaveAttribute("aria-label", "Remove from favorites");
+    expect(button).toHaveAttribute("title", "Remove from favorites");
+  });
 });

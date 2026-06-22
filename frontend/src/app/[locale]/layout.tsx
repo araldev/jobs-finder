@@ -4,7 +4,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { getMessages, setRequestLocale } from "next-intl/server";
 import { routing } from "@/i18n/routing";
 import { Providers } from "@/app/providers";
-import { Footer } from "@/components/layout/Footer";
+import { ConditionalFooter } from "@/components/layout/ConditionalFooter";
 import "../globals.css";
 
 /**
@@ -72,7 +72,7 @@ export default async function LocaleLayout({
           <Providers>
             <div className="flex min-h-screen flex-col">
               <div className="flex-1">{children}</div>
-              <Footer />
+              <ConditionalFooter />
             </div>
           </Providers>
         </NextIntlClientProvider>

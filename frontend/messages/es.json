@@ -6,9 +6,9 @@
     "save": "Guardar",
     "cancel": "Cancelar",
     "error": "Algo salió mal",
-    "empty": "Aún no hay nada aquí",
+    "empty": "Aún no hay nada",
     "retry": "Reintentar",
-    "back": "Volver",
+    "back": "Atrás",
     "next": "Siguiente",
     "previous": "Anterior",
     "close": "Cerrar",
@@ -19,6 +19,7 @@
     "or": "o",
     "and": "y",
     "toggleTheme": "Cambiar tema",
+    "backToHome": "Volver al inicio",
     "switcher": {
       "label": "Idioma",
       "shortLabel": "ES"
@@ -164,8 +165,10 @@
       "title": "Creá tu cuenta",
       "subtitle": "Encontrá tu próximo empleo en minutos.",
       "emailLabel": "Correo electrónico",
+      "emailPlaceholder": "tu@email.com",
       "passwordLabel": "Contraseña",
       "submit": "Crear cuenta",
+      "loading": "Creando cuenta…",
       "haveAccount": "¿Ya tenés cuenta?",
       "signIn": "Iniciar sesión",
       "orContinueWith": "O continuá con",
@@ -245,7 +248,9 @@
       "requirements": "Requisitos",
       "benefits": "Beneficios",
       "applyNow": "Aplicar ahora",
-      "backToList": "Volver a trabajos"
+      "backToList": "Volver a trabajos",
+      "postedLabel": "Publicado",
+      "viewOriginal": "Ver original"
     },
     "modal": {
       "generate": "Generar CV adaptado",

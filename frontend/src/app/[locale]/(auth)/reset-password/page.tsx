@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { ResetPasswordForm } from "@/components/auth/ResetPasswordForm";
 import Link from "next/link";
-import { authCopy } from "@/lib/authCopy";
+import { getTranslations } from "next-intl/server";
 
 /**
  * /reset-password page — REQ-AUTH-004.
@@ -17,18 +17,19 @@ import { authCopy } from "@/lib/authCopy";
  */
 export default async function ResetPasswordPage() {
   const supabase = await createClient();
+  const t = await getTranslations("Auth.resetPassword");
   const { data: { session } } = await supabase.auth.getSession();
 
   if (!session) {
     return (
       <div className="flex flex-col gap-4 text-center" data-testid="reset-invalid-link">
-        <h1 className="font-display text-xl font-bold">{authCopy.reset.invalidLinkTitle}</h1>
-        <p className="text-sm text-muted-foreground">{authCopy.reset.invalidLinkDescription}</p>
+        <h1 className="font-display text-xl font-bold">{t("invalidLinkTitle")}</h1>
+        <p className="text-sm text-muted-foreground">{t("invalidLinkDescription")}</p>
         <Link
           href="/forgot-password"
           className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
         >
-          {authCopy.reset.resendLink}
+          {t("resendLink")}
         </Link>
       </div>
     );

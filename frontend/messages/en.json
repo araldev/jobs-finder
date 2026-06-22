@@ -19,6 +19,7 @@
     "or": "or",
     "and": "and",
     "toggleTheme": "Toggle theme",
+    "backToHome": "Back to home",
     "switcher": {
       "label": "Language",
       "shortLabel": "EN"
@@ -164,8 +165,10 @@
       "title": "Create your account",
       "subtitle": "Find your next role in minutes.",
       "emailLabel": "Email",
+      "emailPlaceholder": "you@example.com",
       "passwordLabel": "Password",
       "submit": "Create account",
+      "loading": "Creating account…",
       "haveAccount": "Already have an account?",
       "signIn": "Sign in",
       "orContinueWith": "Or continue with",
@@ -245,7 +248,9 @@
       "requirements": "Requirements",
       "benefits": "Benefits",
       "applyNow": "Apply now",
-      "backToList": "Back to jobs"
+      "backToList": "Back to jobs",
+      "postedLabel": "Posted",
+      "viewOriginal": "View original"
     },
     "modal": {
       "generate": "Generate adapted CV",

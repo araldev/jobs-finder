@@ -5,6 +5,7 @@ import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { ArrowLeft } from "lucide-react";
 
 export default function SignupPage() {
@@ -12,6 +13,8 @@ export default function SignupPage() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const tAuth = useTranslations("Auth.signup");
+  const tCommon = useTranslations("Common");
 
   async function signup(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -63,7 +66,7 @@ export default function SignupPage() {
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
-          Volver al inicio
+          {tCommon("backToHome")}
         </Link>
       </div>
 
@@ -73,22 +76,20 @@ export default function SignupPage() {
             <Image src="/favicon.svg" alt="Jobs Finder" width={36} height={36} className="h-9 w-9" />
             <span className="font-display text-xl font-bold">Jobs Finder</span>
           </Link>
-          <h1 className="mt-4 text-2xl font-display font-bold">Crear cuenta</h1>
-          <p className="text-sm text-muted-foreground">
-            Registrate para empezar a usar Jobs Finder
-          </p>
+          <h1 className="mt-4 text-2xl font-display font-bold">{tAuth("title")}</h1>
+          <p className="text-sm text-muted-foreground">{tAuth("subtitle")}</p>
         </div>
 
         <form onSubmit={signup} className="space-y-4">
           <div className="space-y-2">
             <label htmlFor="email" className="text-sm font-medium">
-              Email
+              {tAuth("emailLabel")}
             </label>
             <input
               id="email"
               name="email"
               type="email"
-              placeholder="tu@email.com"
+              placeholder={tAuth("emailPlaceholder")}
               required
               className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
             />
@@ -96,7 +97,7 @@ export default function SignupPage() {
 
           <div className="space-y-2">
             <label htmlFor="password" className="text-sm font-medium">
-              Contraseña
+              {tAuth("passwordLabel")}
             </label>
             <input
               id="password"
@@ -118,7 +119,7 @@ export default function SignupPage() {
             disabled={loading}
             className="w-full rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
           >
-            {loading ? "Creando cuenta..." : "Crear cuenta"}
+            {loading ? tAuth("loading") : tAuth("submit")}
           </button>
         </form>
 
@@ -128,7 +129,7 @@ export default function SignupPage() {
           </div>
           <div className="relative flex justify-center text-xs uppercase">
             <span className="bg-background px-2 text-muted-foreground">
-              o continuá con
+              {tAuth("orContinueWith")}
             </span>
           </div>
         </div>
@@ -155,13 +156,13 @@ export default function SignupPage() {
               fill="#EA4335"
             />
           </svg>
-          Continuar con Google
+          {tAuth("continueWithGoogle")}
         </button>
 
         <p className="text-center text-sm text-muted-foreground">
-          ¿Ya tenés cuenta?{" "}
+          {tAuth("haveAccount")}{" "}
           <Link href="/login" className="text-foreground underline underline-offset-4 hover:no-underline">
-            Iniciá sesión
+            {tAuth("signIn")}
           </Link>
         </p>
       </div>
