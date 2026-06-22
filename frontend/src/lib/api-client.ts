@@ -28,7 +28,7 @@ export async function fetchJobsHistory(args: FetchJobsHistoryArgs = {}): Promise
   const qs = params.toString();
   const res = await fetch(`${BACKEND_URL}/jobs/history${qs ? `?${qs}` : ""}`, {
     headers: _headers(),
-    next: { revalidate: 0 },
+    next: { revalidate: 60, tags: ["jobs-history"] },
   });
   if (!res.ok) throw new Error(`Backend error: ${res.status}`);
   return res.json();
@@ -37,7 +37,7 @@ export async function fetchJobsHistory(args: FetchJobsHistoryArgs = {}): Promise
 export async function fetchSchedulerStatus(): Promise<SchedulerStatus> {
   const res = await fetch(`${BACKEND_URL}/scheduler/status`, {
     headers: _headers(),
-    next: { revalidate: 0 },
+    next: { revalidate: 60, tags: ["scheduler-status"] },
   });
   if (!res.ok) throw new Error(`Backend error: ${res.status}`);
   return res.json();
