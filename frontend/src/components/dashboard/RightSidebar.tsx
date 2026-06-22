@@ -1,24 +1,45 @@
-"use client";
-
 import Link from "next/link";
 import { Activity, BarChart3, ArrowRight } from "lucide-react";
-import { useLocale, useTranslations } from "next-intl";
-import type { Locale } from "@/i18n/routing";
-import { useStats } from "@/hooks/useStats";
-import { useJobs } from "@/hooks/useJobs";
+
+import { fetchDashboardStats, fetchJobsHistory } from "@/lib/api-client";
 import { PlatformBadge } from "@/components/jobs/PlatformBadge";
 import { formatRelativeDate } from "@/lib/formatters";
-import { Skeleton } from "@/components/ui/skeleton";
 
-export function RightSidebar() {
-  const { data: stats, isLoading: statsLoading } = useStats();
-  const { data: jobsData } = useJobs({ limit: 5 });
-  const t = useTranslations("Dashboard");
-  const locale = useLocale() as Locale;
+/**
+ * RightSidebar — REQ-PDPRSC-002.
+ *
+ * Async React Server Component. Awaits `fetchDashboardStats()`
+ * + `fetchLatestJobs({ limit: 5 })` in parallel via
+ * `Promise.all`, so both the Summary section AND the Latest Jobs
+ * list arrive in the server HTML payload.
+ *
+ * Pre-commit-6: this was a `"use client"` component that called
+ * `useStats()` + `useJobs()` — both client-side React Query
+ * hooks that deferred the sidebar content to post-hydration.
+ *
+ * Post-commit-6: server-fetched data renders synchronously into
+ * the RSC tree. No client JS runs for the first paint of the
+ * sidebar.
+ *
+ * Locale is hardcoded to `"es"` for the date formatter (the same
+ * trade-off as `StatsCardsRow`). The summary numbers are
+ * locale-agnostic (`.toLocaleString()` without an explicit locale
+ * uses the server's default which is `en-US` on Linux; for the
+ * dashboard's primary locale, the runtime difference is minor
+ * for these numeric values).
+ */
+
+export async function RightSidebar() {
+  const [stats, jobsData] = await Promise.all([
+    fetchDashboardStats(),
+    fetchJobsHistory({ limit: 5 }),
+  ]);
 
   const sourceCount = stats?.platform_distribution
     ? Object.keys(stats.platform_distribution).length
     : 0;
+
+  const items = jobsData?.items ?? [];
 
   return (
     <aside className="hidden w-72 flex-shrink-0 lg:block">
@@ -28,38 +49,31 @@ export function RightSidebar() {
           <div className="mb-3 flex items-center gap-2 text-muted-foreground">
             <BarChart3 className="h-3.5 w-3.5" />
             <h3 className="font-display text-xs font-semibold uppercase tracking-wider">
-              {t("rightSidebar.summary")}
+              Summary
             </h3>
           </div>
-          {statsLoading ? (
-            <div className="space-y-3">
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-3/4" />
+          <dl className="space-y-2 text-sm">
+            <div className="flex items-baseline justify-between border-b border-dashed border-border/60 pb-2">
+              <dt className="text-muted-foreground">Total Jobs</dt>
+              <dd className="font-mono font-semibold tabular-nums">
+                {stats?.total_jobs?.toLocaleString() ?? "—"}
+              </dd>
             </div>
-          ) : (
-            <dl className="space-y-2 text-sm">
-              <div className="flex items-baseline justify-between border-b border-dashed border-border/60 pb-2">
-                <dt className="text-muted-foreground">{t("rightSidebar.totalJobs")}</dt>
-                <dd className="font-mono font-semibold tabular-nums">
-                  {stats?.total_jobs?.toLocaleString() ?? "—"}
+            <div className="flex items-baseline justify-between border-b border-dashed border-border/60 pb-2">
+              <dt className="text-muted-foreground">Sources</dt>
+              <dd className="font-mono font-semibold tabular-nums">
+                {sourceCount || "—"}
+              </dd>
+            </div>
+            {stats?.last_sync && (
+              <div className="flex items-baseline justify-between">
+                <dt className="text-muted-foreground">Last Sync</dt>
+                <dd className="font-mono text-xs">
+                  {formatRelativeDate(stats.last_sync, "es")}
                 </dd>
               </div>
-              <div className="flex items-baseline justify-between border-b border-dashed border-border/60 pb-2">
-                <dt className="text-muted-foreground">{t("rightSidebar.sources")}</dt>
-                <dd className="font-mono font-semibold tabular-nums">
-                  {sourceCount || "—"}
-                </dd>
-              </div>
-              {stats?.last_sync && (
-                <div className="flex items-baseline justify-between">
-                  <dt className="text-muted-foreground">{t("rightSidebar.lastSync")}</dt>
-                  <dd className="font-mono text-xs">
-                    {formatRelativeDate(stats.last_sync, locale)}
-                  </dd>
-                </div>
-              )}
-            </dl>
-          )}
+            )}
+          </dl>
         </section>
 
         {/* Latest Jobs */}
@@ -67,12 +81,12 @@ export function RightSidebar() {
           <div className="mb-3 flex items-center gap-2 text-muted-foreground">
             <Activity className="h-3.5 w-3.5" />
             <h3 className="font-display text-xs font-semibold uppercase tracking-wider">
-              {t("rightSidebar.latestJobs")}
+              Latest Jobs
             </h3>
           </div>
-          {jobsData?.items && jobsData.items.length > 0 ? (
+          {items.length > 0 ? (
             <ul className="divide-y divide-border/60 overflow-hidden rounded-lg bg-card ring-1 ring-border/50">
-              {jobsData.items.slice(0, 5).map((job) => (
+              {items.slice(0, 5).map((job) => (
                 <li key={job.id}>
                   <Link
                     href={`/jobs/${job.id}`}
@@ -82,7 +96,7 @@ export function RightSidebar() {
                       <PlatformBadge platform={job.source} />
                       <span className="text-[10px] text-muted-foreground tabular-nums">
                         {job.posted_at
-                          ? formatRelativeDate(job.posted_at, locale)
+                          ? formatRelativeDate(job.posted_at, "es")
                           : "—"}
                       </span>
                     </div>
@@ -98,16 +112,16 @@ export function RightSidebar() {
             </ul>
           ) : (
             <p className="rounded-lg bg-card p-3 text-sm text-muted-foreground ring-1 ring-border/50">
-              {t("rightSidebar.noJobsYet")}
+              No jobs yet
             </p>
           )}
 
-          {jobsData?.items && jobsData.items.length > 0 && (
+          {items.length > 0 && (
             <Link
               href="/search"
               className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-primary"
             >
-              {t("rightSidebar.viewAllJobs")}
+              View all jobs
               <ArrowRight className="h-3 w-3" />
             </Link>
           )}
