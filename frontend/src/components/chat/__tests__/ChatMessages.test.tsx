@@ -1,7 +1,10 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ChatMessages } from "../ChatMessages";
+import { renderWithIntl } from "@/test-utils";
 import type { ChatMessage } from "@/types/chat";
+import esMessages from "@/messages/es.json";
+import enMessages from "@/messages/en.json";
 
 const mockJobs = [
   {
@@ -23,7 +26,10 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
+      renderWithIntl(
+        <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
+        { locale: "es" },
+      ),
     );
 
     expect(screen.getByText("remote jobs")).toBeInTheDocument();
@@ -40,7 +46,10 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
+      renderWithIntl(
+        <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
+        { locale: "es" },
+      ),
     );
 
     expect(
@@ -60,7 +69,10 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="streaming" openedJobIds={new Set()} />,
+      renderWithIntl(
+        <ChatMessages messages={messages} status="streaming" openedJobIds={new Set()} />,
+        { locale: "es" },
+      ),
     );
 
     // The OpenCode-style three-dot thinking animation appears
@@ -75,7 +87,10 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
+      renderWithIntl(
+        <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
+        { locale: "es" },
+      ),
     );
 
     expect(
@@ -95,7 +110,10 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
+      renderWithIntl(
+        <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
+        { locale: "es" },
+      ),
     );
 
     expect(screen.getByText("Found matches:")).toBeInTheDocument();
@@ -105,7 +123,36 @@ describe("ChatMessages", () => {
     expect(screen.getByText(/Acme/)).toBeInTheDocument();
   });
 
-  it("renders error message", () => {
+  it("renders translated error message by code (ES locale)", () => {
+    const messages: ChatMessage[] = [
+      { id: "1", role: "user", content: "test" },
+      {
+        id: "2",
+        role: "assistant",
+        content: "",
+        // `generic` is one of the Chat.errors.* keys (F3 contract).
+        // AssistantMessage renders t(Chat.errors.code) when the code
+        // resolves; for an unknown code it falls back to `message`.
+        error: {
+          code: "generic",
+          message: "ignored-because-key-matches",
+        },
+      },
+    ];
+
+    render(
+      renderWithIntl(
+        <ChatMessages messages={messages} status="error" openedJobIds={new Set()} />,
+        { locale: "es" },
+      ),
+    );
+
+    expect(
+      screen.getByText(esMessages.Chat.errors.generic),
+    ).toBeInTheDocument();
+  });
+
+  it("renders translated error message by code (EN locale)", () => {
     const messages: ChatMessage[] = [
       { id: "1", role: "user", content: "test" },
       {
@@ -113,6 +160,33 @@ describe("ChatMessages", () => {
         role: "assistant",
         content: "",
         error: {
+          code: "generic",
+          message: "ignored-because-key-matches",
+        },
+      },
+    ];
+
+    render(
+      renderWithIntl(
+        <ChatMessages messages={messages} status="error" openedJobIds={new Set()} />,
+        { locale: "en" },
+      ),
+    );
+
+    expect(
+      screen.getByText(enMessages.Chat.errors.generic),
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to raw server message when error code has no translation key", () => {
+    const messages: ChatMessage[] = [
+      { id: "1", role: "user", content: "test" },
+      {
+        id: "2",
+        role: "assistant",
+        content: "",
+        error: {
+          // Unknown code → AssistantMessage falls back to `message`.
           code: "llm_unavailable",
           message: "The AI assistant is currently unavailable.",
         },
@@ -120,7 +194,10 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="error" openedJobIds={new Set()} />,
+      renderWithIntl(
+        <ChatMessages messages={messages} status="error" openedJobIds={new Set()} />,
+        { locale: "es" },
+      ),
     );
 
     expect(
@@ -129,8 +206,17 @@ describe("ChatMessages", () => {
   });
 
   it("shows empty state when no messages", () => {
-    render(<ChatMessages messages={[]} status="idle" openedJobIds={new Set()} />);
+    render(
+      renderWithIntl(
+        <ChatMessages messages={[]} status="idle" openedJobIds={new Set()} />,
+        { locale: "es" },
+      ),
+    );
 
+    // NOTE: ChatMessages.tsx has a hardcoded EN empty-state string.
+    // It is intentionally out of scope for this cycle — it is F3-
+    // adjacent (chat component), but the explore's F3 scope is the 3
+    // useChat error literals only. The assertion matches the live text.
     expect(
       screen.getByText(
         /Describe the job you are looking for in natural language/i,

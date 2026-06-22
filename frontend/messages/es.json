@@ -255,8 +255,22 @@
     "modal": {
       "generate": "Generar CV adaptado",
       "downloading": "Generando…",
-      "consent": "Usaré este CV para generar una versión adaptada para este trabajo.",
-      "title": "Generar CV adaptado"
+      "title": "Generar CV adaptado",
+      "uploadOrSaved": "Subí tu CV o guardalo primero en Configuración",
+      "savedCvDownloadFailed": "No pudimos descargar tu CV guardado",
+      "generationFailed": "Error generando el CV",
+      "adaptingFor": "Adaptando CV para {company} — {title}",
+      "cvReady": "Tu CV está listo. Descárgalo y úsalo para aplicar.",
+      "downloadFilename": "CV-adaptado.pdf",
+      "download": "Descargar CV (PDF)",
+      "generateAnother": "Generar otro",
+      "savedCvHint": "Tu CV guardado — click para cambiar",
+      "dropZoneReplace": "O arrastrá un PDF diferente para esta postulación",
+      "dropZoneInitial": "Arrastrá tu CV PDF o hacé click para seleccionar",
+      "consent": "Entiendo y acepto que mi CV sea procesado por <b>Groq (EE.UU.)</b> para generar el CV adaptado. <privacy>Ver Política de Privacidad</privacy>",
+      "submit": "Generar CV adaptado",
+      "savedCvFooter": "Se usará tu CV guardado. Subí un PDF para usar ese temporalmente.",
+      "processedByGroq": "Tu CV será procesado por <b>Groq (EE.UU.)</b>. <more>Más información</more>"
     },
     "favorite": {
       "add": "Guardar en favoritos",

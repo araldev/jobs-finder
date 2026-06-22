@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import { createClient } from "@/lib/supabase/client";
 import type { Job } from "@/types/job";
 import { Upload, FileText, Download, X, Loader2, CheckCircle2 } from "lucide-react";
@@ -30,6 +31,9 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const supabase = createClient();
   const { incrementCVAdapted } = useCVAdapted();
+  const t = useTranslations("Jobs.modal");
+  const tLanding = useTranslations("Landing.upload");
+  const tCommon = useTranslations("Common");
 
   // Track CV adaptation count when successfully generated
   useEffect(() => {
@@ -77,7 +81,7 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
     const f = e.target.files?.[0];
     if (f) {
       if (f.type !== "application/pdf") {
-        setErrorMsg("Solo se aceptan archivos PDF");
+        setErrorMsg(tLanding("pdfOnly"));
         return;
       }
       setCvFile(f);
@@ -90,7 +94,7 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
     const f = e.dataTransfer.files?.[0];
     if (f) {
       if (f.type !== "application/pdf") {
-        setErrorMsg("Solo se aceptan archivos PDF");
+        setErrorMsg(tLanding("pdfOnly"));
         return;
       }
       setCvFile(f);
@@ -103,7 +107,7 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
 
     // Need either a selected file or a saved CV
     if (!cvFile && !savedCV) {
-      setErrorMsg("Subí tu CV o guardalo primero en Settings");
+      setErrorMsg(t("uploadOrSaved"));
       return;
     }
 
@@ -122,7 +126,7 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
         .download(savedCV!.storage_path);
 
       if (storageError || !storageData) {
-        setErrorMsg("No pude descargar tu CV guardado");
+        setErrorMsg(t("savedCvDownloadFailed"));
         setStatus("error");
         return;
       }
@@ -147,7 +151,7 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: "Unknown error" }));
+        const data = await res.json().catch(() => ({ error: tCommon("error") }));
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
 
@@ -156,7 +160,7 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
       setDownloadUrl(url);
       setStatus("done");
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Error generando el CV");
+      setErrorMsg(err instanceof Error ? err.message : t("generationFailed"));
       setStatus("error");
     }
   }
@@ -184,11 +188,10 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
             </button>
 
             <h2 className="mb-1 font-display text-lg font-bold">
-              Generar CV adaptado
+              {t("title")}
             </h2>
             <p className="mb-4 text-sm text-muted-foreground">
-              Adaptando CV para{" "}
-              <strong>{job.company}</strong> — {job.title}
+              {t("adaptingFor", { company: job.company, title: job.title })}
             </p>
 
             {status === "done" && downloadUrl ? (
@@ -197,15 +200,15 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
                   <FileText className="h-7 w-7 text-primary" />
                 </div>
                 <p className="text-center text-sm text-muted-foreground">
-                  Tu CV está listo. Descárgalo y úsalo para aplicar.
+                  {t("cvReady")}
                 </p>
                 <a
                   href={downloadUrl}
-                  download="CV-adaptado.pdf"
+                  download={t("downloadFilename")}
                   className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
                 >
                   <Download className="h-4 w-4" />
-                  Descargar CV (PDF)
+                  {t("download")}
                 </a>
                 <button
                   onClick={() => {
@@ -217,7 +220,7 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
                   className="text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
                   type="button"
                 >
-                  Generar otro
+                  {t("generateAnother")}
                 </button>
               </div>
             ) : (
@@ -234,7 +237,7 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
                         {savedCV.original_filename}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        Tu CV guardado — click para cambiar
+                        {t("savedCvHint")}
                       </p>
                     </div>
                   </div>
@@ -269,16 +272,14 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
                         }}
                         className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
                       >
-                        Quitar
+                        {tCommon("delete")}
                       </button>
                     </>
                   ) : (
                     <>
                       <Upload className="h-8 w-8 text-muted-foreground" />
                       <p className="text-sm text-muted-foreground">
-                        {savedCV
-                          ? "O arrastrá un PDF diferente para esta postulación"
-                          : "Arrastrá tu CV PDF o click para seleccionar"}
+                        {savedCV ? t("dropZoneReplace") : t("dropZoneInitial")}
                       </p>
                     </>
                   )}
@@ -299,16 +300,20 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
                       required
                     />
                     <span className="text-xs text-muted-foreground">
-                      Entiendo y acepto que mi CV sea procesado por{" "}
-                      <strong className="text-foreground">Groq (EE.UU.)</strong>{" "}
-                      para generar el CV adaptado.{" "}
-                      <Link
-                        href="/privacidad"
-                        target="_blank"
-                        className="underline underline-offset-2 hover:text-foreground"
-                      >
-                        Ver Política de Privacidad
-                      </Link>
+                      {t.rich("consent", {
+                        b: (chunks) => (
+                          <strong className="text-foreground">{chunks}</strong>
+                        ),
+                        privacy: (chunks) => (
+                          <Link
+                            href="/privacidad"
+                            target="_blank"
+                            className="underline underline-offset-2 hover:text-foreground"
+                          >
+                            {chunks}
+                          </Link>
+                        ),
+                      })}
                     </span>
                   </label>
                 </div>
@@ -321,29 +326,34 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
                   {status === "uploading" ? (
                     <span className="inline-flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      Generando CV...
+                      {t("downloading")}
                     </span>
                   ) : (
-                    "Generar CV adaptado"
+                    t("submit")
                   )}
                 </button>
 
                 {savedCV && (
                   <p className="text-center text-xs text-muted-foreground">
-                    Se usará tu CV guardado. Subí un PDF para usar ese
-                    temporalmente.
+                    {t("savedCvFooter")}
                   </p>
                 )}
 
                 <p className="text-center text-xs text-muted-foreground">
-                  Tu CV será procesado por Groq (EE.UU.).{" "}
-                  <Link
-                    href="/privacidad"
-                    target="_blank"
-                    className="underline underline-offset-2 hover:text-foreground"
-                  >
-                    Más información
-                  </Link>
+                  {t.rich("processedByGroq", {
+                    b: (chunks) => (
+                      <strong className="text-foreground">{chunks}</strong>
+                    ),
+                    more: (chunks) => (
+                      <Link
+                        href="/privacidad"
+                        target="_blank"
+                        className="underline underline-offset-2 hover:text-foreground"
+                      >
+                        {chunks}
+                      </Link>
+                    ),
+                  })}
                 </p>
               </form>
             )}

@@ -172,7 +172,13 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         if (!response.ok) {
           const bodyText = await response.text();
           let errCode = "internal";
-          let errMsg = "Something went wrong. Please try again.";
+          // Keep `message` populated with the server's localized text
+          // (so Spanish server error messages flow through unchanged);
+          // AssistantMessage renders the localized string by translating
+          // the `code` first and falling back to `message` when no key
+          // matches. The hardcoded English fallback is only used when
+          // the response body is not parseable JSON at all.
+          let errMsg = "internal";
           try {
             const err = JSON.parse(bodyText);
             if (err.code) errCode = err.code;
@@ -205,8 +211,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
               role: "assistant",
               content: "",
               error: {
-                code: "internal",
-                message: "Connection failed — no response body.",
+                code: "connection_failed",
+                message: "connection_failed",
               },
             },
           ]);
@@ -330,10 +336,14 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
             content: "",
             error: {
               code: "internal",
+              // Mirror the errCode → translation pattern above: use the
+              // translation key as the message so AssistantMessage can
+              // resolve it via t(code). Fall back to the original Error
+              // text for non-i18n-aware clients (e.g. legacy localStorage
+              // payloads) — AssistantMessage falls back to `message`
+              // when t() returns the key unchanged.
               message:
-                err instanceof Error
-                  ? err.message
-                  : "Something went wrong. Please try again.",
+                err instanceof Error ? err.message : "internal",
             },
           },
         ]);

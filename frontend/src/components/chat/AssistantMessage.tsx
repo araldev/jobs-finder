@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Check } from "lucide-react";
+import { useTranslations } from "next-intl";
 import type { ChatMessage } from "@/types/chat";
 
 interface AssistantMessageProps {
@@ -42,6 +43,33 @@ export function AssistantMessage({
   // response arrives only in the `done` event.
   const showThinking =
     isStreaming && (!message.content || message.content.length === 0);
+
+  // Translate chat error codes via the Chat.errors.* keys. Fall back
+  // to the server-provided `message` (which may already be localized)
+  // when the code has no translation key — this preserves the previous
+  // behavior for legacy localStorage payloads and any unknown codes the
+  // backend might emit. next-intl's "missing key" convention is to
+  // return the namespace-prefixed path (e.g. "Chat.errors.llm_unavailable"),
+  // which is how we detect a missing translation without try/catch.
+  const tErrors = useTranslations("Chat.errors");
+  const localizedError = message.error
+    ? (() => {
+        const code = message.error.code;
+        try {
+          const translated = tErrors(
+            code as Parameters<typeof tErrors>[0],
+          );
+          // next-intl returns the namespace-prefixed path when the
+          // key is missing — that is our "fall back to message" signal.
+          if (translated.startsWith("Chat.errors.")) {
+            return message.error.message;
+          }
+          return translated;
+        } catch {
+          return message.error.message;
+        }
+      })()
+    : null;
 
   return (
     <div className="flex flex-col gap-2">
@@ -124,12 +152,12 @@ export function AssistantMessage({
         )}
 
       {/* Error state */}
-      {message.error && (
+      {message.error && localizedError && (
         <div
           role="alert"
           className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
         >
-          {message.error.message}
+          {localizedError}
         </div>
       )}
     </div>
