@@ -1,0 +1,44 @@
+{
+  "Common": {
+    "yes": "Yes",
+    "no": "No",
+    "loading": "Loading…",
+    "save": "Save",
+    "cancel": "Cancel",
+    "error": "Something went wrong",
+    "empty": "Nothing here yet",
+    "retry": "Retry",
+    "back": "Back",
+    "next": "Next",
+    "previous": "Previous",
+    "close": "Close",
+    "delete": "Delete",
+    "edit": "Edit",
+    "submit": "Submit",
+    "confirm": "Confirm",
+    "or": "or",
+    "and": "and",
+    "toggleTheme": "Toggle theme",
+    "switcher": {
+      "label": "Language",
+      "shortLabel": "EN"
+    }
+  },
+  "Errors": {
+    "networkError": "We couldn't reach the server. Check your connection and try again.",
+    "notFound": "We couldn't find what you were looking for.",
+    "forbidden": "You don't have permission to do that.",
+    "generic": "Something went wrong. Please try again.",
+    "rateLimit": "Too many requests. Wait a few minutes before trying again.",
+    "boundary": {
+      "title": "Something broke",
+      "description": "An unexpected error occurred. Try reloading the page.",
+      "retry": "Reload"
+    },
+    "notFoundPage": {
+      "title": "Page not found",
+      "description": "The page you're looking for doesn't exist or has moved.",
+      "home": "Back to home"
+    }
+  }
+}

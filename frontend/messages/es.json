@@ -1,0 +1,44 @@
+{
+  "Common": {
+    "yes": "Sí",
+    "no": "No",
+    "loading": "Cargando…",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "error": "Algo salió mal",
+    "empty": "Aún no hay nada aquí",
+    "retry": "Reintentar",
+    "back": "Volver",
+    "next": "Siguiente",
+    "previous": "Anterior",
+    "close": "Cerrar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "submit": "Enviar",
+    "confirm": "Confirmar",
+    "or": "o",
+    "and": "y",
+    "toggleTheme": "Cambiar tema",
+    "switcher": {
+      "label": "Idioma",
+      "shortLabel": "ES"
+    }
+  },
+  "Errors": {
+    "networkError": "No pudimos conectar con el servidor. Revisá tu conexión e intentá de nuevo.",
+    "notFound": "No encontramos lo que estabas buscando.",
+    "forbidden": "No tenés permiso para hacer eso.",
+    "generic": "Algo salió mal. Por favor, intentá de nuevo.",
+    "rateLimit": "Demasiadas solicitudes. Esperá unos minutos antes de volver a intentar.",
+    "boundary": {
+      "title": "Algo se rompió",
+      "description": "Ocurrió un error inesperado. Probá recargar la página.",
+      "retry": "Recargar"
+    },
+    "notFoundPage": {
+      "title": "Página no encontrada",
+      "description": "La página que buscás no existe o fue movida.",
+      "home": "Volver al inicio"
+    }
+  }
+}
