@@ -19,6 +19,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import {
+  fetchDashboardStats,
   fetchJobsHistory,
   fetchSchedulerStatus,
 } from "../api-client";
@@ -73,5 +74,25 @@ describe("fetchSchedulerStatus — revalidate:60 + tag (REQ-CACHEUX-001)", () =>
     expect(String(url)).toContain("/scheduler/status");
     expect(opts.next?.revalidate).toBe(60);
     expect(opts.next?.tags).toEqual(["scheduler-status"]);
+  });
+});
+
+describe("fetchDashboardStats — revalidate:60 + tag (REQ-PDPRSC-003)", () => {
+  it("sets next.revalidate to 60 with tag jobs-stats on /jobs/stats fetch", async () => {
+    await fetchDashboardStats();
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const call = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0];
+    const url = call?.[0];
+    const opts = call?.[1] as { next?: { revalidate?: number; tags?: string[] } };
+
+    // URL hits the new consolidated /jobs/stats endpoint.
+    expect(String(url)).toContain("/jobs/stats");
+    // The next.revalidate is set to 60s (L2 cache TTL) — same
+    // env knob as the per-source fetcher.
+    expect(opts.next?.revalidate).toBe(60);
+    // The next.tags contains the canonical jobs-stats tag.
+    expect(opts.next?.tags).toEqual(["jobs-stats"]);
   });
 });
