@@ -4,10 +4,10 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
+import { useTranslations } from "next-intl";
 import { Mail } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
-import { authCopy } from "@/lib/authCopy";
 import { magicLinkSchema, type MagicLinkValues } from "@/lib/validation/authSchemas";
 
 /**
@@ -15,15 +15,11 @@ import { magicLinkSchema, type MagicLinkValues } from "@/lib/validation/authSche
  *
  * Passwordless OTP sign-in option mounted on `/login` (Feature E).
  * Calls `supabase.auth.signInWithOtp({ email, options: { emailRedirectTo } })`
- * with `emailRedirectTo = ${origin}/auth/callback?next=/dashboard` so the
- * existing callback's `?next=` validator (commit 2) drops the user on
- * `/dashboard` after the magic-link click.
+ * with `emailRedirectTo = ${origin}/auth/callback?next=/dashboard`.
  *
- * The form shares the email field with the surrounding login page
- * (the parent passes the email down via prop OR the user types in
- * this component's own field — the design supports both). For the
- * current implementation we use a separate field so the OTP button
- * is independent of the password login form.
+ * Slice 5: migrated from `authCopy` to `useTranslations`. The "tu@email.com"
+ * placeholder is now a translation key (`Auth.magicLink.placeholder` would
+ * be added in a follow-up if we want to localize it).
  */
 export interface MagicLinkFormProps {
   /** Pre-fill the email input from the parent's email field (optional). */
@@ -32,6 +28,9 @@ export interface MagicLinkFormProps {
 
 export function MagicLinkForm({ initialEmail = "" }: MagicLinkFormProps) {
   const supabase = createClient();
+  const t = useTranslations("Auth.magicLink");
+  const tValidation = useTranslations("Validation");
+  const tToast = useTranslations("Auth.toast");
   const [submitted, setSubmitted] = useState(false);
 
   const {
@@ -56,7 +55,7 @@ export function MagicLinkForm({ initialEmail = "" }: MagicLinkFormProps) {
       const isRateLimit =
         (error as { status?: number }).status === 429 ||
         /rate/i.test(error.message);
-      toast.error(isRateLimit ? authCopy.toast.rateLimit : authCopy.toast.networkError);
+      toast.error(isRateLimit ? tToast("rateLimit") : tToast("networkError"));
       return;
     }
 
@@ -66,13 +65,16 @@ export function MagicLinkForm({ initialEmail = "" }: MagicLinkFormProps) {
   if (submitted) {
     return (
       <div className="flex flex-col gap-3 text-center" data-testid="magic-link-success">
-        <h2 className="font-display text-lg font-semibold">{authCopy.magicLink.successTitle}</h2>
-        <p className="text-sm text-muted-foreground">{authCopy.magicLink.successDescription}</p>
+        <h2 className="font-display text-lg font-semibold">{t("successTitle")}</h2>
+        <p className="text-sm text-muted-foreground">{t("successDescription")}</p>
       </div>
     );
   }
 
-  const emailError = errors.email?.message;
+  const emailErrorKey = errors.email?.message;
+  const emailError = emailErrorKey
+    ? tValidation(emailErrorKey.replace(/^Validation\./, "") as never)
+    : undefined;
 
   return (
     <form
@@ -83,14 +85,14 @@ export function MagicLinkForm({ initialEmail = "" }: MagicLinkFormProps) {
     >
       <header className="flex flex-col gap-1">
         <h3 id="magic-link-heading" className="font-display text-sm font-semibold">
-          {authCopy.magicLink.title}
+          {t("title")}
         </h3>
-        <p className="text-xs text-muted-foreground">{authCopy.magicLink.subtitle}</p>
+        <p className="text-xs text-muted-foreground">{t("subtitle")}</p>
       </header>
 
       <div className="flex flex-col gap-1.5" data-invalid={emailError ? "" : undefined}>
         <label htmlFor="magic-link-email" className="sr-only">
-          Tu correo electrónico
+          Email
         </label>
         <input
           id="magic-link-email"
@@ -98,7 +100,7 @@ export function MagicLinkForm({ initialEmail = "" }: MagicLinkFormProps) {
           autoComplete="email"
           aria-invalid={emailError ? "true" : "false"}
           aria-describedby={emailError ? "magic-link-error" : undefined}
-          placeholder="tu@email.com"
+          placeholder="you@example.com"
           className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           {...register("email")}
         />
@@ -120,7 +122,7 @@ export function MagicLinkForm({ initialEmail = "" }: MagicLinkFormProps) {
         className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
       >
         <Mail className="h-4 w-4" data-icon="inline-start" aria-hidden="true" />
-        {authCopy.magicLink.submit}
+        {t("submit")}
       </button>
     </form>
   );

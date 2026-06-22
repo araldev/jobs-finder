@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
+import { useTranslations } from "next-intl";
 import { AlertTriangle, Trash2 } from "lucide-react";
 
 import {
@@ -21,7 +22,6 @@ import {
 import { Button } from "@/components/ui/button";
 
 import { createClient } from "@/lib/supabase/client";
-import { authCopy } from "@/lib/authCopy";
 import {
   deleteAccountConfirmSchema,
   emailsMatchCaseInsensitive,
@@ -32,27 +32,7 @@ import { cleanupJobsFinderLocalStorage } from "@/lib/auth/cleanupJobsFinderLocal
 /**
  * DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013.
  *
- * Destructive account-deletion flow.
- *
- * Safety layering (defense in depth):
- *   1. UI: typed-email safeguard (user must type their exact email,
- *      case-insensitive trimmed, to enable the confirm button).
- *   2. RPC: `supabase.rpc('delete_current_user')` runs server-side in
- *      Postgres with `SECURITY DEFINER` + an `auth.uid() IS NULL`
- *      guard (the real safety — the UI is a soft UX gate).
- *   3. Side effects in order — STRICT order per spec REQ-AUTH-012:
- *      a. `await supabase.rpc('delete_current_user')` — server-side
- *         delete. On error, STOP (toast + dialog stays open, no other
- *         side effects run).
- *      b. `cleanupJobsFinderLocalStorage()` — sweep `jobs-finder-*`
- *         keys. Only runs on RPC success.
- *      c. `await supabase.auth.signOut()` — invalidate the JWT.
- *      d. `router.push('/')` — redirect to the landing page.
- *
- * The RPC MUST run before localStorage cleanup: if the server-side
- * delete fails, the user's favorites / chat / cv-count MUST stay
- * intact. Wiping localStorage on a server-side failure is data loss
- * from the user's perspective. (REQ-AUTH-025)
+ * Slice 5: migrated from `authCopy` to `useTranslations`.
  */
 export interface DeleteAccountDialogProps {
   /** The current user's email. Used for the typed-email safeguard. */
@@ -62,6 +42,8 @@ export interface DeleteAccountDialogProps {
 export function DeleteAccountDialog({ userEmail }: DeleteAccountDialogProps) {
   const supabase = createClient();
   const router = useRouter();
+  const t = useTranslations("Auth.deleteAccount");
+  const tValidation = useTranslations("Validation");
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -76,82 +58,66 @@ export function DeleteAccountDialog({ userEmail }: DeleteAccountDialogProps) {
     defaultValues: { confirmEmail: "" },
   });
 
-  // Watch the input so the confirm button enables/disables live as
-  // the user types (case-insensitive trimmed match against the user's
-  // real email — REQ-AUTH-011-2).
   const typedEmail = watch("confirmEmail") ?? "";
   const match = emailsMatchCaseInsensitive(typedEmail, userEmail);
 
   async function handleConfirm() {
-    // Use the typed-email watch directly (the form's onSubmit may not
-    // fire if the form is using a zod schema with onChange mode —
-    // the typed-match check is the real safeguard here).
     if (!isValid || !match) return;
 
     setBusy(true);
 
-    // Step 1 (per REQ-AUTH-012): the actual server-side deletion via
-    // Postgres RPC. The RPC's SECURITY DEFINER body handles the
-    // auth.users delete + cascade. No service-role key in the browser.
-    //
-    // CRITICAL: this MUST run BEFORE any localStorage cleanup. If the
-    // RPC fails, the user's favorites / chat / cv-count MUST stay
-    // intact — wiping localStorage on a server-side failure is data
-    // loss from the user's perspective (their Supabase data is still
-    // there but the UI shows an empty state).
+    // CRITICAL: RPC must run BEFORE localStorage cleanup (REQ-AUTH-012).
     const { error } = await supabase.rpc("delete_current_user");
 
     if (error) {
-      toast.error(authCopy.delete.errorToast);
+      toast.error(t("errorToast"));
       setBusy(false);
-      // Dialog stays open — user can retry or cancel. localStorage is
-      // untouched. No sign-out. No redirect.
       return;
     }
 
-    // Step 2 (on success only): sweep `jobs-finder-*` keys so the next
-    // sign-in (by anyone) doesn't see stale favorites.
     cleanupJobsFinderLocalStorage();
-
-    // Step 3: sign out (invalidates the JWT the browser holds).
     await supabase.auth.signOut();
 
-    toast.success(authCopy.delete.successToast);
+    toast.success(t("successToast"));
     setBusy(false);
     setOpen(false);
     router.push("/");
   }
 
-  // onSubmit wrapper (keeps the <form> semantic + handles Enter key).
   async function onSubmit(_values: DeleteAccountConfirmValues) {
     await handleConfirm();
   }
 
-  const typedError = errors.confirmEmail?.message;
+  const typedErrorKey = errors.confirmEmail?.message;
+  const typedError = typedErrorKey
+    ? tValidation(typedErrorKey.replace(/^Validation\./, "") as never)
+    : undefined;
+  const matchError =
+    typedEmail && !match ? tValidation("deleteEmailMismatch" as never) : "";
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <AlertTriangle className="h-4 w-4 text-destructive" aria-hidden="true" />
         <h3 className="font-display text-base font-semibold text-destructive">
-          {authCopy.delete.title}
+          {t("title")}
         </h3>
       </div>
-      <p className="text-sm text-muted-foreground">{authCopy.delete.subtitle}</p>
-      <p className="text-xs text-muted-foreground">{authCopy.delete.destructiveHelp}</p>
+      <p className="text-sm text-muted-foreground">{t("subtitle")}</p>
+      <p className="text-xs text-muted-foreground">{t("destructiveHelp")}</p>
 
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogTrigger asChild>
           <Button variant="destructive" size="sm" className="self-start" data-testid="delete-account-trigger">
             <Trash2 className="h-4 w-4" data-icon="inline-start" aria-hidden="true" />
-            {authCopy.delete.triggerLabel}
+            {t("triggerLabel")}
           </Button>
         </AlertDialogTrigger>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{authCopy.delete.confirmTitle}</AlertDialogTitle>
+            <AlertDialogTitle>{t("confirmTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {authCopy.delete.confirmDescription}
+              {t("confirmDescription")}
             </AlertDialogDescription>
           </AlertDialogHeader>
 
@@ -167,13 +133,13 @@ export function DeleteAccountDialog({ userEmail }: DeleteAccountDialogProps) {
               htmlFor="delete-account-confirm"
               className="text-sm font-medium"
             >
-              {authCopy.delete.confirmEmailLabel}
+              {t("confirmEmailLabel")}
             </label>
             <input
               id="delete-account-confirm"
               type="email"
               autoComplete="email"
-              placeholder={authCopy.delete.confirmPlaceholder}
+              placeholder={t("confirmPlaceholder")}
               aria-invalid={typedError || (typedEmail && !match) ? "true" : "false"}
               aria-describedby="delete-account-confirm-hint"
               className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -186,21 +152,17 @@ export function DeleteAccountDialog({ userEmail }: DeleteAccountDialogProps) {
               aria-live="polite"
               className="text-xs text-destructive"
             >
-              {typedError ?? (typedEmail && !match ? authCopy.validation.deleteEmailMismatch : "")}
+              {typedError ?? matchError}
             </p>
           </form>
 
           <AlertDialogFooter>
             <AlertDialogCancel disabled={busy}>
-              {authCopy.delete.confirmCancel}
+              {t("confirmCancel")}
             </AlertDialogCancel>
             <AlertDialogAction
               type="button"
               onClick={(e) => {
-                // AlertDialogAction's default behavior is to close the
-                // dialog. We only want to close on SUCCESS (in
-                // handleConfirm). Prevent the default close so the
-                // dialog stays open on RPC errors.
                 e.preventDefault();
                 void handleConfirm();
               }}
@@ -209,7 +171,7 @@ export function DeleteAccountDialog({ userEmail }: DeleteAccountDialogProps) {
               data-testid="delete-account-confirm"
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {authCopy.delete.confirmSubmit}
+              {t("confirmSubmit")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

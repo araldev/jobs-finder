@@ -5,10 +5,10 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import { Loader2 } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
-import { authCopy } from "@/lib/authCopy";
 import { forgotPasswordSchema, type ForgotPasswordValues } from "@/lib/validation/authSchemas";
 
 /**
@@ -21,13 +21,18 @@ import { forgotPasswordSchema, type ForgotPasswordValues } from "@/lib/validatio
  * `app/auth/callback/route.ts` — drops the user on `/reset-password`).
  *
  * No user-enumeration disclosure (REQ-AUTH-003): the success state is
- * byte-identical for known and unknown emails. The mock returns a
- * canned `{ data, error: null }` for every call; production Supabase
- * also returns `{ data: { user: null }, error: null }` for unknown
- * emails.
+ * byte-identical for known and unknown emails.
+ *
+ * Slice 5: replaces the `authCopy` imports with `useTranslations`.
+ * Validation errors come back from Zod as translation KEYS (see
+ * `lib/validation/authSchemas.ts`) and are resolved at render time via
+ * `useTranslations('Validation')`.
  */
 export function ForgotPasswordForm() {
   const supabase = createClient();
+  const t = useTranslations("Auth.forgotPassword");
+  const tValidation = useTranslations("Validation");
+  const tToast = useTranslations("Auth.toast");
   const [submitted, setSubmitted] = useState(false);
 
   const {
@@ -46,12 +51,11 @@ export function ForgotPasswordForm() {
 
     if (error) {
       // REQ-AUTH-025: surface failures via sonner. We do NOT leak the
-      // error class (`AuthApiError` vs `AuthRetryableFetchError`) to
-      // the user — a single Spanish message covers both.
+      // error class to the user — a single translated message covers both.
       const isRateLimit =
         (error as { status?: number }).status === 429 ||
         /rate/i.test(error.message);
-      toast.error(isRateLimit ? authCopy.toast.rateLimit : authCopy.toast.networkError);
+      toast.error(isRateLimit ? tToast("rateLimit") : tToast("networkError"));
       return;
     }
 
@@ -61,13 +65,21 @@ export function ForgotPasswordForm() {
   if (submitted) {
     return (
       <div className="flex flex-col gap-3 text-center" data-testid="forgot-success">
-        <h2 className="font-display text-lg font-semibold">{authCopy.forgot.successTitle}</h2>
-        <p className="text-sm text-muted-foreground">{authCopy.forgot.successDescription}</p>
+        <h2 className="font-display text-lg font-semibold">{t("successTitle")}</h2>
+        <p className="text-sm text-muted-foreground">{t("successDescription")}</p>
       </div>
     );
   }
 
-  const emailError = errors.email?.message;
+  // errors.email.message is a translation KEY (e.g. "Validation.emailRequired")
+  // — resolve it via useTranslations('Validation') at render time. The key
+  // includes the "Validation." prefix that Zod schemas store; we strip
+  // it because useTranslations was instantiated with the Validation
+  // namespace already.
+  const emailErrorKey = errors.email?.message;
+  const emailError = emailErrorKey
+    ? tValidation(emailErrorKey.replace(/^Validation\./, "") as never)
+    : undefined;
 
   return (
     <form
@@ -78,14 +90,14 @@ export function ForgotPasswordForm() {
     >
       <header className="flex flex-col gap-1 text-center">
         <h1 id="forgot-password-heading" className="font-display text-xl font-bold">
-          {authCopy.forgot.title}
+          {t("title")}
         </h1>
-        <p className="text-sm text-muted-foreground">{authCopy.forgot.subtitle}</p>
+        <p className="text-sm text-muted-foreground">{t("subtitle")}</p>
       </header>
 
       <div className="flex flex-col gap-1.5" data-invalid={emailError ? "" : undefined}>
         <label htmlFor="forgot-email" className="text-sm font-medium">
-          {authCopy.forgot.emailLabel}
+          {t("emailLabel")}
         </label>
         <input
           id="forgot-email"
@@ -114,14 +126,14 @@ export function ForgotPasswordForm() {
         className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
       >
         {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-        {authCopy.forgot.submit}
+        {t("submit")}
       </button>
 
       <Link
         href="/login"
         className="text-center text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
       >
-        {authCopy.forgot.backToLogin}
+        {t("backToLogin")}
       </Link>
     </form>
   );

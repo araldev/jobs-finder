@@ -1,30 +1,36 @@
 import { z } from "zod";
-import { authCopy } from "@/lib/authCopy";
 
 /**
  * zod validation schemas for the 5 auth flows introduced by
  * `auth-flows` (REQ-AUTH-005 + per-form length/match rules).
  *
- * Each schema's error messages are pulled from `authCopy.ts` so a
- * future i18n migration is mechanical (key → translation) and no
- * Spanish literal lives inside a component.
+ * Error messages are now translation KEYS (e.g. `Validation.emailRequired`)
+ * rather than literal strings. The form components that render these
+ * errors resolve the key via `useTranslations('Validation')` so a single
+ * schema serves both locales.
  *
  * Reusable in any of these patterns:
  *   1. `safeParse` from a form submit handler (raw `useState` flow).
  *   2. `@hookform/resolvers/zod` resolver when wired through
  *      `react-hook-form` (commit 2 onward).
  *   3. Ad-hoc server-action validation.
+ *
+ * Why KEYS instead of literals: a future move to additional locales is
+ * purely additive (one more `messages/<locale>.json` file) — no schema
+ * edits. The trade-off is that the form must call `t(error.message)`
+ * before rendering, instead of dropping the message string into JSX
+ * directly. Each form's test suite updates accordingly.
  */
 
 const emailSchema = z
-  .string({ message: authCopy.validation.emailRequired })
+  .string({ message: "Validation.emailRequired" })
   .trim()
-  .min(1, { message: authCopy.validation.emailRequired })
-  .email({ message: authCopy.validation.emailInvalid });
+  .min(1, { message: "Validation.emailRequired" })
+  .email({ message: "Validation.emailInvalid" });
 
 const passwordSchema = z
-  .string({ message: authCopy.validation.passwordRequired })
-  .min(6, { message: authCopy.validation.passwordMinLength });
+  .string({ message: "Validation.passwordRequired" })
+  .min(6, { message: "Validation.passwordMinLength" });
 
 // ─── A. forgot-password ───────────────────────────────────────────────────
 export const forgotPasswordSchema = z.object({
@@ -39,7 +45,7 @@ export const resetPasswordSchema = z
     confirmPassword: passwordSchema,
   })
   .refine((data) => data.password === data.confirmPassword, {
-    message: authCopy.validation.passwordsDoNotMatch,
+    message: "Validation.passwordsDoNotMatch",
     path: ["confirmPassword"],
   });
 export type ResetPasswordValues = z.infer<typeof resetPasswordSchema>;
@@ -48,17 +54,17 @@ export type ResetPasswordValues = z.infer<typeof resetPasswordSchema>;
 export const changePasswordSchema = z
   .object({
     currentPassword: z
-      .string({ message: authCopy.validation.passwordRequired })
-      .min(1, { message: authCopy.validation.passwordRequired }),
+      .string({ message: "Validation.passwordRequired" })
+      .min(1, { message: "Validation.passwordRequired" }),
     newPassword: passwordSchema,
     confirmPassword: passwordSchema,
   })
   .refine((data) => data.newPassword === data.confirmPassword, {
-    message: authCopy.validation.passwordsDoNotMatch,
+    message: "Validation.passwordsDoNotMatch",
     path: ["confirmPassword"],
   })
   .refine((data) => data.newPassword !== data.currentPassword, {
-    message: authCopy.validation.passwordMustDiffer,
+    message: "Validation.passwordMustDiffer",
     path: ["newPassword"],
   });
 export type ChangePasswordValues = z.infer<typeof changePasswordSchema>;

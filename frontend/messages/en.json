@@ -71,5 +71,94 @@
       "label": "Jobs Finder",
       "description": "Smart job discovery across LinkedIn, Indeed, and InfoJobs"
     }
+  },
+  "Auth": {
+    "forgotPassword": {
+      "title": "Recover your password",
+      "subtitle": "We'll send you a link to reset your password.",
+      "emailLabel": "Email",
+      "submit": "Send recovery link",
+      "successTitle": "Check your email",
+      "successDescription": "If the address is registered, you'll receive a password reset link in the next few minutes.",
+      "backToLogin": "Back to sign in"
+    },
+    "resetPassword": {
+      "invalidLinkTitle": "The link is invalid or has expired",
+      "invalidLinkDescription": "For security, recovery links expire after a while. Request a new one.",
+      "resendLink": "Request again",
+      "title": "Reset password",
+      "subtitle": "Enter your new password.",
+      "newPasswordLabel": "New password",
+      "confirmPasswordLabel": "Confirm password",
+      "submit": "Update password",
+      "successToast": "Password updated"
+    },
+    "changePassword": {
+      "title": "Change password",
+      "subtitle": "Rotate your password without signing out.",
+      "currentPasswordLabel": "Current password",
+      "newPasswordLabel": "New password",
+      "confirmPasswordLabel": "Confirm new password",
+      "submit": "Change password",
+      "successToast": "Password updated",
+      "wrongCurrentToast": "Current password is incorrect",
+      "oauthToast": "You signed in with an external provider. You don't have a password to change."
+    },
+    "deleteAccount": {
+      "title": "Delete account",
+      "subtitle": "This action is permanent and cannot be undone.",
+      "destructiveHelp": "Your account, CV, and all associated data will be deleted. This action is irreversible.",
+      "triggerLabel": "Delete account",
+      "confirmTitle": "Delete your account forever?",
+      "confirmDescription": "This action is permanent. Your CV, favorites, and all associated data will be erased.",
+      "confirmEmailLabel": "Confirm with your email",
+      "confirmPlaceholder": "you@example.com",
+      "confirmSubmit": "Yes, delete my account",
+      "confirmCancel": "Cancel",
+      "errorToast": "We couldn't delete your account. Try again or contact support.",
+      "successToast": "Your account has been deleted."
+    },
+    "emailVerification": {
+      "title": "Verify your email",
+      "description": "We sent you a verification link. Confirm it to access all features.",
+      "resend": "Resend email",
+      "resendToast": "Email resent",
+      "resendErrorToast": "We couldn't resend the email. Try again in a few minutes.",
+      "dismiss": "Dismiss"
+    },
+    "magicLink": {
+      "title": "Magic link",
+      "subtitle": "We'll send you a link to sign in without a password.",
+      "submit": "Send magic link",
+      "successTitle": "Check your email",
+      "successDescription": "We sent you a link to sign in. Open it from this browser."
+    },
+    "globalSignOut": {
+      "triggerLabel": "Sign out from all devices",
+      "tooltip": "We'll sign you out from other devices. Existing sessions may take up to 1 hour to expire.",
+      "confirmTitle": "Sign out from all devices?",
+      "confirmDescription": "We'll sign out your active session on this browser and revoke sessions on other devices. You'll need to sign in again.",
+      "confirmSubmit": "Yes, sign out",
+      "confirmCancel": "Cancel",
+      "errorToast": "We couldn't sign out your sessions. Try again."
+    },
+    "toast": {
+      "networkError": "We couldn't send the email. Try again.",
+      "rateLimit": "Too many attempts. Wait a few minutes before trying again.",
+      "genericError": "An error occurred. Try again."
+    }
+  },
+  "Validation": {
+    "emailRequired": "Enter your email",
+    "emailInvalid": "Enter a valid email",
+    "passwordRequired": "Enter your password",
+    "passwordMinLength": "At least 6 characters",
+    "passwordsDoNotMatch": "Passwords don't match",
+    "passwordMustDiffer": "New password must be different from the current one",
+    "deleteEmailMismatch": "Type your exact email to confirm",
+    "magicLinkEmailInvalid": "Enter a valid email",
+    "forgotEmailRequired": "Enter your email",
+    "resetTokenRequired": "Reset token is required",
+    "deleteConfirmRequired": "Type your email to confirm"
   }
 }
