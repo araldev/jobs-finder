@@ -39,21 +39,29 @@ export async function middleware(request: NextRequest) {
     return await updateSession(request);
   }
 
-  // Run the next-intl middleware first. With `localePrefix: 'as-needed'`
-  // and no `[locale]/` route segment, this issues an INTERNAL REWRITE
-  // (header `x-middleware-rewrite`) for non-default locales so the URL
-  // the browser sees (`/en/dashboard`) maps to the canonical app route
-  // (`/dashboard`) at render time. We must pass that response as the
-  // `baseResponse` to `updateSession` so the rewrite header survives —
-  // otherwise we'd discard it and the user would see a 404 on every
-  // `/en/*` URL (REQ-I18N-002 + REQ-I18N-015).
+  // Run the next-intl middleware first. With `localePrefix: 'as-needed'`,
+  // it may issue either:
+  //   - a 307 redirect (e.g. `/dashboard` + `Accept-Language: en-US` →
+  //     `/en/dashboard` for canonical URL fan-out), or
+  //   - an internal rewrite (e.g. `/en/dashboard` → `/dashboard` render
+  //     path with locale=en).
   const intlResponse = intlMiddleware(request);
 
-  // `updateSession` mutates the base response (adds Supabase cookies).
-  // When auth forces a redirect (e.g. protected /dashboard with no user),
-  // it returns a fresh NextResponse.redirect() that overrides the base —
-  // the intl redirect target is locale-aware so the bounce lands on the
-  // correct-locale login page.
+  // If intl issued a REDIRECT, respect it — the canonical locale-prefixed
+  // URL is the correct outcome. Returning updateSession's response here
+  // would silently overwrite the intl redirect with the auth bounce to
+  // `/login`, losing the locale prefix. The user's NEXT request will
+  // hit `/en/dashboard` (or `/en/...`), where updateSession will then
+  // bounce them to `/en/login` (locale-aware, per REQ-I18N-020).
+  if (intlResponse.status === 307 || intlResponse.status === 308) {
+    return intlResponse;
+  }
+
+  // For rewrites and passthrough, run Supabase with the intl response as
+  // the base so cookies and rewrite headers survive. updateSession's
+  // locale-aware auth redirect (REQ-I18N-020) inspects the original URL
+  // via `deriveLocalePrefix()` and bounces to `/en/login` (or `/login`
+  // for the default locale) as appropriate.
   return await updateSession(request, intlResponse);
 }
 

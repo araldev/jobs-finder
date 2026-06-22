@@ -1,11 +1,33 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Languages, Check } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { routing, LOCALE_LABELS, type Locale } from "@/i18n/routing";
+
+/**
+ * Strip a leading locale prefix from a pathname.
+ *
+ * Examples:
+ *   stripLocalePrefix('/en/dashboard')  -> '/dashboard'
+ *   stripLocalePrefix('/en/login')      -> '/login'
+ *   stripLocalePrefix('/en')            -> '/'
+ *   stripLocalePrefix('/dashboard')     -> '/dashboard'  (no match)
+ *   stripLocalePrefix('/')              -> '/'
+ *
+ * Used by the switcher to compute the locale-prefixed target URL.
+ * Identical to the one in `@/lib/supabase/middleware.ts` (kept local
+ * so this client component doesn't import from a server-only file).
+ */
+function stripLocalePrefix(path: string): string {
+  for (const l of routing.locales) {
+    if (path === `/${l}`) return "/";
+    if (path.startsWith(`/${l}/`)) return path.slice(l.length + 1);
+  }
+  return path;
+}
 
 interface LanguageSwitcherProps {
   /** True when mounted in the footer (text + icon variant) vs the header (icon-only). */
@@ -15,36 +37,47 @@ interface LanguageSwitcherProps {
 /**
  * Bilingual locale switcher — writes the `NEXT_LOCALE` cookie, mirrors
  * the choice in `localStorage` for instant client-side reads, navigates
- * to the locale-correct path, and calls `router.refresh()` so the RSC
- * tree (including `<html lang>`) re-renders (design D9).
+ * to the locale-prefixed URL, and calls `router.refresh()` so the RSC
+ * tree (including `<html lang>`) re-renders (REQ-I18N-021 / design D6).
  *
  * Mounted in the Header (icon-only `h-9 w-9`) for protected `(app)` routes
  * and in the Footer (text + icon) for public routes that don't have the
- * AppShell — see REQ-I18N-007 / design D11.
+ * AppShell — see REQ-I18N-007.
  *
  * Cookie attributes:
  *   - `path=/`         : available to every route
  *   - `max-age=...`    : 1 year, so the user's choice persists across sessions
  *   - `SameSite=Lax`   : required for the OAuth `redirectTo` flow which
- *                        crosses origins after the callback (D9 elaboration)
+ *                        crosses origins after the callback
  */
 export function LanguageSwitcher({ inFooter = false }: LanguageSwitcherProps) {
   const t = useTranslations("Common");
   const locale = useLocale() as Locale;
   const router = useRouter();
+  const pathname = usePathname();
   const reducedMotion = useReducedMotion();
 
   function switchTo(target: Locale) {
-    // v1 uses `localePrefix: 'never'`, so URLs never carry a locale prefix.
-    // The switcher only needs to set the NEXT_LOCALE cookie (so the
-    // next-intl middleware picks it up on the next request) and force
-    // the RSC tree to re-render via router.refresh(). No router.push().
+    // v2 uses `localePrefix: 'as-needed'`, so URLs CAN carry a locale
+    // prefix (`/en/dashboard`). The switcher:
+    //   1. Sets the NEXT_LOCALE cookie (1 year, SameSite=Lax) so the
+    //      next-intl middleware picks it up on the next request.
+    //   2. Mirrors the choice in localStorage for instant client-side reads.
+    //   3. Strips the current locale prefix from `pathname` (because
+    //      `usePathname()` returns the locale-prefixed path, e.g.
+    //      `/en/dashboard`) and prepends the new target's prefix.
+    //   4. `router.push` navigates to the new URL; `router.refresh()`
+    //      forces the RSC tree (including `<html lang>`) to re-render.
     document.cookie = `NEXT_LOCALE=${target}; path=/; max-age=31536000; SameSite=Lax`;
     try {
       localStorage.setItem("NEXT_LOCALE", target);
     } catch {
       // localStorage may throw in private mode / SSR mocks — ignore.
     }
+    const stripped = stripLocalePrefix(pathname);
+    const nextPath =
+      target === routing.defaultLocale ? stripped : `/${target}${stripped}`;
+    router.push(nextPath);
     router.refresh();
   }
 

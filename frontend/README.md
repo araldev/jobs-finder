@@ -50,11 +50,15 @@ always carries the `/en/...` prefix.
 ### How locale is detected
 
 The middleware chain in `src/middleware.ts` reads the locale in this
-priority order:
+priority order (verified against next-intl 4.x `resolveLocale.tsx`):
 
-1. `NEXT_LOCALE` cookie (set by the `LanguageSwitcher`).
-2. `Accept-Language` request header.
-3. Default — `'es'`.
+1. **URL path prefix** — `/en/dashboard` → locale is `en`. This wins
+   over the cookie so canonical locale-prefixed URLs (e.g. shared
+   marketing links) are honored even if the user previously chose a
+   different locale.
+2. `NEXT_LOCALE` cookie (set by the `LanguageSwitcher`).
+3. `Accept-Language` request header.
+4. Default — `'es'`.
 
 ### Killing the i18n layer (escape hatch)
 

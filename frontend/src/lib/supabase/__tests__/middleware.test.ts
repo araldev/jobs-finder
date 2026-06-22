@@ -75,3 +75,58 @@ describe("updateSession — publicPaths whitelist (REQ-AUTH-021)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Locale-aware auth redirects (REQ-I18N-020, v2 contract).
+//
+// v2 uses `localePrefix: 'as-needed'`. When an unauthenticated user
+// hits a protected route, the auth bounce must land on the locale-correct
+// login path — e.g. `/en/dashboard` → `/en/login`, not `/login`. The
+// `deriveLocalePrefix` helper (in middleware.ts) inspects the original
+// URL and returns the locale prefix string for non-default locales.
+// ---------------------------------------------------------------------------
+
+describe("updateSession — locale-aware auth redirect (REQ-I18N-020)", () => {
+  it("/en/dashboard with NO user → redirected to /en/login (locale-aware bounce)", async () => {
+    const res = await runMiddleware("/en/dashboard", false);
+    expect(res.status).toBeGreaterThanOrEqual(300);
+    expect(res.headers.get("location")).toBe("http://localhost:3000/en/login");
+  });
+
+  it("/en/search with NO user → redirected to /en/login", async () => {
+    const res = await runMiddleware("/en/search", false);
+    expect(res.status).toBeGreaterThanOrEqual(300);
+    expect(res.headers.get("location")).toBe("http://localhost:3000/en/login");
+  });
+
+  it("/en/settings with NO user → redirected to /en/login", async () => {
+    const res = await runMiddleware("/en/settings", false);
+    expect(res.status).toBeGreaterThanOrEqual(300);
+    expect(res.headers.get("location")).toBe("http://localhost:3000/en/login");
+  });
+
+  it("/en/login with user present → redirected to /en/dashboard (locale-aware bounce-back)", async () => {
+    const res = await runMiddleware("/en/login", true);
+    expect(res.status).toBeGreaterThanOrEqual(300);
+    expect(res.headers.get("location")).toBe(
+      "http://localhost:3000/en/dashboard",
+    );
+  });
+
+  it("/en/forgot-password with NO user → does NOT redirect (public path)", async () => {
+    // REQ-AUTH-021: forgot-password is part of the public auth flow,
+    // so an unauthenticated user can hit it without bouncing.
+    const res = await runMiddleware("/en/forgot-password", false);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location") ?? "").not.toMatch(/\/login/);
+  });
+
+  it("/es/dashboard with NO user → redirected to /login (default locale, no prefix)", async () => {
+    // Default locale URLs do NOT get a prefix (per the localePrefix
+    // 'as-needed' contract). `/es/...` paths are technically valid but
+    // the default locale is unprefixed; the helper returns "" for `es`.
+    const res = await runMiddleware("/es/dashboard", false);
+    expect(res.status).toBeGreaterThanOrEqual(300);
+    expect(res.headers.get("location")).toBe("http://localhost:3000/login");
+  });
+});
+

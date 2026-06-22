@@ -1,15 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { renderWithIntl } from "@/test-utils";
 
+const routerPushMock = vi.fn();
 const routerRefreshMock = vi.fn();
+const pathnameMock = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
+    push: routerPushMock,
     refresh: routerRefreshMock,
   }),
-  usePathname: () => "/dashboard",
+  usePathname: () => pathnameMock(),
 }));
 
 vi.mock("framer-motion", () => ({
@@ -24,9 +27,12 @@ vi.mock("framer-motion", () => ({
 // Import AFTER the mocks are registered.
 import { LanguageSwitcher } from "./LanguageSwitcher";
 
-describe("LanguageSwitcher — v1 cookie-based locale switching", () => {
+describe("LanguageSwitcher — v2 URL-prefix locale switching", () => {
   beforeEach(() => {
+    routerPushMock.mockClear();
     routerRefreshMock.mockClear();
+    pathnameMock.mockReset();
+    pathnameMock.mockReturnValue("/dashboard");
     document.cookie = "NEXT_LOCALE=; path=/; max-age=0";
     localStorage.clear();
   });
@@ -41,7 +47,8 @@ describe("LanguageSwitcher — v1 cookie-based locale switching", () => {
     expect(screen.getByRole("button", { name: /idioma|language/i })).toBeTruthy();
   });
 
-  it("clicking 'English' sets NEXT_LOCALE=en cookie, localStorage, and triggers router.refresh()", async () => {
+  it("clicking 'English' sets NEXT_LOCALE=en cookie, localStorage, and router.push('/en/dashboard')", async () => {
+    pathnameMock.mockReturnValue("/dashboard");
     const user = userEvent.setup();
 
     render(renderWithIntl(<LanguageSwitcher />, { locale: "es" }));
@@ -50,12 +57,12 @@ describe("LanguageSwitcher — v1 cookie-based locale switching", () => {
 
     expect(document.cookie).toMatch(/NEXT_LOCALE=en/);
     expect(localStorage.getItem("NEXT_LOCALE")).toBe("en");
-    // v1 uses localePrefix: 'never', so the URL is NOT changed — only the
-    // cookie + refresh trigger the RSC tree re-render in the new locale.
+    expect(routerPushMock).toHaveBeenCalledWith("/en/dashboard");
     expect(routerRefreshMock).toHaveBeenCalled();
   });
 
-  it("clicking 'Español' sets NEXT_LOCALE=es cookie and triggers router.refresh()", async () => {
+  it("clicking 'Español' on an /en/ route strips the prefix and stays on the canonical path", async () => {
+    pathnameMock.mockReturnValue("/en/dashboard");
     const user = userEvent.setup();
 
     render(renderWithIntl(<LanguageSwitcher />, { locale: "en" }));
@@ -64,7 +71,20 @@ describe("LanguageSwitcher — v1 cookie-based locale switching", () => {
 
     expect(document.cookie).toMatch(/NEXT_LOCALE=es/);
     expect(localStorage.getItem("NEXT_LOCALE")).toBe("es");
+    // Default locale = no prefix; /en/dashboard → /dashboard
+    expect(routerPushMock).toHaveBeenCalledWith("/dashboard");
     expect(routerRefreshMock).toHaveBeenCalled();
+  });
+
+  it("preserves locale prefix on sub-paths (e.g. /en/jobs/abc-123 → /jobs/abc-123)", async () => {
+    pathnameMock.mockReturnValue("/en/jobs/abc-123");
+    const user = userEvent.setup();
+
+    render(renderWithIntl(<LanguageSwitcher />, { locale: "en" }));
+    await user.click(screen.getByRole("button", { name: /language/i }));
+    await user.click(screen.getByRole("menuitemradio", { name: /español/i }));
+
+    expect(routerPushMock).toHaveBeenCalledWith("/jobs/abc-123");
   });
 
   it("supports keyboard navigation (Tab → Enter → ArrowDown → Enter)", async () => {
@@ -79,7 +99,8 @@ describe("LanguageSwitcher — v1 cookie-based locale switching", () => {
     await user.keyboard("{ArrowDown}"); // Move to first radio item
     await user.keyboard("{Enter}"); // Select
 
-    // Selection triggers router.refresh(), not router.push() (v1).
+    // Selection triggers BOTH router.push (URL change) AND router.refresh (RSC re-render)
+    expect(routerPushMock).toHaveBeenCalled();
     expect(routerRefreshMock).toHaveBeenCalled();
   });
 
@@ -111,9 +132,9 @@ describe("LanguageSwitcher — v1 cookie-based locale switching", () => {
     await user.click(screen.getByRole("button", { name: /idioma/i }));
 
     // Should NOT throw — the localStorage call is wrapped in try/catch.
-    expect(() =>
-      fireEvent.click(screen.getByRole("menuitemradio", { name: /english/i })),
-    ).not.toThrow();
+    // Selecting English still calls router.push to /en/dashboard.
+    await user.click(screen.getByRole("menuitemradio", { name: /english/i }));
+    expect(routerPushMock).toHaveBeenCalledWith("/en/dashboard");
 
     setItemSpy.mockRestore();
   });
