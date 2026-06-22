@@ -1,5 +1,29 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { routing } from "@/i18n/routing";
+
+/**
+ * Strip a leading locale prefix from a pathname.
+ *
+ * Examples:
+ *   stripLocalePrefix('/en/dashboard')  -> '/dashboard'
+ *   stripLocalePrefix('/en/login')      -> '/login'
+ *   stripLocalePrefix('/en')            -> '/'
+ *   stripLocalePrefix('/dashboard')     -> '/dashboard'   (no match)
+ *   stripLocalePrefix('/')              -> '/'
+ *
+ * Used by `updateSession` so the existing `publicPaths.some(...)` check
+ * (which doesn't know about locale prefixes) keeps working for `/en/...`
+ * URLs. Iterating over `routing.locales` (instead of regex) keeps the
+ * helper trivial to read and easy to unit-test (design D5).
+ */
+export function stripLocalePrefix(path: string): string {
+  for (const locale of routing.locales) {
+    if (path === `/${locale}`) return "/";
+    if (path.startsWith(`/${locale}/`)) return path.slice(locale.length + 1);
+  }
+  return path;
+}
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -33,28 +57,64 @@ export async function updateSession(request: NextRequest) {
   // APIs (/api/*) son siempre accesibles. /forgot-password and /reset-password
   // are part of the public auth flow (REQ-AUTH-021) so an unauthenticated
   // user can request + complete a password reset without bouncing to /login.
-  const publicPaths = ["/jobs", "/login", "/signup", "/auth", "/forgot-password", "/reset-password"];
-  const isPublic = publicPaths.some((path) =>
-    request.nextUrl.pathname.startsWith(path),
+  //
+  // With i18n enabled, the request may carry a locale prefix (`/en/dashboard`).
+  // Strip it before comparing so `publicPaths.some(...)` still matches the
+  // canonical Spanish-path shape (REQ-I18N-004).
+  const publicPaths = [
+    "/jobs",
+    "/login",
+    "/signup",
+    "/auth",
+    "/forgot-password",
+    "/reset-password",
+  ];
+  const strippedPath = stripLocalePrefix(request.nextUrl.pathname);
+  const isPublic = publicPaths.some(
+    (path) => strippedPath === path || strippedPath.startsWith(path + "/"),
   );
 
-  // La raíz / es la landing page pública
-  const isRoot = request.nextUrl.pathname === "/";
+  // La raíz / es la landing page pública (also matched after locale stripping).
+  const isRoot = strippedPath === "/";
 
   // Las APIs son siempre accesibles
   const isApi = request.nextUrl.pathname.startsWith("/api");
 
   // Si la ruta NO es pública, NO es la raíz, NO es API, y NO hay usuario → redirect a /login
+  // The redirect target MUST be locale-aware: if the user was on `/en/dashboard`,
+  // they should be bounced to `/en/login`, not `/login`.
   if (!user && !isPublic && !isRoot && !isApi) {
     const url = request.nextUrl.clone();
-    url.pathname = "/login";
+    // Re-derive the locale prefix from the original pathname so the
+    // bounce lands on the right locale. For non-default locales we
+    // preserve the `/<locale>` prefix; for the default locale (es)
+    // and unprefixed routes the path stays as-is.
+    const localePrefix = routing.locales.find(
+      (l) =>
+        request.nextUrl.pathname === `/${l}` ||
+        request.nextUrl.pathname.startsWith(`/${l}/`),
+    );
+    url.pathname = localePrefix && localePrefix !== routing.defaultLocale
+      ? `/${localePrefix}/login`
+      : "/login";
     return NextResponse.redirect(url);
   }
 
   // Si está logueado y va a /login → redirect a /dashboard
-  if (user && request.nextUrl.pathname.startsWith("/login")) {
+  // Mirror the same locale-aware redirect.
+  if (
+    user &&
+    (strippedPath === "/login" || strippedPath.startsWith("/login/"))
+  ) {
     const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
+    const localePrefix = routing.locales.find(
+      (l) =>
+        request.nextUrl.pathname === `/${l}` ||
+        request.nextUrl.pathname.startsWith(`/${l}/`),
+    );
+    url.pathname = localePrefix && localePrefix !== routing.defaultLocale
+      ? `/${localePrefix}/dashboard`
+      : "/dashboard";
     return NextResponse.redirect(url);
   }
 
