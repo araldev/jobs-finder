@@ -172,6 +172,9 @@ The pre-commit gates per workspace (CI runs all of them):
 | Backend `422 Unprocessable Entity` on scraper endpoints | Rate limiter rejecting the request | Increase `RATE_LIMIT_*` values in `backend/.env` or wait |
 | LinkedIn scraper returns 401 / CAPTCHA | `li_at` cookie expired or invalid | Refresh cookies via `backend/scripts/extract_linkedin_cookies.py` and update `LINKEDIN_LI_AT` in `.env` |
 | `supabase start` errors with "config.toml missing" | Someone tried to run a local Supabase stack — don't | **There is no local Supabase stack.** Use the cloud instance. See top of this file. |
+| After sign-in, browser stuck on `/auth/callback?code=...` with 404 | next-intl middleware rewrites `/auth/callback` → `/es/auth/callback`, but the route lives at `app/auth/callback/route.ts` (NOT under `[locale]/`) so `/es/auth/callback` 404s. **Fixed in `fix-frontend-root-layout-tags`** — the middleware matcher now excludes `/auth/*`. If you're on an older branch, update `frontend/src/middleware.ts` matcher to add `auth` to the negative lookahead. |
+| `globals.css` not loading / "Cannot find module './globals.css'" | The CSS import was moved out of `app/[locale]/layout.tsx` to the root `app/layout.tsx`. If your `app/layout.tsx` doesn't `import "./globals.css"`, copy it back. **Fixed in `fix-frontend-root-layout-tags`**. |
+| `Missing <html> and <body> tags in the root layout` | The root layout is just `return children` without `<html>` / `<body>`. Next.js 15 REQUIRES them in the root. **Fixed in `fix-frontend-root-layout-tags`** — `app/layout.tsx` now wraps children in `<html lang={locale}><body>...</body></html>`. |
 
 ## Architecture overview
 
