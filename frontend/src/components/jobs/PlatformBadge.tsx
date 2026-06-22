@@ -1,3 +1,6 @@
+"use client";
+
+import { useTranslations } from "next-intl";
 import type { Source } from "@/types/job";
 import { cn } from "@/lib/utils";
 
@@ -6,6 +9,7 @@ interface PlatformBadgeProps {
 }
 
 export function PlatformBadge({ platform }: PlatformBadgeProps) {
+  const t = useTranslations("Dashboard.platforms");
   const colors: Record<Source, string> = {
     linkedin: "bg-[hsl(var(--linkedin))] text-white",
     indeed: "bg-[hsl(var(--indeed))] text-white",
@@ -19,7 +23,7 @@ export function PlatformBadge({ platform }: PlatformBadgeProps) {
         colors[platform],
       )}
     >
-      {platform.charAt(0).toUpperCase() + platform.slice(1)}
+      {t(platform as "linkedin" | "indeed" | "infojobs")}
     </span>
   );
 }

@@ -2,6 +2,7 @@
 
 import { Heart } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { useFavorites } from "@/hooks/useFavorites";
 import type { Job } from "@/types/job";
@@ -14,6 +15,7 @@ interface FavoriteButtonProps {
 
 export function FavoriteButton({ job, size = "md", className }: FavoriteButtonProps) {
   const { isFavorite, toggleFavorite } = useFavorites();
+  const t = useTranslations("Jobs.favorite");
   const favorited = isFavorite(job.id);
 
   const sizeClasses = size === "sm" ? "h-4 w-4" : "h-5 w-5";
@@ -23,19 +25,15 @@ export function FavoriteButton({ job, size = "md", className }: FavoriteButtonPr
     e.stopPropagation();
     e.preventDefault();
     toggleFavorite(job);
-    if (favorited) {
-      toast.success("Removed from favorites");
-    } else {
-      toast.success("Added to favorites");
-    }
+    toast.success(favorited ? t("remove") : t("add"));
   };
 
   return (
     <button
       type="button"
       onClick={handleClick}
-      aria-label={favorited ? "Remove from favorites" : "Save to favorites"}
-      title={favorited ? "Remove from favorites" : "Save to favorites"}
+      aria-label={favorited ? t("remove") : t("add")}
+      title={favorited ? t("remove") : t("add")}
       className={cn(
         "inline-flex items-center justify-center rounded-lg transition-colors hover:bg-muted",
         buttonSize,
