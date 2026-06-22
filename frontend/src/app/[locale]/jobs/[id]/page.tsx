@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
@@ -13,34 +13,29 @@ import { createClient } from "@/lib/supabase/client";
 import { markJobAsOpened } from "@/lib/chat-storage";
 import { ChatDialog } from "@/components/chat/ChatDialog";
 import { Footer } from "@/components/layout/Footer";
-import type { Job } from "@/types/job";
+import { useJobDetail } from "@/hooks/useJobDetail";
 
+/**
+ * Public job detail page (REQ-CACHEUX-004).
+ *
+ * Migrated from raw `useState` + `useEffect` + `fetch` to the
+ * existing `useJobDetail(id)` hook. The migration:
+ *   1. Joins the shared React Query cache (5min `staleTime` +
+ *      window-focus refetch per `providers.tsx`).
+ *   2. Removes ~25 lines of local state management.
+ *   3. Preserves `markJobAsOpened(id)` side-effect + auth-check
+ *      useEffect (REQ-MAINT-017).
+ *   4. Behavioral equivalence: same components render for the
+ *      loading / data / error branches.
+ */
 export default function PublicJobDetailPage() {
   const params = useParams();
   const router = useRouter();
   const id = typeof params.id === "string" ? params.id : "";
-  const [job, setJob] = useState<Job | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<{ email?: string } | null>(null);
   const supabase = createClient();
 
-  const fetchJob = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/jobs/${id}`);
-      if (!res.ok) throw new Error("Job not found");
-      const data = await res.json();
-      setJob(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error loading job");
-    } finally {
-      setLoading(false);
-    }
-  }, [id]);
-
-  useEffect(() => {
-    fetchJob();
-  }, [fetchJob]);
+  const { data: job, isLoading, error, refetch } = useJobDetail(id);
 
   // Mark job as opened when loaded
   useEffect(() => {
@@ -62,6 +57,9 @@ export default function PublicJobDetailPage() {
     await supabase.auth.signOut();
     setUser(null);
   }
+
+  const errorMessage =
+    error instanceof Error ? error.message : error ? "Error loading job" : null;
 
   return (
     <div className="min-h-screen bg-background">
@@ -107,7 +105,7 @@ export default function PublicJobDetailPage() {
           Volver atrás
         </Button>
 
-        {loading && (
+        {isLoading && (
           <div className="flex gap-6">
             <div className="flex-1 space-y-4">
               <Skeleton className="h-8 w-3/4" />
@@ -118,16 +116,16 @@ export default function PublicJobDetailPage() {
           </div>
         )}
 
-        {error && (
+        {errorMessage && (
           <div className="py-16 text-center">
-            <p className="text-muted-foreground">{error}</p>
-            <Button variant="outline" className="mt-4" onClick={fetchJob}>
+            <p className="text-muted-foreground">{errorMessage}</p>
+            <Button variant="outline" className="mt-4" onClick={() => void refetch()}>
               Reintentar
             </Button>
           </div>
         )}
 
-        {job && !loading && (
+        {job && !isLoading && (
           <div className="flex gap-6">
             <div className="flex-1 min-w-0">
               <JobDetailContent job={job} />
