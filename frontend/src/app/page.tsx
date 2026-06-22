@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { useTranslations } from "next-intl";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -29,6 +30,7 @@ interface SavedCV {
 
 export default function CVLandingPage() {
   const supabase = createClient();
+  const t = useTranslations("Landing");
   const [user, setUser] = useState<{ email?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -80,18 +82,18 @@ export default function CVLandingPage() {
     if (!file) return;
 
     if (file.type !== "application/pdf") {
-      setError("Solo se aceptan archivos PDF");
+      setError(t("upload.pdfOnly"));
       return;
     }
 
     if (file.size > 5 * 1024 * 1024) {
-      setError("El archivo debe ser menor a 5MB");
+      setError(t("upload.tooBig"));
       return;
     }
 
     const { data: sessionData } = await supabase.auth.getSession();
     if (!sessionData.session?.user) {
-      setError("Inicia sesión para subir tu CV");
+      setError(t("upload.mustSignIn"));
       return;
     }
 
