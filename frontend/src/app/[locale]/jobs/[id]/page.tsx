@@ -62,7 +62,7 @@ export default function PublicJobDetailPage() {
     error instanceof Error ? error.message : error ? "Error loading job" : null;
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen flex flex-col bg-background">
       {/* Navigation */}
       <nav className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container mx-auto flex h-16 items-center justify-between px-4">
@@ -98,8 +98,8 @@ export default function PublicJobDetailPage() {
         </div>
       </nav>
 
-      {/* Content */}
-      <div className="container mx-auto px-4 py-6">
+      {/* Content — flex-1 pushes footer to bottom when content is short */}
+      <div className="flex-1 container mx-auto px-4 py-6">
         <Button variant="ghost" size="sm" onClick={() => router.back()} className="mb-6">
           <ArrowLeft className="mr-1 h-4 w-4" />
           Volver atrás
