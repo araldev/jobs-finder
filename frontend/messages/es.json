@@ -236,5 +236,63 @@
     "noJobs": "No se encontraron trabajos",
     "salary": "Salario",
     "notSpecified": "No especificado"
+  },
+  "Search": {
+    "placeholder": "Buscar trabajos…",
+    "locationPlaceholder": "Ciudad o remoto",
+    "filters": {
+      "salary": "Salario",
+      "date": "Fecha de publicación",
+      "platform": "Plataforma",
+      "remote": "Remoto",
+      "contractType": "Tipo de contrato"
+    },
+    "results": "{count, plural, =0 {Sin resultados} one {# resultado} other {# resultados}}",
+    "noResults": "Ningún trabajo coincide con tus filtros",
+    "search": "Buscar",
+    "clear": "Limpiar"
+  },
+  "Favorites": {
+    "heading": "Trabajos favoritos",
+    "count": "{count, plural, =0 {Sin favoritos guardados} one {# favorito guardado} other {# favoritos guardados}}",
+    "filter": {
+      "placeholder": "Filtrar favoritos"
+    },
+    "emptyState": {
+      "title": "Aún no hay favoritos",
+      "description": "Guardá trabajos desde los resultados de búsqueda para revisarlos más tarde."
+    }
+  },
+  "Settings": {
+    "notifications": {
+      "title": "Notificaciones",
+      "email": "Notificaciones por correo",
+      "emailDescription": "Recibí actualizaciones sobre nuevos trabajos y cambios de cuenta.",
+      "push": "Notificaciones push",
+      "pushDescription": "Recibí notificaciones en tu navegador cuando lleguen nuevos trabajos.",
+      "weekly": "Resumen semanal",
+      "weeklyDescription": "Un resumen de los nuevos trabajos publicados esta semana."
+    },
+    "platform": {
+      "linkedin": {
+        "enabled": "LinkedIn habilitado",
+        "interval": "Intervalo de sincronización de LinkedIn (minutos)"
+      },
+      "indeed": {
+        "enabled": "Indeed habilitado",
+        "interval": "Intervalo de sincronización de Indeed (minutos)"
+      },
+      "infojobs": {
+        "enabled": "InfoJobs habilitado",
+        "interval": "Intervalo de sincronización de InfoJobs (minutos)"
+      }
+    },
+    "account": {
+      "title": "Cuenta",
+      "changePassword": "Cambiar contraseña",
+      "deleteAccount": "Eliminar cuenta",
+      "signOut": "Cerrar sesión",
+      "cV": "Tu CV"
+    }
   }
 }

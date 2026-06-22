@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { Filter, MapPin, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -25,6 +26,8 @@ const defaultValues: FilterValues = {
 };
 
 export function FilterPanel({ values, onChange }: FilterPanelProps) {
+  const t = useTranslations("Search");
+  const tPlatform = useTranslations("Dashboard.platforms");
   const [open, setOpen] = useState(false);
   const hasFilters = values.sources.length > 0 || !!values.location;
 
@@ -48,7 +51,7 @@ export function FilterPanel({ values, onChange }: FilterPanelProps) {
       <PopoverTrigger asChild>
         <Button variant="outline" size="sm" className="gap-2">
           <Filter className="h-4 w-4" />
-          Filters
+          {t("filters.platform")}
           {hasFilters && (
             <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
               {(values.sources.length > 0 ? values.sources.length : 0) + (values.location ? 1 : 0)}
@@ -59,11 +62,11 @@ export function FilterPanel({ values, onChange }: FilterPanelProps) {
       <PopoverContent className="w-72" align="start">
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h4 className="font-display text-sm font-semibold">Filters</h4>
+            <h4 className="font-display text-sm font-semibold">{t("filters.platform")}</h4>
             {hasFilters && (
               <Button variant="ghost" size="sm" className="h-auto px-2 py-1 text-xs" onClick={clearAll}>
                 <X className="mr-1 h-3 w-3" />
-                Clear
+                {t("clear")}
               </Button>
             )}
           </div>
@@ -71,7 +74,7 @@ export function FilterPanel({ values, onChange }: FilterPanelProps) {
           {/* Platforms */}
           <div>
             <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Platform
+              {t("filters.platform")}
             </p>
             <div className="space-y-1">
               {SOURCES.map((source) => (
@@ -82,7 +85,7 @@ export function FilterPanel({ values, onChange }: FilterPanelProps) {
                     onChange={() => toggleSource(source)}
                     className="h-4 w-4 rounded border-input text-primary focus:ring-primary"
                   />
-                  {source.charAt(0).toUpperCase() + source.slice(1)}
+                  {tPlatform(source as "linkedin" | "indeed" | "infojobs")}
                 </label>
               ))}
             </div>
@@ -92,10 +95,10 @@ export function FilterPanel({ values, onChange }: FilterPanelProps) {
           <div>
             <p className="mb-2 flex items-center gap-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
               <MapPin className="h-3 w-3" />
-              Location
+              {t("filters.salary")}
             </p>
             <Input
-              placeholder="City, province..."
+              placeholder={t("locationPlaceholder")}
               value={values.location ?? ""}
               onChange={(e) => setLocation(e.target.value)}
               className="h-9 text-sm"

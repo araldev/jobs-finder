@@ -236,5 +236,63 @@
     "noJobs": "No jobs found",
     "salary": "Salary",
     "notSpecified": "Not specified"
+  },
+  "Search": {
+    "placeholder": "Search jobs…",
+    "locationPlaceholder": "City or remote",
+    "filters": {
+      "salary": "Salary",
+      "date": "Date posted",
+      "platform": "Platform",
+      "remote": "Remote",
+      "contractType": "Contract type"
+    },
+    "results": "{count, plural, =0 {No results} one {# result} other {# results}}",
+    "noResults": "No jobs match your filters",
+    "search": "Search",
+    "clear": "Clear"
+  },
+  "Favorites": {
+    "heading": "Favorite jobs",
+    "count": "{count, plural, =0 {No saved favorites} one {# saved favorite} other {# saved favorites}}",
+    "filter": {
+      "placeholder": "Filter favorites"
+    },
+    "emptyState": {
+      "title": "No favorites yet",
+      "description": "Save jobs from the search results to revisit them later."
+    }
+  },
+  "Settings": {
+    "notifications": {
+      "title": "Notifications",
+      "email": "Email notifications",
+      "emailDescription": "Receive updates about new jobs and account changes.",
+      "push": "Push notifications",
+      "pushDescription": "Get notified in your browser when new jobs arrive.",
+      "weekly": "Weekly digest",
+      "weeklyDescription": "A summary of new jobs posted this week."
+    },
+    "platform": {
+      "linkedin": {
+        "enabled": "LinkedIn enabled",
+        "interval": "LinkedIn sync interval (minutes)"
+      },
+      "indeed": {
+        "enabled": "Indeed enabled",
+        "interval": "Indeed sync interval (minutes)"
+      },
+      "infojobs": {
+        "enabled": "InfoJobs enabled",
+        "interval": "InfoJobs sync interval (minutes)"
+      }
+    },
+    "account": {
+      "title": "Account",
+      "changePassword": "Change password",
+      "deleteAccount": "Delete account",
+      "signOut": "Sign out",
+      "cV": "Your CV"
+    }
   }
 }

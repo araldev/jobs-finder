@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { mockSupabaseAuth } from "@/lib/supabase/__mocks__/client";
+import { renderWithIntl } from "@/test-utils";
 
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => mockSupabaseAuth,
@@ -43,10 +44,10 @@ beforeEach(() => {
 
 describe("AccountSection — REQ-AUTH-013 / REQ-AUTH-014", () => {
   it("renders the section heading + the 3 sub-components", async () => {
-    render(<AccountSection />);
+    render(renderWithIntl(<AccountSection />, { locale: "es" }));
     // CardTitle is a styled <div>, not a heading; assert by text in
     // a more specific scope (CardHeader).
-    const headers = screen.getAllByText(/Cuenta/i);
+    const headers = screen.getAllByText(/Cuenta|Cuenta/i);
     expect(headers.length).toBeGreaterThan(0);
     expect(screen.getByTestId("change-password-form-sentinel")).toBeInTheDocument();
     expect(screen.getByTestId("global-signout-sentinel")).toBeInTheDocument();
@@ -55,7 +56,7 @@ describe("AccountSection — REQ-AUTH-013 / REQ-AUTH-014", () => {
   });
 
   it("SCN-AUTH-013-1: destructive sub-card has border-destructive/40 styling AND is the LAST sub-card", async () => {
-    const { container } = render(<AccountSection />);
+    const { container } = render(renderWithIntl(<AccountSection />, { locale: "es" }));
 
     // Wait for the destructive sub-card to render after getUser resolves.
     const deleteSentinel = await screen.findByTestId("delete-account-sentinel");
