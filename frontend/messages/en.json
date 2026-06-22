@@ -19,6 +19,7 @@
     "or": "or",
     "and": "and",
     "toggleTheme": "Toggle theme",
+    "loadingHint": "Loading… This may take a moment on first load.",
     "switcher": {
       "label": "Language",
       "shortLabel": "EN"
@@ -227,7 +228,8 @@
       "infojobs": "InfoJobs",
       "percentOfTotal": "{pct}% of total",
       "noData": "No platform data available yet"
-    }
+    },
+    "loadingHint": "Loading jobs… This may take a moment on first load."
   },
   "Jobs": {
     "card": {

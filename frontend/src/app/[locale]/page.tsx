@@ -156,6 +156,7 @@ export default function CVLandingPage() {
           <div className="hidden items-center gap-6 md:flex">
             <Link
               href="/search"
+              prefetch={true}
               className="text-sm text-muted-foreground transition-colors hover:text-foreground"
             >
               Buscar empleos

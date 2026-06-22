@@ -1,4 +1,5 @@
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadingHint } from "@/components/shared/LoadingHint";
 
 export default function RootLoading() {
   return (
@@ -15,6 +16,7 @@ export default function RootLoading() {
           {Array.from({ length: 5 }).map((_, i) => (
             <Skeleton key={i} className="h-[140px] rounded-xl" />
           ))}
+          <LoadingHint ns="Common" />
         </div>
       </div>
     </div>

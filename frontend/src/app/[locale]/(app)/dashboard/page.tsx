@@ -12,6 +12,7 @@ import { useJobsInfinite } from "@/hooks/useJobsInfinite";
 import { usePlatformConfig } from "@/hooks/usePlatformConfig";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useOpenedJobs } from "@/lib/chat-storage";
+import { LoadingHint } from "@/components/shared/LoadingHint";
 
 export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -89,14 +90,17 @@ export default function DashboardPage() {
           {/* Compact job cards grid with infinite scroll */}
           <div className="mt-4">
             {isLoading ? (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className="skeleton-shimmer h-[120px] rounded-xl"
-                  />
-                ))}
-              </div>
+              <>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div
+                      key={i}
+                      className="skeleton-shimmer h-[120px] rounded-xl"
+                    />
+                  ))}
+                </div>
+                <LoadingHint />
+              </>
             ) : isError ? (
               <EmptyState variant="error" />
             ) : allJobs.length === 0 ? (

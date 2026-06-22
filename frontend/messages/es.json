@@ -19,6 +19,7 @@
     "or": "o",
     "and": "y",
     "toggleTheme": "Cambiar tema",
+    "loadingHint": "Cargando… Esto puede tardar un momento la primera vez.",
     "switcher": {
       "label": "Idioma",
       "shortLabel": "ES"
@@ -227,7 +228,8 @@
       "infojobs": "InfoJobs",
       "percentOfTotal": "{pct}% del total",
       "noData": "Aún no hay datos de plataforma"
-    }
+    },
+    "loadingHint": "Cargando trabajos… Esto puede tardar un momento la primera vez."
   },
   "Jobs": {
     "card": {
