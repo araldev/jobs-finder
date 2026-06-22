@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { mockSupabaseAuth } from "@/lib/supabase/__mocks__/client";
 import { authCopy } from "@/lib/authCopy";
 import { cleanupJobsFinderLocalStorage } from "@/lib/auth/cleanupJobsFinderLocalStorage";
+import { renderWithIntl } from "@/test-utils";
 
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => mockSupabaseAuth,
@@ -75,7 +76,7 @@ beforeEach(() => {
 describe("DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013", () => {
   it("SCN-AUTH-011-3: uses AlertDialog (role='alertdialog' present)", async () => {
     const user = userEvent.setup();
-    render(<DeleteAccountDialog userEmail={USER_EMAIL} />);
+    render(renderWithIntl(<DeleteAccountDialog userEmail={USER_EMAIL} />, { locale: "es" }));
 
     // Open the dialog
     await user.click(screen.getByRole("button", { name: authCopy.delete.triggerLabel }));
@@ -89,7 +90,7 @@ describe("DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013", (
 
   it("SCN-AUTH-011-1: typed email mismatch → confirm disabled + aria-disabled + inline Spanish error", async () => {
     const user = userEvent.setup();
-    render(<DeleteAccountDialog userEmail={USER_EMAIL} />);
+    render(renderWithIntl(<DeleteAccountDialog userEmail={USER_EMAIL} />, { locale: "es" }));
 
     await user.click(screen.getByRole("button", { name: authCopy.delete.triggerLabel }));
 
@@ -111,7 +112,7 @@ describe("DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013", (
 
   it("SCN-AUTH-011-2: case-insensitive trim match → confirm enabled", async () => {
     const user = userEvent.setup();
-    render(<DeleteAccountDialog userEmail={USER_EMAIL} />);
+    render(renderWithIntl(<DeleteAccountDialog userEmail={USER_EMAIL} />, { locale: "es" }));
 
     await user.click(screen.getByRole("button", { name: authCopy.delete.triggerLabel }));
 
@@ -136,7 +137,7 @@ describe("DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013", (
     localStorage.setItem("theme", "dark"); // unrelated — must survive
     mockSupabaseAuth.rpc.mockResolvedValueOnce({ data: null, error: null });
 
-    render(<DeleteAccountDialog userEmail={USER_EMAIL} />);
+    render(renderWithIntl(<DeleteAccountDialog userEmail={USER_EMAIL} />, { locale: "es" }));
     await user.click(screen.getByRole("button", { name: authCopy.delete.triggerLabel }));
 
     await waitFor(() => {
@@ -188,7 +189,7 @@ describe("DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013", (
       error: new Error("not authenticated"),
     });
 
-    render(<DeleteAccountDialog userEmail={USER_EMAIL} />);
+    render(renderWithIntl(<DeleteAccountDialog userEmail={USER_EMAIL} />, { locale: "es" }));
     await user.click(screen.getByRole("button", { name: authCopy.delete.triggerLabel }));
 
     await waitFor(() => {
@@ -232,7 +233,7 @@ describe("DeleteAccountDialog — REQ-AUTH-011 / REQ-AUTH-012 / REQ-AUTH-013", (
       error: new Error("not authenticated"),
     });
 
-    render(<DeleteAccountDialog userEmail={USER_EMAIL} />);
+    render(renderWithIntl(<DeleteAccountDialog userEmail={USER_EMAIL} />, { locale: "es" }));
     await user.click(screen.getByRole("button", { name: authCopy.delete.triggerLabel }));
 
     await waitFor(() => {
