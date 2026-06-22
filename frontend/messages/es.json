@@ -294,5 +294,37 @@
       "signOut": "Cerrar sesión",
       "cV": "Tu CV"
     }
+  },
+  "Chat": {
+    "fab": {
+      "label": "Abrir asistente de chat"
+    },
+    "dialog": {
+      "title": "Chat con Jobs Finder"
+    },
+    "panel": {
+      "header": "Asistente de empleo IA"
+    },
+    "messages": {
+      "lookingFor": "Buscando:",
+      "matchingJobs": "Trabajos que coinciden",
+      "done": "Listo",
+      "noMatches": "Aún no hay coincidencias"
+    },
+    "input": {
+      "placeholder": "Preguntá sobre trabajos, p. ej. \"puestos remotos de React en Madrid\"",
+      "sendAriaLabel": "Enviar mensaje"
+    },
+    "errors": {
+      "streamFailed": "La transmisión del chat falló. Intentá de nuevo.",
+      "connectionFailed": "No pudimos conectar con el servicio de chat.",
+      "generic": "El asistente de chat no está disponible en este momento.",
+      "rateLimit": "Demasiadas solicitudes de chat. Esperá un momento y volvé a intentar."
+    }
+  },
+  "Jobs.errors": {
+    "loadFailed": "No pudimos cargar los trabajos. Intentá de nuevo.",
+    "detailFailed": "No pudimos cargar los detalles del trabajo.",
+    "statsFailed": "No pudimos cargar las estadísticas."
   }
 }
