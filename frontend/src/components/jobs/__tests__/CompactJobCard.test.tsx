@@ -67,8 +67,10 @@ describe("CompactJobCard", () => {
 
   it("renders date", () => {
     render(<CompactJobCard job={mockJob} />);
-    // Date should be formatted: "Jun 10, 2026" since it's not today/yesterday
-    expect(screen.getByText(/Jun 10, 2026|Unknown/)).toBeInTheDocument();
+    // Default locale is now Spanish (i18n slice 4). The date is "10 de jun. de 2026"
+    // in ES or "Jun 10, 2026" in EN. Slice 8 will migrate the callsite to pass
+    // the active locale explicitly; for now we accept either format.
+    expect(screen.getByText(/Jun 10, 2026|10 de Jun(?:.+)? de 2026|Unknown/)).toBeInTheDocument();
   });
 
   it("links to job detail page", () => {
