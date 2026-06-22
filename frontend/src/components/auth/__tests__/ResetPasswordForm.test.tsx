@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockSupabaseAuth } from "@/lib/supabase/__mocks__/client";
 import { authCopy } from "@/lib/authCopy";
+import { renderWithIntl } from "@/test-utils";
 
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => mockSupabaseAuth,
@@ -25,7 +26,7 @@ beforeEach(() => {
 
 describe("ResetPasswordForm — REQ-AUTH-004 / REQ-AUTH-005", () => {
   it("renders new-password + confirm inputs + submit button", () => {
-    render(<ResetPasswordForm />);
+    render(renderWithIntl(<ResetPasswordForm />, { locale: "es" }));
     expect(screen.getByLabelText(authCopy.reset.newPasswordLabel)).toBeInTheDocument();
     expect(screen.getByLabelText(authCopy.reset.confirmPasswordLabel)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: authCopy.reset.submit })).toBeInTheDocument();
@@ -33,7 +34,7 @@ describe("ResetPasswordForm — REQ-AUTH-004 / REQ-AUTH-005", () => {
 
   it("SCN-AUTH-005-1: 5-char password → submit disabled + inline 'Mínimo 6 caracteres'", async () => {
     const user = userEvent.setup();
-    render(<ResetPasswordForm />);
+    render(renderWithIntl(<ResetPasswordForm />, { locale: "es" }));
 
     const newPassword = screen.getByLabelText(authCopy.reset.newPasswordLabel);
     const confirm = screen.getByLabelText(authCopy.reset.confirmPasswordLabel);
@@ -50,7 +51,7 @@ describe("ResetPasswordForm — REQ-AUTH-004 / REQ-AUTH-005", () => {
 
   it("SCN-AUTH-005-2: mismatched passwords → submit disabled + 'Las contraseñas no coinciden'", async () => {
     const user = userEvent.setup();
-    render(<ResetPasswordForm />);
+    render(renderWithIntl(<ResetPasswordForm />, { locale: "es" }));
 
     await user.type(screen.getByLabelText(authCopy.reset.newPasswordLabel), "abc123");
     await user.type(screen.getByLabelText(authCopy.reset.confirmPasswordLabel), "abc124");
@@ -63,7 +64,7 @@ describe("ResetPasswordForm — REQ-AUTH-004 / REQ-AUTH-005", () => {
 
   it("SCN-AUTH-005-3: aria-invalid + data-invalid + aria-live all wired", async () => {
     const user = userEvent.setup();
-    render(<ResetPasswordForm />);
+    render(renderWithIntl(<ResetPasswordForm />, { locale: "es" }));
 
     await user.type(screen.getByLabelText(authCopy.reset.newPasswordLabel), "x");
 
@@ -77,7 +78,7 @@ describe("ResetPasswordForm — REQ-AUTH-004 / REQ-AUTH-005", () => {
 
   it("success: calls updateUser({ password }) once → router.replace('/dashboard')", async () => {
     const user = userEvent.setup();
-    render(<ResetPasswordForm />);
+    render(renderWithIntl(<ResetPasswordForm />, { locale: "es" }));
 
     await user.type(screen.getByLabelText(authCopy.reset.newPasswordLabel), "newpass1");
     await user.type(screen.getByLabelText(authCopy.reset.confirmPasswordLabel), "newpass1");
@@ -99,7 +100,7 @@ describe("ResetPasswordForm — REQ-AUTH-004 / REQ-AUTH-005", () => {
       error: new Error("weak password"),
     });
 
-    render(<ResetPasswordForm />);
+    render(renderWithIntl(<ResetPasswordForm />, { locale: "es" }));
 
     await user.type(screen.getByLabelText(authCopy.reset.newPasswordLabel), "newpass1");
     await user.type(screen.getByLabelText(authCopy.reset.confirmPasswordLabel), "newpass1");
