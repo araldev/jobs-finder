@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import { GET } from "../route";
-import { authCopy } from "@/lib/authCopy";
 
 // Server-side supabase client mock — exchangeCodeForSession is the
 // only method the callback handler exercises.
@@ -101,10 +100,6 @@ describe("auth/callback — ?next= open-redirect defense (REQ-AUTH-022)", () => 
   it("regression: next=/forgot-password is allowed (round-trip)", async () => {
     const res = await GET(makeRequest("/auth/callback?code=abc&next=/forgot-password"));
     expect(res.headers.get("location")).toBe("http://localhost:3000/forgot-password");
-  });
-
-  it("regression: preserves authCopy import (no dead imports)", () => {
-    expect(authCopy.forgot.title).toBeTruthy();
   });
 });
 

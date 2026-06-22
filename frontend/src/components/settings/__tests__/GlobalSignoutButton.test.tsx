@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockSupabaseAuth } from "@/lib/supabase/__mocks__/client";
-import { authCopy } from "@/lib/authCopy";
+import esMessages from "@/messages/es.json";
 import { renderWithIntl } from "@/test-utils";
 
 vi.mock("@/lib/supabase/client", () => ({
@@ -25,13 +25,13 @@ describe("GlobalSignoutButton — REQ-AUTH-019 / REQ-AUTH-020", () => {
   it("renders the button with the Spanish trigger label", () => {
     render(renderWithIntl(<GlobalSignoutButton />, { locale: "es" }));
     expect(
-      screen.getByRole("button", { name: authCopy.globalSignOut.triggerLabel }),
+      screen.getByRole("button", { name: esMessages.Auth.globalSignOut.triggerLabel }),
     ).toBeInTheDocument();
   });
 
   it("SCN-AUTH-019-2: documents the ~1h token-lifetime via muted helper text", () => {
     render(renderWithIntl(<GlobalSignoutButton />, { locale: "es" }));
-    expect(screen.getByText(authCopy.globalSignOut.tooltip)).toBeInTheDocument();
+    expect(screen.getByText(esMessages.Auth.globalSignOut.tooltip)).toBeInTheDocument();
   });
 
   it("SCN-AUTH-019-1: click → signOut({ scope: 'global' }) + router.push('/')", async () => {
@@ -39,7 +39,7 @@ describe("GlobalSignoutButton — REQ-AUTH-019 / REQ-AUTH-020", () => {
     render(renderWithIntl(<GlobalSignoutButton />, { locale: "es" }));
 
     await user.click(
-      screen.getByRole("button", { name: authCopy.globalSignOut.triggerLabel }),
+      screen.getByRole("button", { name: esMessages.Auth.globalSignOut.triggerLabel }),
     );
 
     await waitFor(() => {

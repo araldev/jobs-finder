@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { createMockSupabaseServerClient } from "@/lib/supabase/__mocks__/server";
-import { authCopy } from "@/lib/authCopy";
+import esMessages from "@/messages/es.json";
 
 // The page uses the SERVER module (`createClient` from
 // `@/lib/supabase/server`), NOT the browser one.
@@ -29,7 +29,7 @@ describe("reset-password page (REQ-AUTH-004)", () => {
     const page = await Page();
     render(page);
 
-    expect(await screen.findByText(authCopy.reset.invalidLinkTitle)).toBeInTheDocument();
+    expect(await screen.findByText(esMessages.Auth.resetPassword.invalidLinkTitle)).toBeInTheDocument();
     expect(screen.queryByTestId("reset-password-form-sentinel")).not.toBeInTheDocument();
   });
 
@@ -40,7 +40,7 @@ describe("reset-password page (REQ-AUTH-004)", () => {
     const page = await Page();
     render(page);
 
-    const link = await screen.findByRole("link", { name: authCopy.reset.resendLink });
+    const link = await screen.findByRole("link", { name: esMessages.Auth.resetPassword.resendLink });
     expect(link).toHaveAttribute("href", "/forgot-password");
   });
 

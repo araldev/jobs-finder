@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockSupabaseAuth } from "@/lib/supabase/__mocks__/client";
-import { authCopy } from "@/lib/authCopy";
+import esMessages from "@/messages/es.json";
 import { renderWithIntl } from "@/test-utils";
 
 vi.mock("@/lib/supabase/client", () => ({
@@ -27,22 +27,22 @@ beforeEach(() => {
 describe("ResetPasswordForm — REQ-AUTH-004 / REQ-AUTH-005", () => {
   it("renders new-password + confirm inputs + submit button", () => {
     render(renderWithIntl(<ResetPasswordForm />, { locale: "es" }));
-    expect(screen.getByLabelText(authCopy.reset.newPasswordLabel)).toBeInTheDocument();
-    expect(screen.getByLabelText(authCopy.reset.confirmPasswordLabel)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: authCopy.reset.submit })).toBeInTheDocument();
+    expect(screen.getByLabelText(esMessages.Auth.resetPassword.newPasswordLabel)).toBeInTheDocument();
+    expect(screen.getByLabelText(esMessages.Auth.resetPassword.confirmPasswordLabel)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: esMessages.Auth.resetPassword.submit })).toBeInTheDocument();
   });
 
   it("SCN-AUTH-005-1: 5-char password → submit disabled + inline 'Mínimo 6 caracteres'", async () => {
     const user = userEvent.setup();
     render(renderWithIntl(<ResetPasswordForm />, { locale: "es" }));
 
-    const newPassword = screen.getByLabelText(authCopy.reset.newPasswordLabel);
-    const confirm = screen.getByLabelText(authCopy.reset.confirmPasswordLabel);
+    const newPassword = screen.getByLabelText(esMessages.Auth.resetPassword.newPasswordLabel);
+    const confirm = screen.getByLabelText(esMessages.Auth.resetPassword.confirmPasswordLabel);
 
     await user.type(newPassword, "abcde");
     await user.type(confirm, "abcde");
 
-    const submit = screen.getByRole("button", { name: authCopy.reset.submit });
+    const submit = screen.getByRole("button", { name: esMessages.Auth.resetPassword.submit });
     expect(submit).toBeDisabled();
     await waitFor(() => {
       expect(newPassword).toHaveAttribute("aria-invalid", "true");
@@ -53,12 +53,18 @@ describe("ResetPasswordForm — REQ-AUTH-004 / REQ-AUTH-005", () => {
     const user = userEvent.setup();
     render(renderWithIntl(<ResetPasswordForm />, { locale: "es" }));
 
-    await user.type(screen.getByLabelText(authCopy.reset.newPasswordLabel), "abc123");
-    await user.type(screen.getByLabelText(authCopy.reset.confirmPasswordLabel), "abc124");
+    await user.type(
+      screen.getByLabelText(esMessages.Auth.resetPassword.newPasswordLabel),
+      "abc123",
+    );
+    await user.type(
+      screen.getByLabelText(esMessages.Auth.resetPassword.confirmPasswordLabel),
+      "abc124",
+    );
 
-    const submit = screen.getByRole("button", { name: authCopy.reset.submit });
+    const submit = screen.getByRole("button", { name: esMessages.Auth.resetPassword.submit });
     expect(submit).toBeDisabled();
-    const liveRegion = await screen.findByText(authCopy.validation.passwordsDoNotMatch);
+    const liveRegion = await screen.findByText(esMessages.Validation.passwordsDoNotMatch);
     expect(liveRegion).toBeInTheDocument();
   });
 
@@ -66,10 +72,13 @@ describe("ResetPasswordForm — REQ-AUTH-004 / REQ-AUTH-005", () => {
     const user = userEvent.setup();
     render(renderWithIntl(<ResetPasswordForm />, { locale: "es" }));
 
-    await user.type(screen.getByLabelText(authCopy.reset.newPasswordLabel), "x");
+    await user.type(
+      screen.getByLabelText(esMessages.Auth.resetPassword.newPasswordLabel),
+      "x",
+    );
 
     await waitFor(() => {
-      const newPassword = screen.getByLabelText(authCopy.reset.newPasswordLabel);
+      const newPassword = screen.getByLabelText(esMessages.Auth.resetPassword.newPasswordLabel);
       expect(newPassword).toHaveAttribute("aria-invalid", "true");
     });
     const live = document.querySelector('[aria-live="polite"]');
@@ -80,9 +89,15 @@ describe("ResetPasswordForm — REQ-AUTH-004 / REQ-AUTH-005", () => {
     const user = userEvent.setup();
     render(renderWithIntl(<ResetPasswordForm />, { locale: "es" }));
 
-    await user.type(screen.getByLabelText(authCopy.reset.newPasswordLabel), "newpass1");
-    await user.type(screen.getByLabelText(authCopy.reset.confirmPasswordLabel), "newpass1");
-    await user.click(screen.getByRole("button", { name: authCopy.reset.submit }));
+    await user.type(
+      screen.getByLabelText(esMessages.Auth.resetPassword.newPasswordLabel),
+      "newpass1",
+    );
+    await user.type(
+      screen.getByLabelText(esMessages.Auth.resetPassword.confirmPasswordLabel),
+      "newpass1",
+    );
+    await user.click(screen.getByRole("button", { name: esMessages.Auth.resetPassword.submit }));
 
     await waitFor(() => {
       expect(mockSupabaseAuth.auth.updateUser).toHaveBeenCalledTimes(1);
@@ -102,14 +117,22 @@ describe("ResetPasswordForm — REQ-AUTH-004 / REQ-AUTH-005", () => {
 
     render(renderWithIntl(<ResetPasswordForm />, { locale: "es" }));
 
-    await user.type(screen.getByLabelText(authCopy.reset.newPasswordLabel), "newpass1");
-    await user.type(screen.getByLabelText(authCopy.reset.confirmPasswordLabel), "newpass1");
-    await user.click(screen.getByRole("button", { name: authCopy.reset.submit }));
+    await user.type(
+      screen.getByLabelText(esMessages.Auth.resetPassword.newPasswordLabel),
+      "newpass1",
+    );
+    await user.type(
+      screen.getByLabelText(esMessages.Auth.resetPassword.confirmPasswordLabel),
+      "newpass1",
+    );
+    await user.click(screen.getByRole("button", { name: esMessages.Auth.resetPassword.submit }));
 
     await waitFor(() => {
       expect(mockSupabaseAuth.auth.updateUser).toHaveBeenCalledTimes(1);
     });
-    expect(screen.getByLabelText(authCopy.reset.newPasswordLabel)).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(esMessages.Auth.resetPassword.newPasswordLabel),
+    ).toBeInTheDocument();
     expect(routerReplace).not.toHaveBeenCalled();
   });
 });

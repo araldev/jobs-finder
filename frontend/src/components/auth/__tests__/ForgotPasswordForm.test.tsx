@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockSupabaseAuth } from "@/lib/supabase/__mocks__/client";
-import { authCopy } from "@/lib/authCopy";
+import esMessages from "@/messages/es.json";
 import { renderWithIntl } from "@/test-utils";
 
 vi.mock("@/lib/supabase/client", () => ({
@@ -16,21 +16,25 @@ beforeEach(() => {
 });
 
 describe("ForgotPasswordForm — REQ-AUTH-001 / REQ-AUTH-002 / REQ-AUTH-003 / REQ-AUTH-005", () => {
-  it("renders the email input + submit button under the authCopy title", () => {
+  it("renders the email input + submit button under the localized title", () => {
     render(renderWithIntl(<ForgotPasswordForm />, { locale: "es" }));
-    expect(screen.getByRole("heading", { name: authCopy.forgot.title })).toBeInTheDocument();
-    expect(screen.getByLabelText(authCopy.forgot.emailLabel)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: authCopy.forgot.submit })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: esMessages.Auth.forgotPassword.title }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(esMessages.Auth.forgotPassword.emailLabel)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: esMessages.Auth.forgotPassword.submit }),
+    ).toBeInTheDocument();
   });
 
   it("SCN-AUTH-005-1: submit is disabled for 5-char email with inline Spanish error", async () => {
     const user = userEvent.setup();
     render(renderWithIntl(<ForgotPasswordForm />, { locale: "es" }));
 
-    const input = screen.getByLabelText(authCopy.forgot.emailLabel);
+    const input = screen.getByLabelText(esMessages.Auth.forgotPassword.emailLabel);
     await user.type(input, "abcde");
 
-    const submit = screen.getByRole("button", { name: authCopy.forgot.submit });
+    const submit = screen.getByRole("button", { name: esMessages.Auth.forgotPassword.submit });
     expect(submit).toBeDisabled();
 
     await waitFor(() => {
@@ -42,8 +46,11 @@ describe("ForgotPasswordForm — REQ-AUTH-001 / REQ-AUTH-002 / REQ-AUTH-003 / RE
     const user = userEvent.setup();
     render(renderWithIntl(<ForgotPasswordForm />, { locale: "es" }));
 
-    await user.type(screen.getByLabelText(authCopy.forgot.emailLabel), "user@example.com");
-    await user.click(screen.getByRole("button", { name: authCopy.forgot.submit }));
+    await user.type(
+      screen.getByLabelText(esMessages.Auth.forgotPassword.emailLabel),
+      "user@example.com",
+    );
+    await user.click(screen.getByRole("button", { name: esMessages.Auth.forgotPassword.submit }));
 
     await waitFor(() => {
       expect(mockSupabaseAuth.auth.resetPasswordForEmail).toHaveBeenCalledTimes(1);
@@ -64,11 +71,14 @@ describe("ForgotPasswordForm — REQ-AUTH-001 / REQ-AUTH-002 / REQ-AUTH-003 / RE
     });
 
     render(renderWithIntl(<ForgotPasswordForm />, { locale: "es" }));
-    await user.type(screen.getByLabelText(authCopy.forgot.emailLabel), "user@example.com");
-    await user.click(screen.getByRole("button", { name: authCopy.forgot.submit }));
+    await user.type(
+      screen.getByLabelText(esMessages.Auth.forgotPassword.emailLabel),
+      "user@example.com",
+    );
+    await user.click(screen.getByRole("button", { name: esMessages.Auth.forgotPassword.submit }));
 
     expect(await screen.findByTestId("forgot-success")).toBeInTheDocument();
-    expect(screen.getByText(authCopy.forgot.successTitle)).toBeInTheDocument();
+    expect(screen.getByText(esMessages.Auth.forgotPassword.successTitle)).toBeInTheDocument();
   });
 
   it("SCN-AUTH-002-2: network error surfaces a Spanish toast and form remains editable", async () => {
@@ -79,11 +89,16 @@ describe("ForgotPasswordForm — REQ-AUTH-001 / REQ-AUTH-002 / REQ-AUTH-003 / RE
     });
 
     render(renderWithIntl(<ForgotPasswordForm />, { locale: "es" }));
-    await user.type(screen.getByLabelText(authCopy.forgot.emailLabel), "user@example.com");
-    await user.click(screen.getByRole("button", { name: authCopy.forgot.submit }));
+    await user.type(
+      screen.getByLabelText(esMessages.Auth.forgotPassword.emailLabel),
+      "user@example.com",
+    );
+    await user.click(screen.getByRole("button", { name: esMessages.Auth.forgotPassword.submit }));
 
     await waitFor(() => {
-      expect(screen.getByLabelText(authCopy.forgot.emailLabel)).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(esMessages.Auth.forgotPassword.emailLabel),
+      ).toBeInTheDocument();
     });
   });
 
@@ -95,11 +110,16 @@ describe("ForgotPasswordForm — REQ-AUTH-001 / REQ-AUTH-002 / REQ-AUTH-003 / RE
     });
 
     render(renderWithIntl(<ForgotPasswordForm />, { locale: "es" }));
-    await user.type(screen.getByLabelText(authCopy.forgot.emailLabel), "user@example.com");
-    await user.click(screen.getByRole("button", { name: authCopy.forgot.submit }));
+    await user.type(
+      screen.getByLabelText(esMessages.Auth.forgotPassword.emailLabel),
+      "user@example.com",
+    );
+    await user.click(screen.getByRole("button", { name: esMessages.Auth.forgotPassword.submit }));
 
     await waitFor(() => {
-      expect(screen.getByLabelText(authCopy.forgot.emailLabel)).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(esMessages.Auth.forgotPassword.emailLabel),
+      ).toBeInTheDocument();
     });
   });
 
@@ -113,8 +133,11 @@ describe("ForgotPasswordForm — REQ-AUTH-001 / REQ-AUTH-002 / REQ-AUTH-003 / RE
     });
 
     const { unmount } = render(renderWithIntl(<ForgotPasswordForm />, { locale: "es" }));
-    await user.type(screen.getByLabelText(authCopy.forgot.emailLabel), "known@example.com");
-    await user.click(screen.getByRole("button", { name: authCopy.forgot.submit }));
+    await user.type(
+      screen.getByLabelText(esMessages.Auth.forgotPassword.emailLabel),
+      "known@example.com",
+    );
+    await user.click(screen.getByRole("button", { name: esMessages.Auth.forgotPassword.submit }));
     expect(await screen.findByTestId("forgot-success")).toBeInTheDocument();
     const knownDom = screen.getByTestId("forgot-success").textContent;
     unmount();
@@ -125,8 +148,11 @@ describe("ForgotPasswordForm — REQ-AUTH-001 / REQ-AUTH-002 / REQ-AUTH-003 / RE
       error: null,
     });
     render(renderWithIntl(<ForgotPasswordForm />, { locale: "es" }));
-    await user.type(screen.getByLabelText(authCopy.forgot.emailLabel), "unknown@example.com");
-    await user.click(screen.getByRole("button", { name: authCopy.forgot.submit }));
+    await user.type(
+      screen.getByLabelText(esMessages.Auth.forgotPassword.emailLabel),
+      "unknown@example.com",
+    );
+    await user.click(screen.getByRole("button", { name: esMessages.Auth.forgotPassword.submit }));
     expect(await screen.findByTestId("forgot-success")).toBeInTheDocument();
     const unknownDom = screen.getByTestId("forgot-success").textContent;
 
