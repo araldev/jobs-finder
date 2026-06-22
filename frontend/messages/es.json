@@ -429,5 +429,10 @@
       "tooBig": "El archivo debe ser menor a 5MB",
       "mustSignIn": "Inicia sesión para subir tu CV"
     }
+  },
+  "Footer": {
+    "privacyNote": "Solo en español — versión en inglés próximamente",
+    "privacy": "Política de privacidad",
+    "copyright": "© 2024 Jobs Finder. Todos los derechos reservados."
   }
 }

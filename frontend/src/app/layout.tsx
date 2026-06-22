@@ -3,6 +3,7 @@ import { getLocale, getMessages, setRequestLocale } from "next-intl/server";
 import { NextIntlClientProvider } from "next-intl";
 import "./globals.css";
 import { Providers } from "./providers";
+import { Footer } from "@/components/layout/Footer";
 
 export const metadata: Metadata = {
   title: "Jobs Finder",
@@ -43,7 +44,12 @@ export default async function RootLayout({
     <html lang={locale} suppressHydrationWarning>
       <body className="font-sans antialiased">
         <NextIntlClientProvider locale={locale} messages={messages}>
-          <Providers>{children}</Providers>
+          <Providers>
+            <div className="flex min-h-screen flex-col">
+              <div className="flex-1">{children}</div>
+              <Footer />
+            </div>
+          </Providers>
         </NextIntlClientProvider>
       </body>
     </html>
