@@ -13,6 +13,13 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: routerPush, replace: vi.fn(), refresh: routerRefresh }),
 }));
 
+// Mock useCurrentUser so the AuthStatus component reads auth state
+// from the React Query cache instead of calling supabase.auth directly.
+const mockUseCurrentUser = vi.fn();
+vi.mock("@/hooks/useCurrentUser", () => ({
+  useCurrentUser: () => mockUseCurrentUser(),
+}));
+
 import { AuthStatus } from "../AuthStatus";
 
 beforeEach(() => {
@@ -20,7 +27,9 @@ beforeEach(() => {
   routerPush.mockClear();
   routerRefresh.mockClear();
 
-  // Default: a logged-in user (so the "Cerrar sesión" button is shown)
+  // Default for the existing scope tests: a logged-in user via
+  // the legacy getSession + onAuthStateChange path (which the
+  // hook version does NOT exercise).
   mockSupabaseAuth.auth.getSession.mockResolvedValue({
     data: {
       session: {
@@ -37,6 +46,13 @@ beforeEach(() => {
   mockSupabaseAuth.auth.onAuthStateChange.mockImplementation(() => ({
     data: { subscription: { unsubscribe: () => {} } },
   }));
+
+  // Default for the hook test: a logged-in user from the hook.
+  mockUseCurrentUser.mockReturnValue({
+    data: { id: "u1", email: "u@example.com" },
+    isLoading: false,
+    isError: false,
+  });
 });
 
 describe("AuthStatus — scope prop (REQ-AUTH-020)", () => {
@@ -65,5 +81,26 @@ describe("AuthStatus — scope prop (REQ-AUTH-020)", () => {
       expect(mockSupabaseAuth.auth.signOut).toHaveBeenCalledTimes(1);
     });
     expect(mockSupabaseAuth.auth.signOut).toHaveBeenCalledWith({ scope: "global" });
+  });
+});
+
+/**
+ * SCN-PDPRSC-004-D — `AuthStatus` consumes `useCurrentUser` for
+ * auth state instead of calling `supabase.auth.getSession()` +
+ * subscribing to `onAuthStateChange` directly. Sharing the
+ * React Query cache with `EmailVerificationBanner` deduplicates
+ * `/auth/v1/user` across the two components.
+ */
+describe("AuthStatus — SCN-PDPRSC-004-D (uses useCurrentUser)", () => {
+  it("reads email from useCurrentUser; never calls supabase.auth.getSession", async () => {
+    render(<AuthStatus />);
+
+    // The hook returns a user → the email link is rendered.
+    expect(await screen.findByText("u@example.com")).toBeInTheDocument();
+
+    // The component reads auth state from the hook's cache,
+    // NOT from `supabase.auth.getSession()`. The legacy code
+    // path is gone.
+    expect(mockSupabaseAuth.auth.getSession).not.toHaveBeenCalled();
   });
 });
