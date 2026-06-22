@@ -62,15 +62,27 @@ export const config = {
     /*
      * Match all request paths except:
      * - /api/*  (server-side proxies; never translated, never redirected)
+     * - /auth/*  (Supabase OAuth callback — locale lives in cookie, not URL)
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.svg (favicon)
      * - public folder files (.svg, .png, etc.)
      *
-     * We MUST exclude /api/* because the intl middleware would otherwise
-     * rewrite `/api/jobs` → `/en/api/jobs` for an English-locale visitor,
-     * breaking the route handlers that the browser fetches via fetch().
+     * We MUST exclude:
+     * - /api/* because the intl middleware would otherwise rewrite
+     *   `/api/jobs` → `/en/api/jobs` for an English-locale visitor,
+     *   breaking the route handlers the browser fetches via fetch().
+     * - /auth/* because the Supabase OAuth callback hits `/auth/callback`
+     *   as a redirect target from the Supabase auth server — that target
+     *   is set at sign-in time and MUST be a stable URL regardless of
+     *   locale. The callback route preserves locale via the NEXT_LOCALE
+     *   cookie (see frontend/src/app/auth/callback/route.ts). Without
+     *   this exclusion, intl rewrites `/auth/callback` → `/es/auth/callback`,
+     *   which doesn't exist as a route (the file lives at
+     *   `app/auth/callback/route.ts`, outside the `[locale]/` segment),
+     *   and Next.js returns 404. Symptom: stuck on /auth/callback after
+     *   sign-in, dashboard never loads.
      */
-    "/((?!api|_next/static|_next/image|favicon.svg|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!api|auth|_next/static|_next/image|favicon.svg|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

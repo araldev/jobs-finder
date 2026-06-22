@@ -333,7 +333,12 @@
       "lookingFor": "Buscando:",
       "matchingJobs": "Trabajos que coinciden",
       "done": "Listo",
-      "noMatches": "Aún no hay coincidencias"
+      "noMatches": "Aún no hay coincidencias",
+      "emptyStatePlaceholder": "Describí el trabajo que buscás en lenguaje natural."
+    },
+    "status": {
+      "analyzing": "Analizando tu solicitud...",
+      "searching": "Buscando trabajos que coincidan..."
     },
     "input": {
       "placeholder": "Preguntá sobre trabajos, p. ej. \"puestos remotos de React en Madrid\"",

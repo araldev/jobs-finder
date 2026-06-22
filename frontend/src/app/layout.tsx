@@ -1,21 +1,33 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
+import "./globals.css";
 
 /**
- * Root layout — required by Next.js, but minimal.
+ * Root layout — required by Next.js 15.
  *
- * All locale-specific layout lives in `app/[locale]/layout.tsx`
- * (which sets the dynamic `<html lang>`, wraps children in
- * `NextIntlClientProvider`, and renders the providers chain).
+ * Owns the `<html>` and `<body>` tags + the global CSS import.
+ * Next.js requires these tags to live in `app/layout.tsx` (not in a
+ * nested segment layout) — see:
+ * https://nextjs.org/docs/messages/missing-root-layout-tags
  *
- * The reason for the split is next-intl 4.x's standard pattern:
- * `app/[locale]/` is the localized segment, so the locale parameter
- * is available to `setRequestLocale(locale)` and `getMessages()`
- * before the children render. The root layout exists only to
- * satisfy Next.js's requirement that `app/layout.tsx` be present.
+ * The `<html lang>` is derived from the `NEXT_LOCALE` cookie (set by
+ * the LanguageSwitcher and mirrored in localStorage). This makes the
+ * root layout locale-aware WITHOUT requiring it to know about the
+ * `[locale]/` segment params. Default falls back to `"es"` (the
+ * configured `defaultLocale` in `frontend/src/i18n/routing.ts`).
  *
- * See: https://next-intl.dev/docs/getting-started/app-router/with-i18n-routing
+ * The `suppressHydrationWarning` flag is required because the
+ * next-themes `<ThemeProvider>` flips a `class` attribute on the
+ * `<html>` element client-side; without this flag React would log a
+ * hydration warning on every theme switch.
+ *
+ * Locale-specific provider wiring (NextIntlClientProvider, QueryClient,
+ * sonner Toaster, ConditionalFooter) lives in
+ * `app/[locale]/layout.tsx` so it has access to the `[locale]` params.
+ *
+ * Closes REQ-I18N-005 (dynamic `<html lang>`) — root now reads the
+ * NEXT_LOCALE cookie and propagates the value to the html element.
  */
-
 export const metadata: Metadata = {
   title: "Jobs Finder",
   description:
@@ -25,8 +37,16 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  return children;
+  const cookieStore = await cookies();
+  const cookieLocale = cookieStore.get("NEXT_LOCALE")?.value;
+  const locale: "es" | "en" = cookieLocale === "en" ? "en" : "es";
+
+  return (
+    <html lang={locale} suppressHydrationWarning>
+      <body className="font-sans antialiased">{children}</body>
+    </html>
+  );
 }

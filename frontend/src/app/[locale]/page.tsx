@@ -7,6 +7,7 @@ import { useTranslations } from "next-intl";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Footer } from "@/components/layout/Footer";
 import {
   Upload,
   FileText,
@@ -625,33 +626,12 @@ export default function CVLandingPage() {
                   </Button>
                 </Link>
               )}
-            </div>
-          </div>
-        </div>
-      </section>
+             </div>
+           </div>
+         </div>
+       </section>
 
-      {/* Footer */}
-      <footer className="border-t bg-muted/30">
-        <div className="container mx-auto px-4 py-8">
-          <div className="flex flex-col items-center justify-between gap-4 md:flex-row">
-            <div className="flex items-center gap-2">
-              <Image src="/favicon.svg" alt="Jobs Finder" width={32} height={32} className="h-8 w-8" />
-              <span className="font-display text-lg font-bold">
-                Jobs Finder
-              </span>
-            </div>
-            <div className="flex items-center gap-6 text-sm text-muted-foreground">
-              <Link
-                href="/privacidad"
-                className="hover:text-foreground transition-colors"
-              >
-                Política de Privacidad
-              </Link>
-              <p>© 2024 Jobs Finder. Todos los derechos reservados.</p>
-            </div>
-          </div>
-        </div>
-      </footer>
+      <Footer />
     </div>
   );
 }

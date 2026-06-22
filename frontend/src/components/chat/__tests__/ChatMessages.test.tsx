@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { renderWithIntl } from "@/test-utils";
 import { ChatMessages } from "../ChatMessages";
 import type { ChatMessage } from "@/types/chat";
 
@@ -23,7 +24,9 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
+      renderWithIntl(
+        <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
+      ),
     );
 
     expect(screen.getByText("remote jobs")).toBeInTheDocument();
@@ -40,7 +43,9 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
+      renderWithIntl(
+        <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
+      ),
     );
 
     expect(
@@ -60,7 +65,9 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="streaming" openedJobIds={new Set()} />,
+      renderWithIntl(
+        <ChatMessages messages={messages} status="streaming" openedJobIds={new Set()} />,
+      ),
     );
 
     // The OpenCode-style three-dot thinking animation appears
@@ -75,7 +82,9 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
+      renderWithIntl(
+        <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
+      ),
     );
 
     expect(
@@ -95,7 +104,9 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
+      renderWithIntl(
+        <ChatMessages messages={messages} status="done" openedJobIds={new Set()} />,
+      ),
     );
 
     expect(screen.getByText("Found matches:")).toBeInTheDocument();
@@ -120,7 +131,9 @@ describe("ChatMessages", () => {
     ];
 
     render(
-      <ChatMessages messages={messages} status="error" openedJobIds={new Set()} />,
+      renderWithIntl(
+        <ChatMessages messages={messages} status="error" openedJobIds={new Set()} />,
+      ),
     );
 
     expect(
@@ -129,11 +142,15 @@ describe("ChatMessages", () => {
   });
 
   it("shows empty state when no messages", () => {
-    render(<ChatMessages messages={[]} status="idle" openedJobIds={new Set()} />);
+    render(
+      renderWithIntl(
+        <ChatMessages messages={[]} status="idle" openedJobIds={new Set()} />,
+      ),
+    );
 
     expect(
       screen.getByText(
-        /Describe the job you are looking for in natural language/i,
+        "Describí el trabajo que buscás en lenguaje natural.",
       ),
     ).toBeInTheDocument();
   });

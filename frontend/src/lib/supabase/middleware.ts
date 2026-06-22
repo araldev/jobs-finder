@@ -76,6 +76,7 @@ export async function updateSession(
     "/auth",
     "/forgot-password",
     "/reset-password",
+    "/privacidad",
   ];
   const strippedPath = stripLocalePrefix(request.nextUrl.pathname);
   const isPublic = publicPaths.some(

@@ -4,35 +4,48 @@ import { NextIntlClientProvider } from "next-intl";
 import { getMessages, setRequestLocale } from "next-intl/server";
 import { routing } from "@/i18n/routing";
 import { Providers } from "@/app/providers";
-import { Footer } from "@/components/layout/Footer";
-import "../globals.css";
 
 /**
  * Locale-scoped layout — wraps every page under `app/[locale]/`.
  *
- * This is the standard next-intl 4.x pattern: a dynamic `[locale]`
- * segment lets `params.locale` flow into `setRequestLocale(locale)`
- * and `getMessages()` BEFORE the children render, which is required
- * for static rendering of server components that call
- * `useTranslations('Namespace')` (see:
- * https://next-intl.dev/docs/getting-started/app-router/with-i18n-routing).
+ * The `<html>` and `<body>` tags live in `app/layout.tsx` (Next.js
+ * requires them at the root, see:
+ * https://nextjs.org/docs/messages/missing-root-layout-tags). This
+ * nested layout only contributes locale-specific wrapping: the
+ * `NextIntlClientProvider` and the `Providers` chain (QueryClient +
+ * ThemeProvider + Toaster).
+ *
+ * Layout choice (intentional, simple):
+ *   - The outer wrapper is `<div className="min-h-screen">` — NO flex
+ *     column, NO ConditionalFooter. Each page decides its own layout:
+ *     - `(app)/*` pages use `<AppShell>` (h-screen + overflow-hidden)
+ *       and own their viewport. The wrapper used to be `flex min-h-screen
+ *       flex-col` with `flex-1` around children — that created a double
+ *       scroll on the dashboard because AppShell (h-screen) inside a
+ *       `min-h-screen flex-col` parent expanded the outer to >100vh
+ *       (ConditionalFooter was null on app routes, so flex-1 took the
+ *       AppShell height, but min-h-screen still allowed vertical
+ *       expansion from any sub-pixel rounding + the outer html element
+ *       had no `overflow-hidden`). Removing the flex wrapper fixes it.
+ *     - Public marketing pages (landing, /privacidad, /jobs/[id])
+ *       compose their own `<main>` + `<Footer>` and apply
+ *       `min-h-screen` themselves.
+ *     - Auth forms (login, signup, forgot/reset-password) render their
+ *       own layout (centered card, no footer in the auth flow).
  *
  * `generateStaticParams` precomputes one entry per supported locale
  * so `next build` can statically render every locale variant of each
  * route under `[locale]/`.
  *
- * `notFound()` short-circuits any URL whose `[locale]` segment is
- * outside `routing.locales` (e.g. `/fr/dashboard` → 404) so we never
- * call `setRequestLocale` with a value the i18n config doesn't know.
- *
- * The root `app/layout.tsx` is a minimal pass-through that exists
- * only to satisfy Next.js's requirement that `app/layout.tsx` be
- * present. The `<html>` / `<body>` tags live here so we can read
- * `locale` from `params` and set `<html lang={locale}>`.
+ * `setRequestLocale(locale)` is REQUIRED by next-intl 3.x+ for static
+ * rendering — without this, every server-component child that calls
+ * `useTranslations` would log "static rendering not enabled" warnings.
  *
  * Closes REQ-I18N-005 (dynamic `<html lang>`), REQ-I18N-018
- * (NextIntlClientProvider boundary), and the runtime-broken
- * SCN-I18N-002 (was a 404 before this slice).
+ * (NextIntlClientProvider boundary), REQ-I18N-020 (locale-aware auth
+ * redirects), and the runtime-broken SCN-I18N-002 (was a 404 before
+ * slice 16's `[locale]/` migration). Closes the v3 dashboard double-
+ * scroll bug by removing the flex wrapper that conflicted with AppShell.
  */
 export function generateStaticParams() {
   return routing.locales.map((locale) => ({ locale }));
@@ -66,17 +79,10 @@ export default async function LocaleLayout({
   const messages = await getMessages();
 
   return (
-    <html lang={locale} suppressHydrationWarning>
-      <body className="font-sans antialiased">
-        <NextIntlClientProvider locale={locale} messages={messages}>
-          <Providers>
-            <div className="flex min-h-screen flex-col">
-              <div className="flex-1">{children}</div>
-              <Footer />
-            </div>
-          </Providers>
-        </NextIntlClientProvider>
-      </body>
-    </html>
+    <Providers>
+      <NextIntlClientProvider locale={locale} messages={messages}>
+        <div className="min-h-screen">{children}</div>
+      </NextIntlClientProvider>
+    </Providers>
   );
 }

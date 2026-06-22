@@ -29,3 +29,16 @@ The system MUST expose a `useFavorites` hook that reads/writes `jobs-finder-favo
 
 - **SC-FAV-006**: Given the user has 3 favorited jobs, the grid shows 3 compact cards with source badges.
 - **SC-FAV-007**: Given no jobs are favorited, an empty state with illustration and "No favorites yet" renders.
+
+## Frontend i18n dependency (added in `feat-frontend-i18n`, applied 2026-06-22)
+
+This capability was originally declared i18n-out-of-scope. After the v1 i18n cycle shipped, every favorites component was migrated to `useTranslations('Favorites.*')` and `useTranslations('Jobs.*')`. Concretely:
+
+- **`FavoriteButton`** (REQ-FAV-002) consumes `Jobs.favorite.{add,remove}` keys and emits translated sonner toasts (verified bilingual via the `en-locale` parity test added in cycle 2).
+- **Favorites page header** (REQ-FAV-003) consumes `Favorites.header.title` and `Favorites.header.count` with ICU pluralization for the job count.
+- **Favorites empty state** (REQ-FAV-003 SC-FAV-007) consumes `Favorites.emptyState.{title,description}`.
+- **`useFavorites` hook** (REQ-FAV-001) is locale-agnostic — it stores Job IDs and reads them back unchanged; UI strings live in the consuming components.
+
+The full translation contract lives in **`openspec/specs/frontend-i18n/spec.md`**. All REQs from this capability now implicitly depend on the i18n contract being honored — a missing translation key surfaces as a `"Namespace.path"` literal (per next-intl 4.x `useTranslations` convention) which the CI grep audit (`pnpm run lint:i18n`) flags.
+
+No new REQs added to this capability — the i18n translation work is enforced by the existing REQs (which mandate correct UI rendering) rather than new i18n-specific REQs.

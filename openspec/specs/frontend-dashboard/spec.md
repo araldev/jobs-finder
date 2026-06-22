@@ -98,3 +98,18 @@ Auth, PWA, i18n, analytics, backend API changes, chat/streaming, import/crawl, P
 - [ ] Search filters by platform/contract/salary
 - [ ] Zero SSE, chat, or scraping code in `frontend/src/`
 - [ ] All data fetching goes through `/api/*` Route Handlers, no direct backend calls
+
+## Frontend i18n dependency (added in `feat-frontend-i18n`, applied 2026-06-22)
+
+This capability was originally declared i18n-out-of-scope. After the v1 i18n cycle shipped, every dashboard component was migrated to `useTranslations('Dashboard.*')` (and the relevant sub-namespaces). Concretely:
+
+- **Dashboard stats row** (REQ-DASH-002) labels and aria attributes now consume `Dashboard.stats.*` keys (`totalJobs`, `jobsToday`, `activePlatforms`, `lastSync`) with ICU MessageFormat pluralization for counts.
+- **Dashboard error toasts** (REQ-DASH-002 SC-004) use `JobsErrors.*` keys for the error title and the retry prompt.
+- **EmptyState component** (used by dashboard, search, favorites) consumes translated `title`/`description` props via `useTranslations('Jobs.emptyState.*')`.
+- **`formatRelativeTime`** (date-fns wrapper in `lib/formatters.ts`) is locale-aware — the dashboard receives `locale: 'es' | 'en'` from `useLocale()` and passes it through.
+- **RightSidebar nav labels** and **StatsCardsRow card titles** use `useTranslations` (no more hardcoded ES/EN mix).
+- **`JobSourceBreakdown`** uses ICU pluralization for `count` (e.g. "1 trabajo / 2 trabajos / 0 trabajos").
+
+The full translation contract (namespaces, ICU plurals, RTL exclusion, locale precedence URL > cookie > Accept-Language > default) lives in **`openspec/specs/frontend-i18n/spec.md`**. All REQs from this capability now implicitly depend on the i18n contract being honored — a missing translation key surfaces as a `"Namespace.path"` literal (per next-intl 4.x `useTranslations` convention) or a thrown `MISSING_MESSAGE` (for `getTranslations`), which the CI grep audit (`pnpm run lint:i18n`) flags.
+
+No new REQs added to this capability — the i18n translation work is enforced by the existing REQs (which mandate correct UI rendering) rather than new i18n-specific REQs. The "Frontend i18n dependency" section serves as the cross-reference anchor so a future reader of this spec sees the dependency without having to discover it via grep.

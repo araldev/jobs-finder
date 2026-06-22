@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
 import { Card, CardContent } from "@/components/ui/card";
+import { Footer } from "@/components/layout/Footer";
 
 export const metadata: Metadata = {
   title: "Política de Privacidad — Jobs Finder",
@@ -473,6 +474,8 @@ export default function PrivacyPage() {
           </Link>
         </div>
       </main>
+
+      <Footer />
     </div>
   );
 }
