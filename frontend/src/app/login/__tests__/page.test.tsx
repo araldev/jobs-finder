@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { mockSupabaseAuth } from "@/lib/supabase/__mocks__/client";
 import { authCopy } from "@/lib/authCopy";
+import { renderWithIntl } from "@/test-utils";
 
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => mockSupabaseAuth,
@@ -72,7 +73,7 @@ import LoginPage from "../page";
 
 describe("LoginPage — REQ-AUTH-018", () => {
   it("SCN-AUTH-018-1: renders an <a href='/forgot-password'> with the Spanish 'Olvidaste tu contraseña?' copy that is keyboard-focusable", async () => {
-    render(<LoginPage />);
+    render(renderWithIntl(<LoginPage />, { locale: "es" }));
     const link = await screen.findByRole("link", { name: /olvidaste tu contraseña/i });
     expect(link).toBeInTheDocument();
     expect(link).toHaveAttribute("href", "/forgot-password");
@@ -82,12 +83,12 @@ describe("LoginPage — REQ-AUTH-018", () => {
   });
 
   it("mounts the MagicLinkForm (the 'Enviar enlace mágico' button lives in the form)", () => {
-    render(<LoginPage />);
+    render(renderWithIntl(<LoginPage />, { locale: "es" }));
     expect(screen.getByTestId("magic-link-form-sentinel")).toBeInTheDocument();
   });
 
   it("still exposes the email/password login form (no regression)", () => {
-    render(<LoginPage />);
+    render(renderWithIntl(<LoginPage />, { locale: "es" }));
     // The existing email + password inputs are still rendered.
     expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/contraseña/i)).toBeInTheDocument();
@@ -121,14 +122,14 @@ describe("LoginPage — REQ-AUTH-018", () => {
 
 describe("LoginPage — OTP email prefill (REQ-MAINT-017)", () => {
   it("first render: MagicLinkForm receives empty initialEmail (no typed email yet)", () => {
-    render(<LoginPage />);
+    render(renderWithIntl(<LoginPage />, { locale: "es" }));
     // At mount, the user hasn't typed anything, so initialEmail must be "".
     expect(magicLinkFormPropsLog.length).toBeGreaterThan(0);
     expect(magicLinkFormPropsLog[0]?.initialEmail ?? "").toBe("");
   });
 
   it("after typing in password email: MagicLinkForm receives the typed email as initialEmail", async () => {
-    render(<LoginPage />);
+    render(renderWithIntl(<LoginPage />, { locale: "es" }));
     const emailInput = screen.getByLabelText(/^email/i) as HTMLInputElement;
     // The user types "test@example.com" into the password-form email field.
     fireEvent.change(emailInput, { target: { value: "test@example.com" } });
@@ -148,7 +149,7 @@ describe("LoginPage — OTP email prefill (REQ-MAINT-017)", () => {
     // Observable signal: the mock function is called multiple times —
     // one mount per email value. The mock is a counter we can read.
     const beforeMountCount = mockMagicLinkFormCallCount();
-    render(<LoginPage />);
+    render(renderWithIntl(<LoginPage />, { locale: "es" }));
     const afterFirstMountCount = mockMagicLinkFormCallCount();
     expect(afterFirstMountCount).toBeGreaterThan(beforeMountCount);
 

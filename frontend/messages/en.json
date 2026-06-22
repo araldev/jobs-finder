@@ -146,6 +146,30 @@
       "networkError": "We couldn't send the email. Try again.",
       "rateLimit": "Too many attempts. Wait a few minutes before trying again.",
       "genericError": "An error occurred. Try again."
+    },
+    "login": {
+      "title": "Sign in to Jobs Finder",
+      "subtitle": "Welcome back. Sign in to find your next role.",
+      "emailLabel": "Email",
+      "passwordLabel": "Password",
+      "submit": "Sign in",
+      "forgotPassword": "Forgot your password?",
+      "noAccount": "Don't have an account?",
+      "signUp": "Sign up",
+      "orContinueWith": "Or continue with",
+      "continueWithGoogle": "Continue with Google",
+      "magicLinkLabel": "Email me a magic link instead"
+    },
+    "signup": {
+      "title": "Create your account",
+      "subtitle": "Find your next role in minutes.",
+      "emailLabel": "Email",
+      "passwordLabel": "Password",
+      "submit": "Create account",
+      "haveAccount": "Already have an account?",
+      "signIn": "Sign in",
+      "orContinueWith": "Or continue with",
+      "continueWithGoogle": "Continue with Google"
     }
   },
   "Validation": {
