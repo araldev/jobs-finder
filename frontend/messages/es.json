@@ -40,5 +40,36 @@
       "description": "La página que buscás no existe o fue movida.",
       "home": "Volver al inicio"
     }
+  },
+  "Navigation": {
+    "dashboard": {
+      "label": "Panel",
+      "description": "Resumen de tus ofertas de empleo",
+      "screenReader": "Panel, página actual"
+    },
+    "search": {
+      "label": "Buscar",
+      "description": "Encontrá trabajos por palabra clave, ubicación o fuente",
+      "screenReader": "Buscar, página actual"
+    },
+    "favorites": {
+      "label": "Favoritos",
+      "description": "Trabajos que guardaste para después",
+      "screenReader": "Favoritos, página actual"
+    },
+    "jobDetail": {
+      "label": "Detalle de empleo",
+      "description": "Información completa de la oferta",
+      "screenReader": "Detalle de empleo, página actual"
+    },
+    "settings": {
+      "label": "Configuración",
+      "description": "Configuración de plataformas y preferencias",
+      "screenReader": "Configuración, página actual"
+    },
+    "fallback": {
+      "label": "Jobs Finder",
+      "description": "Búsqueda inteligente de empleo en LinkedIn, Indeed e InfoJobs"
+    }
   }
 }

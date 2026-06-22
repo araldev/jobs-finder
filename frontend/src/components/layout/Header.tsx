@@ -8,7 +8,9 @@ import {
   Settings,
   type LucideIcon,
 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { ThemeToggle } from "./ThemeToggle";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 import { AuthStatus } from "@/components/auth/AuthStatus";
 import { cn } from "@/lib/utils";
 
@@ -16,58 +18,50 @@ import { cn } from "@/lib/utils";
  * Page metadata for the header. The order matters for the
  * "longest-prefix wins" lookup below — more specific paths
  * must appear before their parents.
+ *
+ * Labels are translation KEYS (e.g. `Navigation.dashboard.label`) — the
+ * component calls `t(key)` at render time. Description + screen-reader
+ * labels are translated through `Navigation.<route>.description` and
+ * `Navigation.<route>.screenReader` respectively.
  */
 const ROUTE_META: Array<{
   prefixes: string[];
-  label: string;
-  description: string;
+  translationKey: "dashboard" | "search" | "favorites" | "jobDetail" | "settings";
   icon: LucideIcon;
   /** Tailwind gradient stop colors for the icon bubble. */
   gradient: string;
 }> = [
   {
     prefixes: ["/dashboard"],
-    label: "Dashboard",
-    description: "Overview of your job listings",
+    translationKey: "dashboard",
     icon: LayoutDashboard,
     gradient: "from-primary/20 to-primary/5",
   },
   {
     prefixes: ["/search"],
-    label: "Search",
-    description: "Find jobs by keyword, location, or source",
+    translationKey: "search",
     icon: Search,
     gradient: "from-secondary/20 to-secondary/5",
   },
   {
     prefixes: ["/favorites"],
-    label: "Favorites",
-    description: "Jobs you saved for later",
+    translationKey: "favorites",
     icon: Briefcase,
     gradient: "from-emerald-500/20 to-emerald-500/5",
   },
   {
     prefixes: ["/jobs/"],
-    label: "Job Detail",
-    description: "Full posting information",
+    translationKey: "jobDetail",
     icon: Briefcase,
     gradient: "from-primary/20 to-primary/5",
   },
   {
     prefixes: ["/settings"],
-    label: "Settings",
-    description: "Platform configuration and preferences",
+    translationKey: "settings",
     icon: Settings,
     gradient: "from-muted to-muted/30",
   },
 ] as const;
-
-const FALLBACK = {
-  label: "Jobs Finder",
-  description: "Smart job discovery across LinkedIn, Indeed, and InfoJobs",
-  icon: Briefcase,
-  gradient: "from-primary/20 to-primary/5",
-} as const;
 
 function resolveRoute(pathname: string) {
   for (const route of ROUTE_META) {
@@ -75,12 +69,20 @@ function resolveRoute(pathname: string) {
       return route;
     }
   }
-  return FALLBACK;
+  return null;
 }
 
 export function Header() {
   const pathname = usePathname();
-  const { label, description, icon: Icon, gradient } = resolveRoute(pathname);
+  const t = useTranslations("Navigation");
+  const route = resolveRoute(pathname);
+
+  const label = route ? t(`${route.translationKey}.label`) : t("fallback.label");
+  const description = route
+    ? t(`${route.translationKey}.description`)
+    : t("fallback.description");
+  const Icon = route?.icon ?? Briefcase;
+  const gradient = route?.gradient ?? "from-primary/20 to-primary/5";
 
   return (
     <header className="flex h-20 items-center justify-between border-b bg-card/30 px-6 backdrop-blur-sm">
@@ -102,6 +104,7 @@ export function Header() {
       </div>
       <div className="flex items-center gap-3">
         <AuthStatus />
+        <LanguageSwitcher />
         <ThemeToggle />
       </div>
     </header>

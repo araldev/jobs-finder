@@ -18,8 +18,11 @@ export default defineConfig({
     ],
   },
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
+    alias: [
+      // More specific first — @/messages must NOT match the generic @ alias.
+      // Mirror the tsconfig `@/messages/*` path alias for JSON imports.
+      { find: /^@\/messages\/(.*)$/, replacement: path.resolve(__dirname, "./messages/$1") },
+      { find: "@", replacement: path.resolve(__dirname, "./src") },
+    ],
   },
 });
