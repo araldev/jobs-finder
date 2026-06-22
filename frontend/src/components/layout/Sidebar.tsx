@@ -8,18 +8,22 @@ import {
   Search,
   Settings,
 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { Logo } from "./Logo";
 
 const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/search", label: "Search", icon: Search },
-  { href: "/favorites", label: "Favorites", icon: Briefcase },
-  { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/dashboard", key: "dashboard", icon: LayoutDashboard },
+  { href: "/search", key: "search", icon: Search },
+  { href: "/favorites", key: "favorites", icon: Briefcase },
+  { href: "/settings", key: "settings", icon: Settings },
 ] as const;
+
+type NavKey = (typeof navItems)[number]["key"];
 
 export function Sidebar() {
   const pathname = usePathname();
+  const t = useTranslations("Navigation");
 
   return (
     <aside className="flex w-64 flex-col border-r bg-card">
@@ -34,7 +38,7 @@ export function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 space-y-1 px-3 py-4">
+      <nav className="flex-1 space-y-1 px-3 py-4" aria-label={t("dashboard.label")}>
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = pathname.startsWith(item.href);
@@ -49,9 +53,13 @@ export function Sidebar() {
                   ? "bg-primary/10 text-primary"
                   : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
               )}
+              aria-current={isActive ? "page" : undefined}
             >
-              <Icon className="h-4 w-4" />
-              {item.label}
+              <Icon className="h-4 w-4" aria-hidden="true" />
+              <span>{t(`${item.key}.label`)}</span>
+              {isActive && (
+                <span className="sr-only">{t(`${item.key}.screenReader` as never)}</span>
+              )}
             </Link>
           );
         })}
