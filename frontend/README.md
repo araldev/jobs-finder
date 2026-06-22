@@ -97,6 +97,15 @@ languages stay grammatically correct:
 }
 ```
 
+### Auth strings
+
+All auth-related copy lives in `messages/{en,es}.json` under the
+`Auth` and `Validation` namespaces. Use `useTranslations('Auth.<area>')`
+in auth/settings components. The legacy `src/lib/authCopy.ts` file
+is marked `@deprecated` and will be deleted once the test files
+migrate off the `authCopy.X.Y` lookups. New code MUST use
+`useTranslations`.
+
 `useTranslations('Dashboard').then(t => t('stats.totalJobs', { count: 5 }))`
 → ES `"5 trabajos"` · EN `"5 jobs"`.
 
