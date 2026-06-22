@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import type { ChatMessage, ChatStatus } from "@/types/chat";
 import { AssistantMessage } from "./AssistantMessage";
 
@@ -10,11 +11,14 @@ interface ChatMessagesProps {
 }
 
 export function ChatMessages({ messages, status, openedJobIds }: ChatMessagesProps) {
+  const tEmpty = useTranslations("Chat.messages");
+  const tStatus = useTranslations("Chat.status");
+
   if (messages.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center px-4">
         <p className="text-center text-sm text-muted-foreground">
-          Describe the job you are looking for in natural language.
+          {tEmpty("emptyStatePlaceholder")}
         </p>
       </div>
     );
@@ -24,9 +28,9 @@ export function ChatMessages({ messages, status, openedJobIds }: ChatMessagesPro
 
   const statusLabel =
     status === "connecting"
-      ? "Analyzing your request..."
+      ? tStatus("analyzing")
       : status === "streaming"
-        ? "Searching for matching jobs..."
+        ? tStatus("searching")
         : undefined;
 
   return (

@@ -333,7 +333,12 @@
       "lookingFor": "Looking for:",
       "matchingJobs": "Matching jobs",
       "done": "Done",
-      "noMatches": "No matches yet"
+      "noMatches": "No matches yet",
+      "emptyStatePlaceholder": "Describe the job you are looking for in natural language."
+    },
+    "status": {
+      "analyzing": "Analyzing your request...",
+      "searching": "Searching for matching jobs..."
     },
     "input": {
       "placeholder": "Ask about jobs, e.g. \"remote React roles in Madrid\"",
