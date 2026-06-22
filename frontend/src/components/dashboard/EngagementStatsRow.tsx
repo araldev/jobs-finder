@@ -40,21 +40,21 @@ export function EngagementStatsRow() {
   return (
     <div className="grid gap-4 sm:grid-cols-3">
       <StatCard
-        icon={Eye}
+        icon={<Eye className="h-5 w-5 text-foreground/80" />}
         label={t("stats.openedJobs.label")}
         value={openedJobIds.size > 0 ? openedJobIds.size.toLocaleString() : "—"}
         accent="primary"
         delay={0.15}
       />
       <StatCard
-        icon={FileText}
+        icon={<FileText className="h-5 w-5 text-foreground/80" />}
         label={t("stats.cvsAdapted.label")}
         value={cvAdaptedCount > 0 ? cvAdaptedCount.toLocaleString() : "—"}
         accent="secondary"
         delay={0.2}
       />
       <StatCard
-        icon={Heart}
+        icon={<Heart className="h-5 w-5 text-foreground/80" />}
         label={t("stats.favorites.label")}
         value={favoriteCount > 0 ? favoriteCount.toLocaleString() : "—"}
         accent="muted"

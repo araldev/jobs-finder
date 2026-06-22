@@ -5,7 +5,13 @@ import { StatCard } from "../StatCard";
 
 describe("StatCard", () => {
   it("renders label and value", () => {
-    render(<StatCard icon={Briefcase} label="Total Jobs" value={42} />);
+    render(
+      <StatCard
+        icon={<Briefcase className="h-5 w-5" />}
+        label="Total Jobs"
+        value={42}
+      />,
+    );
     expect(screen.getByText("Total Jobs")).toBeInTheDocument();
     expect(screen.getByText("42")).toBeInTheDocument();
   });
@@ -13,7 +19,7 @@ describe("StatCard", () => {
   it("renders trend when provided", () => {
     render(
       <StatCard
-        icon={Briefcase}
+        icon={<Briefcase className="h-5 w-5" />}
         label="Total Jobs"
         value={42}
         trend={{ value: 12, isUp: true }}
@@ -25,7 +31,7 @@ describe("StatCard", () => {
   it("renders negative trend", () => {
     render(
       <StatCard
-        icon={Briefcase}
+        icon={<Briefcase className="h-5 w-5" />}
         label="Total Jobs"
         value={42}
         trend={{ value: 5, isUp: false }}

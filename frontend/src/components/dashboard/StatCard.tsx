@@ -1,11 +1,11 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { motion } from "framer-motion";
-import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface StatCardProps {
-  icon: LucideIcon;
+  icon: ReactNode;
   label: string;
   value: string | number;
   trend?: { value: number; isUp: boolean };
@@ -28,7 +28,7 @@ const ACCENT: Record<NonNullable<StatCardProps["accent"]>, string> = {
  * accent bar that signals "this is a number, not a job".
  */
 export function StatCard({
-  icon: Icon,
+  icon,
   label,
   value,
   trend,
@@ -61,7 +61,7 @@ export function StatCard({
           ACCENT[accent],
         )}
       >
-        <Icon className="h-5 w-5 text-foreground/80" />
+        {icon}
       </div>
       <p className="font-display text-2xl font-bold tracking-tight text-foreground">
         {value}

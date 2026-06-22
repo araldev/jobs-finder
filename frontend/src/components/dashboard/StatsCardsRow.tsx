@@ -67,21 +67,21 @@ export async function StatsCardsRow() {
       {/* Primary stats: totals */}
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard
-          icon={Briefcase}
+          icon={<Briefcase className="h-5 w-5 text-foreground/80" />}
           label="Total Jobs"
           value={stats.total_jobs > 0 ? stats.total_jobs.toLocaleString() : "—"}
           accent="primary"
           delay={0}
         />
         <StatCard
-          icon={TrendingUp}
+          icon={<TrendingUp className="h-5 w-5 text-foreground/80" />}
           label="New Jobs"
           value={stats.jobs_today > 0 ? stats.jobs_today.toLocaleString() : "—"}
           accent="secondary"
           delay={0.05}
         />
         <StatCard
-          icon={Clock}
+          icon={<Clock className="h-5 w-5 text-foreground/80" />}
           label="Last Sync"
           value={
             stats.last_sync
