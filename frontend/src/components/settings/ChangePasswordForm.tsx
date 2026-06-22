@@ -4,28 +4,22 @@ import { useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
+import { useTranslations } from "next-intl";
 import { Loader2 } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
-import { authCopy } from "@/lib/authCopy";
 import { changePasswordSchema, type ChangePasswordValues } from "@/lib/validation/authSchemas";
 
 /**
  * ChangePasswordForm — REQ-AUTH-015 / REQ-AUTH-016.
  *
- * Three password fields (current, new, confirm). Submit disabled until:
- *   - new ≥ 6 chars (matches the signup rule)
- *   - new === confirm
- *   - current is non-empty
- *   - new !== current (defense: don't rotate to the same password)
- *
- * On submit: `supabase.auth.updateUser({ password })`. Success →
- * toast.success + clear all three inputs. Failure with
- * "Invalid login credentials" → toast.error("Contraseña actual
- * incorrecta") + focus the current-password field.
+ * Slice 5: migrated from `authCopy` to `useTranslations`.
  */
 export function ChangePasswordForm() {
   const supabase = createClient();
+  const t = useTranslations("Auth.changePassword");
+  const tValidation = useTranslations("Validation");
+  const tToast = useTranslations("Auth.toast");
   const currentPasswordRef = useRef<HTMLInputElement | null>(null);
 
   const {
@@ -48,26 +42,32 @@ export function ChangePasswordForm() {
     const { error } = await supabase.auth.updateUser({ password: values.newPassword });
 
     if (error) {
-      // REQ-AUTH-016-2: wrong current password surfaces a specific
-      // Spanish message and refocuses the current-password field.
       if (/invalid login credentials/i.test(error.message)) {
-        toast.error(authCopy.change.wrongCurrentToast);
+        toast.error(t("wrongCurrentToast"));
         setFocus("currentPassword");
         return;
       }
-      // Other failures: generic Spanish toast.
-      toast.error(authCopy.toast.networkError);
+      toast.error(tToast("networkError"));
       setFocus("currentPassword");
       return;
     }
 
-    toast.success(authCopy.change.successToast);
+    toast.success(t("successToast"));
     reset();
   }
 
-  const currentError = errors.currentPassword?.message;
-  const newError = errors.newPassword?.message;
-  const confirmError = errors.confirmPassword?.message;
+  const currentErrorKey = errors.currentPassword?.message;
+  const newErrorKey = errors.newPassword?.message;
+  const confirmErrorKey = errors.confirmPassword?.message;
+  const currentError = currentErrorKey
+    ? tValidation(currentErrorKey.replace(/^Validation\./, "") as never)
+    : undefined;
+  const newError = newErrorKey
+    ? tValidation(newErrorKey.replace(/^Validation\./, "") as never)
+    : undefined;
+  const confirmError = confirmErrorKey
+    ? tValidation(confirmErrorKey.replace(/^Validation\./, "") as never)
+    : undefined;
 
   return (
     <form
@@ -77,13 +77,13 @@ export function ChangePasswordForm() {
       aria-labelledby="change-password-heading"
     >
       <h3 id="change-password-heading" className="font-display text-base font-semibold">
-        {authCopy.change.title}
+        {t("title")}
       </h3>
-      <p className="text-sm text-muted-foreground">{authCopy.change.subtitle}</p>
+      <p className="text-sm text-muted-foreground">{t("subtitle")}</p>
 
       <div className="flex flex-col gap-1.5" data-invalid={currentError ? "" : undefined}>
         <label htmlFor="change-current" className="text-sm font-medium">
-          {authCopy.change.currentPasswordLabel}
+          {t("currentPasswordLabel")}
         </label>
         <input
           id="change-current"
@@ -107,7 +107,7 @@ export function ChangePasswordForm() {
 
       <div className="flex flex-col gap-1.5" data-invalid={newError ? "" : undefined}>
         <label htmlFor="change-new" className="text-sm font-medium">
-          {authCopy.change.newPasswordLabel}
+          {t("newPasswordLabel")}
         </label>
         <input
           id="change-new"
@@ -130,7 +130,7 @@ export function ChangePasswordForm() {
 
       <div className="flex flex-col gap-1.5" data-invalid={confirmError ? "" : undefined}>
         <label htmlFor="change-confirm" className="text-sm font-medium">
-          {authCopy.change.confirmPasswordLabel}
+          {t("confirmPasswordLabel")}
         </label>
         <input
           id="change-confirm"
@@ -157,7 +157,7 @@ export function ChangePasswordForm() {
         className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50 sm:w-auto"
       >
         {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-        {authCopy.change.submit}
+        {t("submit")}
       </button>
     </form>
   );

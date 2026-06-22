@@ -5,10 +5,10 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { useTranslations } from "next-intl";
 import { Loader2 } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
-import { authCopy } from "@/lib/authCopy";
 import { resetPasswordSchema, type ResetPasswordValues } from "@/lib/validation/authSchemas";
 
 /**
@@ -19,12 +19,16 @@ import { resetPasswordSchema, type ResetPasswordValues } from "@/lib/validation/
  * the new-password + confirm-password UI.
  *
  * On success: `supabase.auth.updateUser({ password })` then
- * `router.replace('/dashboard')`. On error: Spanish toast, form stays
- * mounted and editable.
+ * `router.replace('/dashboard')`. On error: localized toast.
+ *
+ * Slice 5: migrated from `authCopy` to `useTranslations`.
  */
 export function ResetPasswordForm() {
   const supabase = createClient();
   const router = useRouter();
+  const t = useTranslations("Auth.resetPassword");
+  const tValidation = useTranslations("Validation");
+  const tToast = useTranslations("Auth.toast");
   const newPasswordRef = useRef<HTMLInputElement | null>(null);
 
   const {
@@ -45,17 +49,23 @@ export function ResetPasswordForm() {
     const { error } = await supabase.auth.updateUser({ password: values.password });
 
     if (error) {
-      toast.error(authCopy.toast.networkError);
+      toast.error(tToast("networkError"));
       return;
     }
 
-    toast.success(authCopy.reset.successToast);
+    toast.success(t("successToast"));
     reset();
     router.replace("/dashboard");
   }
 
-  const passwordError = errors.password?.message;
-  const confirmError = errors.confirmPassword?.message;
+  const passwordErrorKey = errors.password?.message;
+  const confirmErrorKey = errors.confirmPassword?.message;
+  const passwordError = passwordErrorKey
+    ? tValidation(passwordErrorKey.replace(/^Validation\./, "") as never)
+    : undefined;
+  const confirmError = confirmErrorKey
+    ? tValidation(confirmErrorKey.replace(/^Validation\./, "") as never)
+    : undefined;
 
   return (
     <form
@@ -66,14 +76,14 @@ export function ResetPasswordForm() {
     >
       <header className="flex flex-col gap-1 text-center">
         <h1 id="reset-password-heading" className="font-display text-xl font-bold">
-          {authCopy.reset.title}
+          {t("title")}
         </h1>
-        <p className="text-sm text-muted-foreground">{authCopy.reset.subtitle}</p>
+        <p className="text-sm text-muted-foreground">{t("subtitle")}</p>
       </header>
 
       <div className="flex flex-col gap-1.5" data-invalid={passwordError ? "" : undefined}>
         <label htmlFor="reset-password" className="text-sm font-medium">
-          {authCopy.reset.newPasswordLabel}
+          {t("newPasswordLabel")}
         </label>
         <input
           id="reset-password"
@@ -102,7 +112,7 @@ export function ResetPasswordForm() {
 
       <div className="flex flex-col gap-1.5" data-invalid={confirmError ? "" : undefined}>
         <label htmlFor="reset-confirm" className="text-sm font-medium">
-          {authCopy.reset.confirmPasswordLabel}
+          {t("confirmPasswordLabel")}
         </label>
         <input
           id="reset-confirm"
@@ -134,7 +144,7 @@ export function ResetPasswordForm() {
         className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
       >
         {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-        {authCopy.reset.submit}
+        {t("submit")}
       </button>
     </form>
   );

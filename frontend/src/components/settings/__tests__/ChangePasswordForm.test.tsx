@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockSupabaseAuth } from "@/lib/supabase/__mocks__/client";
 import { authCopy } from "@/lib/authCopy";
+import { renderWithIntl } from "@/test-utils";
 
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => mockSupabaseAuth,
@@ -16,7 +17,7 @@ beforeEach(() => {
 
 describe("ChangePasswordForm — REQ-AUTH-015 / REQ-AUTH-016", () => {
   it("renders current + new + confirm password inputs + submit", () => {
-    render(<ChangePasswordForm />);
+    render(renderWithIntl(<ChangePasswordForm />, { locale: "es" }));
     expect(screen.getByLabelText(authCopy.change.currentPasswordLabel)).toBeInTheDocument();
     expect(screen.getByLabelText(authCopy.change.newPasswordLabel)).toBeInTheDocument();
     expect(screen.getByLabelText(authCopy.change.confirmPasswordLabel)).toBeInTheDocument();
@@ -25,7 +26,7 @@ describe("ChangePasswordForm — REQ-AUTH-015 / REQ-AUTH-016", () => {
 
   it("SCN-AUTH-015-1: 5-char new password → submit disabled + aria-invalid + inline error", async () => {
     const user = userEvent.setup();
-    render(<ChangePasswordForm />);
+    render(renderWithIntl(<ChangePasswordForm />, { locale: "es" }));
 
     const newPwd = screen.getByLabelText(authCopy.change.newPasswordLabel);
     await user.type(screen.getByLabelText(authCopy.change.currentPasswordLabel), "oldpass1");
@@ -40,7 +41,7 @@ describe("ChangePasswordForm — REQ-AUTH-015 / REQ-AUTH-016", () => {
 
   it("SCN-AUTH-015-2: mismatched new + confirm → submit disabled + 'Las contraseñas no coinciden'", async () => {
     const user = userEvent.setup();
-    render(<ChangePasswordForm />);
+    render(renderWithIntl(<ChangePasswordForm />, { locale: "es" }));
 
     await user.type(screen.getByLabelText(authCopy.change.currentPasswordLabel), "oldpass1");
     await user.type(screen.getByLabelText(authCopy.change.newPasswordLabel), "newpass1");
@@ -54,7 +55,7 @@ describe("ChangePasswordForm — REQ-AUTH-015 / REQ-AUTH-016", () => {
 
   it("SCN-AUTH-016-1: updateUser resolves → all 3 inputs empty + toast.success + exactly one updateUser call", async () => {
     const user = userEvent.setup();
-    render(<ChangePasswordForm />);
+    render(renderWithIntl(<ChangePasswordForm />, { locale: "es" }));
 
     await user.type(screen.getByLabelText(authCopy.change.currentPasswordLabel), "oldpass1");
     await user.type(screen.getByLabelText(authCopy.change.newPasswordLabel), "newpass1");
@@ -66,7 +67,6 @@ describe("ChangePasswordForm — REQ-AUTH-015 / REQ-AUTH-016", () => {
     });
     expect(mockSupabaseAuth.auth.updateUser).toHaveBeenCalledWith({ password: "newpass1" });
 
-    // All three inputs are emptied.
     await waitFor(() => {
       expect(
         (screen.getByLabelText(authCopy.change.currentPasswordLabel) as HTMLInputElement).value,
@@ -87,7 +87,7 @@ describe("ChangePasswordForm — REQ-AUTH-015 / REQ-AUTH-016", () => {
       error: { message: "Invalid login credentials" } as unknown as Error,
     });
 
-    render(<ChangePasswordForm />);
+    render(renderWithIntl(<ChangePasswordForm />, { locale: "es" }));
 
     const currentPwd = screen.getByLabelText(authCopy.change.currentPasswordLabel);
     await user.type(currentPwd, "wrongpass");
@@ -98,7 +98,6 @@ describe("ChangePasswordForm — REQ-AUTH-015 / REQ-AUTH-016", () => {
     await waitFor(() => {
       expect(mockSupabaseAuth.auth.updateUser).toHaveBeenCalledTimes(1);
     });
-    // Current password field receives focus on auth error.
     await waitFor(() => {
       expect(currentPwd).toHaveFocus();
     });

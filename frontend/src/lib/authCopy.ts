@@ -1,15 +1,15 @@
 /**
- * Single source of truth for every user-facing Spanish string introduced
- * by the `auth-flows` change (REQ-AUTH-023).
+ * @deprecated Since slice 5 of `feat-frontend-i18n`. The strings in this
+ * file have been migrated to `messages/{en,es}.json` under the
+ * `Auth.*` and `Validation.*` namespaces, and every consumer (the 4
+ * auth forms, the 3 settings forms, the Zod schemas) now reads via
+ * `useTranslations('Auth')` / `useTranslations('Validation')`.
  *
- * RULE: NO inline Spanish literal may appear in components/pages. Any new
- * user-facing string lands here first, then is imported by the component.
- * This file is `Object.freeze`-d at module load so accidental mutation
- * is a no-op (and `authCopy.test.ts` enforces no empty key).
+ * This file is kept ONLY so any straggler test that imports it still
+ * resolves at module-load time during the in-between state. Slice 15
+ * will delete it entirely.
  *
- * Future i18n migration: this object is the seed for a next-intl /
- * next-translate translation source. The shape (grouped by capability)
- * is i18n-friendly.
+ * New code MUST NOT import from here — use `useTranslations` instead.
  */
 export const authCopy = Object.freeze({
   forgot: Object.freeze({

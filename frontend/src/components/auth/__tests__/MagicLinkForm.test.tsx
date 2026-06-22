@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockSupabaseAuth } from "@/lib/supabase/__mocks__/client";
 import { authCopy } from "@/lib/authCopy";
+import { renderWithIntl } from "@/test-utils";
 
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => mockSupabaseAuth,
@@ -16,22 +17,22 @@ beforeEach(() => {
 
 describe("MagicLinkForm — REQ-AUTH-017 / REQ-AUTH-018", () => {
   it("renders the email input + submit button", () => {
-    render(<MagicLinkForm />);
-    expect(screen.getByLabelText("Tu correo electrónico")).toBeInTheDocument();
+    render(renderWithIntl(<MagicLinkForm />, { locale: "es" }));
+    expect(screen.getByLabelText("Email")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: authCopy.magicLink.submit })).toBeInTheDocument();
   });
 
   it("SCN-AUTH-017-2: empty email keeps button disabled", () => {
-    render(<MagicLinkForm />);
+    render(renderWithIntl(<MagicLinkForm />, { locale: "es" }));
     const submit = screen.getByRole("button", { name: authCopy.magicLink.submit });
     expect(submit).toBeDisabled();
   });
 
   it("SCN-AUTH-017-1: valid email + click → signInWithOtp with emailRedirectTo + success state", async () => {
     const user = userEvent.setup();
-    render(<MagicLinkForm />);
+    render(renderWithIntl(<MagicLinkForm />, { locale: "es" }));
 
-    await user.type(screen.getByLabelText("Tu correo electrónico"), "user@example.com");
+    await user.type(screen.getByLabelText("Email"), "user@example.com");
     await user.click(screen.getByRole("button", { name: authCopy.magicLink.submit }));
 
     await waitFor(() => {
@@ -42,7 +43,6 @@ describe("MagicLinkForm — REQ-AUTH-017 / REQ-AUTH-018", () => {
       | undefined;
     expect(callArgs?.email).toBe("user@example.com");
     expect(callArgs?.options?.emailRedirectTo).toMatch(/\/auth\/callback\?next=\/dashboard$/);
-    // Success state replaces the form.
     expect(
       await screen.findByRole("heading", { name: authCopy.magicLink.successTitle }),
     ).toBeInTheDocument();
@@ -55,15 +55,14 @@ describe("MagicLinkForm — REQ-AUTH-017 / REQ-AUTH-018", () => {
       error: new Error("rate limit exceeded"),
     });
 
-    render(<MagicLinkForm />);
+    render(renderWithIntl(<MagicLinkForm />, { locale: "es" }));
 
-    await user.type(screen.getByLabelText("Tu correo electrónico"), "user@example.com");
+    await user.type(screen.getByLabelText("Email"), "user@example.com");
     await user.click(screen.getByRole("button", { name: authCopy.magicLink.submit }));
 
     await waitFor(() => {
       expect(mockSupabaseAuth.auth.signInWithOtp).toHaveBeenCalledTimes(1);
     });
-    // Form is still rendered (no swap to success state).
-    expect(screen.getByLabelText("Tu correo electrónico")).toBeInTheDocument();
+    expect(screen.getByLabelText("Email")).toBeInTheDocument();
   });
 });
