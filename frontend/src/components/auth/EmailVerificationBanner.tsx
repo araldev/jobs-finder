@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
 import { MailCheck, RefreshCw, X } from "lucide-react";
 
+import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { createClient } from "@/lib/supabase/client";
 
 /**
@@ -14,6 +15,17 @@ import { createClient } from "@/lib/supabase/client";
  * when the signed-in user's email is still unverified. Does NOT block
  * routes — the user can use every (app) feature while the banner is
  * visible.
+ *
+ * REQ-PDPRSC-004 refactor (commit 5): the banner no longer calls
+ * `supabase.auth.getUser()` directly on mount. Auth state lives in
+ * the shared React Query cache via `useCurrentUser()` — the same
+ * hook `AuthStatus` consumes. One `/auth/v1/user` fetch per cache
+ * window (5min staleTime), shared across both consumers.
+ *
+ * The `supabase.auth.onAuthStateChange` subscription is now handled
+ * by the hook itself (registered on mount, invalidated on every
+ * auth event), so the banner does not register its own subscriber
+ * anymore.
  */
 const DISMISS_KEY = "jf-verify-banner-dismissed";
 
@@ -22,44 +34,36 @@ interface UserSnapshot {
   emailConfirmedAt: string | null;
 }
 
+function buildSnapshot(
+  user:
+    | {
+        email?: string | null;
+        email_confirmed_at?: string | null;
+      }
+    | null
+    | undefined,
+): UserSnapshot | null {
+  if (!user) return null;
+  return {
+    email: user.email ?? "",
+    emailConfirmedAt: user.email_confirmed_at ?? null,
+  };
+}
+
 export function EmailVerificationBanner() {
-  const supabase = createClient();
+  const { data: user } = useCurrentUser();
   const t = useTranslations("Auth.emailVerification");
-  const [user, setUser] = useState<UserSnapshot | null>(null);
   const [dismissTick, setDismissTick] = useState(0);
 
-  useEffect(() => {
-    let active = true;
-
-    async function loadUser() {
-      const { data } = await supabase.auth.getUser();
-      if (!active) return;
-      const u = data.user;
-      setUser(
-        u
-          ? {
-              email: u.email ?? "",
-              emailConfirmedAt: u.email_confirmed_at ?? null,
-            }
-          : null,
-      );
-    }
-
-    void loadUser();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
-      void loadUser();
-    });
-
-    return () => {
-      active = false;
-      subscription.unsubscribe();
-    };
-  }, [supabase]);
+  const snapshot = buildSnapshot(user);
 
   async function handleResend() {
-    if (!user?.email) return;
-    const { error } = await supabase.auth.resend({ type: "signup", email: user.email });
+    if (!snapshot?.email) return;
+    const supabase = createClient();
+    const { error } = await supabase.auth.resend({
+      type: "signup",
+      email: snapshot.email,
+    });
     if (error) {
       toast.error(t("resendErrorToast"));
       return;
@@ -78,8 +82,8 @@ export function EmailVerificationBanner() {
       : false;
   void dismissTick;
 
-  if (user === null) return null;
-  if (user.emailConfirmedAt) return null;
+  if (snapshot === null) return null;
+  if (snapshot.emailConfirmedAt) return null;
   if (dismissed) return null;
 
   return (

@@ -531,3 +531,44 @@ class JobsHistoryResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# ---------------------------------------------------------------------------
+# Dashboard stats schema (REQ-PDPRSC-003)
+#
+# `GET /jobs/stats` returns this shape. The field set mirrors
+# `frontend/src/types/stats.ts::DashboardStats` and
+# `application/stats_aggregator.py::DashboardStatsPayload` byte-
+# for-byte; the Pydantic model at the route boundary is the single
+# source of truth for the wire contract.
+#
+# The route is unauthenticated (same as the per-source routes
+# per AGENTS.md); the aggregator reads counts from the persistent
+# `JobRepositoryPort` and a single scheduler status. A drift
+# between any of the 3 layers surfaces as a 422 from Pydantic.
+# ---------------------------------------------------------------------------
+
+
+class DashboardStatsResponse(BaseModel):
+    """`GET /jobs/stats` response shape (REQ-PDPRSC-003).
+
+    All 5 fields are returned in one HTTP call (the previous
+    `/api/stats` route handler did 6 fetches in 3 waterfall
+    chains — REQ-PDPRSC-003 collapses them to 1 outbound fetch).
+
+    `total_jobs` is the cross-source count of every job in the
+    repository. `jobs_today` is the count of jobs with
+    `posted_at >= today UTC`. `active_platforms` is the count
+    of sources with `platform_distribution[s] > 0`. `last_sync`
+    is the scheduler's last successful cycle end timestamp
+    (None when the scheduler is disabled). `platform_distribution`
+    maps each source name to its `count_jobs` value (a timed-
+    out source is omitted rather than reported as 0 — see
+    `application/stats_aggregator.py`).
+    """
+
+    total_jobs: int
+    jobs_today: int
+    active_platforms: int
+    last_sync: str | None = None
+    platform_distribution: dict[str, int] = Field(default_factory=dict)

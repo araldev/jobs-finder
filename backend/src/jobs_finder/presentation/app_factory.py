@@ -66,6 +66,10 @@ from playwright_stealth import Stealth  # type: ignore[import-untyped]
 
 from jobs_finder.application.aggregator import SearchAllSourcesUseCase
 from jobs_finder.application.ports import RateLimitPort
+from jobs_finder.application.stats_aggregator import (
+    DashboardStatsPayload,
+    StatsAggregator,
+)
 from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase
 from jobs_finder.application.usecases.filter_jobs_by_intent import (
     FilterJobsByIntentUseCase,
@@ -92,6 +96,9 @@ from jobs_finder.application.usecases.search_linkedin_jobs import (
 from jobs_finder.domain.job import Job
 from jobs_finder.infrastructure.aggregator_filters import filter_infojobs_results
 from jobs_finder.infrastructure.cache._factory import build_cache
+from jobs_finder.infrastructure.cache.in_memory_ttl_cache import (
+    InMemoryTTLCache as _StatsCache,
+)
 from jobs_finder.infrastructure.config import Settings
 from jobs_finder.infrastructure.indeed.scraper import (
     IndeedPlaywrightScraper,
@@ -144,6 +151,7 @@ from jobs_finder.presentation.routes import indeed as indeed_routes
 from jobs_finder.presentation.routes import infojobs as infojobs_routes
 from jobs_finder.presentation.routes import linkedin as linkedin_routes
 from jobs_finder.presentation.routes import scheduler_status as scheduler_status_routes
+from jobs_finder.presentation.routes import stats as stats_routes
 
 # Module-level logger for the composition root. Used by the
 # LinkedIn auth-cookie startup WARNING (T-005 of
@@ -816,6 +824,41 @@ def build_app(  # noqa: PLR0915, PLR0912
         # disabled.
         app.state.scheduler = _scheduler_instance
 
+    # T-016 + perf-dashboard-rsc-migration (REQ-PDPRSC-003):
+    # build the `StatsAggregator` and expose it on `app.state` so
+    # `GET /jobs/stats` can read it. The aggregator's cache uses
+    # the SAME TTL as the per-source cache
+    # (`settings.cache_ttl_seconds`, default 60s) so the operator
+    # gets one knob for the whole system's cache lifetime. The
+    # stats cache is constructed inline (not via `build_cache`)
+    # because `build_cache` is typed for the per-source
+    # `JobSearchCacheKey` / `list[Job]` contract; the stats cache
+    # uses a different key/value type (`tuple[str, ...]` /
+    # `DashboardStatsPayload`). For Redis support a follow-up can
+    # add a parallel factory method (out of scope for this batch).
+    stats_cache: _StatsCache[tuple[str, ...], DashboardStatsPayload] = _StatsCache(
+        ttl_seconds=effective_settings.cache_ttl_seconds
+    )
+
+    def _scheduler_last_run_end_iso() -> str | None:
+        if _scheduler_instance is None:
+            return None
+        last = _scheduler_instance.state.last_run_end
+        return last.isoformat() if last is not None else None
+
+    repo_for_stats = (
+        _scheduler_repo
+        if _scheduler_repo is not None
+        else getattr(app.state, "job_repository", None)
+    )
+    if repo_for_stats is not None:
+        app.state.stats_aggregator = StatsAggregator(
+            job_repository=repo_for_stats,
+            scheduler_provider=_scheduler_last_run_end_iso,
+            timeout_seconds=effective_settings.stats_port_timeout_seconds,
+            cache=stats_cache,
+        )
+
     # T-016 (chat filter wiring): build the LLM client + the
     # chat-filter use case ONLY when the chat feature is enabled
     # (the `chat_enabled` flag computed above). The factory
@@ -1019,6 +1062,13 @@ def build_app(  # noqa: PLR0915, PLR0912
     # Registered unconditionally — graceful degradation when
     # scheduler is `None` (REQ-STATUS-002).
     app.include_router(scheduler_status_routes.router)
+    # `perf-dashboard-rsc-migration` (REQ-PDPRSC-003):
+    # `GET /jobs/stats` exposes the consolidated dashboard stats
+    # payload (replaces the 6-fetch waterfall in the legacy
+    # `/api/stats` route handler). Registered unconditionally —
+    # graceful degradation when `app.state.stats_aggregator`
+    # is `None` (the route returns a zeros-shape response).
+    app.include_router(stats_routes.router)
     # `scheduler-retention-history` Phase 5: `GET /jobs/history`
     # exposed via `HistoryJobQuery` + `JobsHistoryResponse`.
     # Registered unconditionally — graceful degradation when

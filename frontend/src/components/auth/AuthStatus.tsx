@@ -3,8 +3,8 @@
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 /**
  * `scope` controls the Supabase `signOut({ scope })` argument:
@@ -14,6 +14,14 @@ import { Button } from "@/components/ui/button";
  * The header chip keeps `scope: 'local'` by default (existing UX).
  * Settings callers can pass `scope="global"` to opt into the
  * "sign out everywhere" behavior (REQ-AUTH-019 / REQ-AUTH-020).
+ *
+ * REQ-PDPRSC-004 refactor (commit 5): auth state is read from the
+ * shared `useCurrentUser` hook instead of calling
+ * `supabase.auth.getSession()` directly + subscribing to
+ * `onAuthStateChange`. The hook owns the subscription lifecycle
+ * (mounted on hook mount, invalidated on every auth event, cleaned
+ * up on unmount). One `/auth/v1/user` fetch per 5min cache window,
+ * shared with `EmailVerificationBanner`.
  */
 export interface AuthStatusProps {
   scope?: "local" | "global";
@@ -22,26 +30,9 @@ export interface AuthStatusProps {
 export function AuthStatus({ scope = "local" }: AuthStatusProps) {
   const supabase = createClient();
   const router = useRouter();
-  const [email, setEmail] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data: user, isLoading } = useCurrentUser();
 
-  useEffect(() => {
-    // 1. Estado inicial: leer sesión actual
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setEmail(session?.user?.email ?? null);
-      setLoading(false);
-    });
-
-    // 2. Escuchar cambios de auth en tiempo real
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      setEmail(session?.user?.email ?? null);
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
-  }, [supabase]);
+  const email = user?.email ?? null;
 
   async function logout() {
     if (scope === "global") {
@@ -53,7 +44,7 @@ export function AuthStatus({ scope = "local" }: AuthStatusProps) {
     router.refresh();
   }
 
-  if (loading) return null;
+  if (isLoading) return null;
 
   if (email) {
     return (
