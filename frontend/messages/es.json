@@ -326,5 +326,84 @@
     "loadFailed": "No pudimos cargar los trabajos. Intentá de nuevo.",
     "detailFailed": "No pudimos cargar los detalles del trabajo.",
     "statsFailed": "No pudimos cargar las estadísticas."
+  },
+  "Landing": {
+    "nav": {
+      "features": "Funciones",
+      "howItWorks": "Cómo funciona",
+      "pricing": "Precios",
+      "signIn": "Iniciar sesión",
+      "getStarted": "Empezar"
+    },
+    "hero": {
+      "badge": "Búsqueda de empleo con IA",
+      "title": "Encontrá tu próximo trabajo en minutos, no en semanas",
+      "subtitle": "Jobs Finder busca en LinkedIn, Indeed e InfoJobs en paralelo para que veas cada oportunidad en el momento en que aparece.",
+      "ctaPrimary": "Empezar — es gratis",
+      "ctaSecondary": "Ver cómo funciona"
+    },
+    "features": {
+      "title": "Todo lo que necesitás para conseguir tu próximo empleo",
+      "subtitle": "Dejá de alternar pestañas. Dejá de perderte publicaciones. Conseguí el trabajo más rápido.",
+      "search": {
+        "title": "Búsqueda unificada",
+        "description": "Una consulta, tres plataformas, sin duplicados. La deduplicación inteligente mantiene la lista limpia."
+      },
+      "matches": {
+        "title": "Coincidencias con IA",
+        "description": "Aprendemos qué querés y mostramos primero los mejores roles."
+      },
+      "save": {
+        "title": "Guardá y organizá",
+        "description": "Marcá trabajos, agregá notas y seguí el estado de tus postulaciones."
+      },
+      "apply": {
+        "title": "Postulación en un clic",
+        "description": "Abrí la oferta original en el sitio de origen con un solo clic."
+      },
+      "privacy": {
+        "title": "Privacidad primero",
+        "description": "Tus datos son tuyos. Nunca vendemos tu actividad de búsqueda de empleo."
+      },
+      "offline": {
+        "title": "Funciona sin conexión",
+        "description": "Mirá tus trabajos guardados incluso sin internet."
+      }
+    },
+    "howItWorks": {
+      "title": "Cómo funciona",
+      "step1": {
+        "title": "Subí tu CV",
+        "description": "PDF o pegado. Detectamos automáticamente tus habilidades, experiencia y preferencias."
+      },
+      "step2": {
+        "title": "Buscá y filtrá",
+        "description": "Encontrá roles por palabra clave, ubicación, salario, tipo de contrato y fuente."
+      },
+      "step3": {
+        "title": "Postulate en un clic",
+        "description": "Abrí la oferta en el sitio de origen y enviá tu postulación."
+      }
+    },
+    "cta": {
+      "title": "¿Listo para encontrar tu próximo empleo?",
+      "subtitle": "Sumate a miles de求职者 que dejaron de buscar y empezaron a conseguir entrevistas.",
+      "button": "Empezar ahora — es gratis"
+    },
+    "testimonials": {
+      "heading": "Amado por quienes buscan empleo"
+    },
+    "footerNote": {
+      "copyright": "© 2024 Jobs Finder. Todos los derechos reservados."
+    },
+    "upload": {
+      "title": "Subí tu CV (PDF)",
+      "placeholder": "Arrastrá o hacé clic para seleccionar",
+      "uploading": "Subiendo tu CV…",
+      "saved": "Tu CV está guardado",
+      "pdfOnly": "Solo se aceptan archivos PDF",
+      "tooBig": "El archivo debe ser menor a 5MB",
+      "mustSignIn": "Inicia sesión para subir tu CV"
+    }
   }
 }

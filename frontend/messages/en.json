@@ -326,5 +326,84 @@
     "loadFailed": "Could not load jobs. Please try again.",
     "detailFailed": "Could not load job details.",
     "statsFailed": "Could not load stats."
+  },
+  "Landing": {
+    "nav": {
+      "features": "Features",
+      "howItWorks": "How it works",
+      "pricing": "Pricing",
+      "signIn": "Sign in",
+      "getStarted": "Get started"
+    },
+    "hero": {
+      "badge": "AI-powered job discovery",
+      "title": "Find your next job in minutes, not weeks",
+      "subtitle": "Jobs Finder searches LinkedIn, Indeed, and InfoJobs in parallel so you see every opportunity the moment it appears.",
+      "ctaPrimary": "Get started — it's free",
+      "ctaSecondary": "See how it works"
+    },
+    "features": {
+      "title": "Everything you need to land your next role",
+      "subtitle": "Stop juggling tabs. Stop missing postings. Get hired faster.",
+      "search": {
+        "title": "Unified search",
+        "description": "One query, three platforms, zero duplicates. Smart deduplication keeps the list clean."
+      },
+      "matches": {
+        "title": "AI-matched",
+        "description": "We learn what you want and surface the best roles first."
+      },
+      "save": {
+        "title": "Save & organize",
+        "description": "Bookmark jobs, add notes, and track your application status."
+      },
+      "apply": {
+        "title": "One-click apply",
+        "description": "Open the original posting on the source site in a single click."
+      },
+      "privacy": {
+        "title": "Privacy first",
+        "description": "Your data stays yours. We never sell your job search activity."
+      },
+      "offline": {
+        "title": "Offline-first",
+        "description": "Browse your saved jobs even without an internet connection."
+      }
+    },
+    "howItWorks": {
+      "title": "How it works",
+      "step1": {
+        "title": "Upload your CV",
+        "description": "PDF or paste. We auto-detect your skills, experience, and preferences."
+      },
+      "step2": {
+        "title": "Search & filter",
+        "description": "Find roles by keyword, location, salary, contract type, and source."
+      },
+      "step3": {
+        "title": "Apply in one click",
+        "description": "Open the posting on the source site and submit your application."
+      }
+    },
+    "cta": {
+      "title": "Ready to find your next role?",
+      "subtitle": "Join thousands of job seekers who stopped searching and started getting interviews.",
+      "button": "Start now — it's free"
+    },
+    "testimonials": {
+      "heading": "Loved by job seekers"
+    },
+    "footerNote": {
+      "copyright": "© 2024 Jobs Finder. All rights reserved."
+    },
+    "upload": {
+      "title": "Upload your CV (PDF)",
+      "placeholder": "Drag or click to select",
+      "uploading": "Uploading your CV…",
+      "saved": "Your CV is saved",
+      "pdfOnly": "PDF files only",
+      "tooBig": "File must be under 5MB",
+      "mustSignIn": "Sign in to upload your CV"
+    }
   }
 }
