@@ -182,3 +182,20 @@ them as a compact inline list with clickable links to `/jobs/{id}`.
 - [ ] `npm run lint` passes
 - [ ] `npm run build` passes
 - [ ] `npm run test` passes (existing test baseline)
+
+## Frontend i18n dependency (added in `feat-frontend-i18n`, applied 2026-06-22)
+
+This capability was originally declared i18n-out-of-scope. After the v1 i18n cycle shipped (and v3 cleaned up `authCopy.ts`), every chat component was migrated to `useTranslations('Chat.*')` and `useTranslations('Jobs.*')`. Concretely:
+
+- **ChatFAB button label** consumes `Chat.fab.label` ("Open chat assistant").
+- **ChatDialog title** consumes `Chat.dialog.title` ("Chat with Jobs Finder").
+- **ChatPanel header** consumes `Chat.panel.header` ("AI Job Assistant").
+- **ChatMessages** empty-state placeholder and status labels consume `Chat.messages.emptyStatePlaceholder` and `Chat.status.{analyzing,searching}` (added in `fix-i18n-f8-f7-cleanups`).
+- **ChatInput placeholder** consumes `Chat.input.placeholder` ("Ask about jobs, e.g. 'remote React roles in Madrid'").
+- **AssistantMessage** translates server error codes via `Chat.errors.{streamFailed,connectionFailed,generic,rateLimit}`. When the code is unknown, it falls back to the raw server message (see D1 in cycle 2 archive).
+- **useChat hook** (3 originally-hardcoded English error literals replaced in cycle 2) emits stable error codes; the component layer translates by code so server-side Spanish messages still flow through without regression.
+- **sonner toasts** in the chat flow use `useTranslations`; no hardcoded English error strings remain.
+
+The full translation contract lives in **`openspec/specs/frontend-i18n/spec.md`**. All REQs from this capability now implicitly depend on the i18n contract being honored — a missing translation key surfaces as a `"Namespace.path"` literal (per next-intl 4.x `useTranslations` convention) which the CI grep audit (`pnpm run lint:i18n`) flags.
+
+No new REQs added to this capability — the i18n translation work is enforced by the existing REQs (which mandate correct UI rendering) rather than new i18n-specific REQs.
