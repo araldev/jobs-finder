@@ -509,6 +509,28 @@ class Settings(BaseSettings):
             "LINKEDIN_INTER_PAGE_DELAY_SECONDS", "linkedin_inter_page_delay_seconds"
         ),
     )
+
+    # ------------------------------------------------------------------
+    # Stats aggregator (REQ-PDPRSC-003, `perf-dashboard-rsc-migration`)
+    #
+    # `stats_port_timeout_seconds` (default 2.0) bounds the per-call
+    # timeout the `StatsAggregator` applies to each
+    # `JobRepositoryPort.count_jobs` invocation. The value flows
+    # through `app_factory.build_app()` into the `StatsAggregator`
+    # ctor. The R3 mitigation in proposal #615 ties the timeout to
+    # the slowest acceptable per-port latency — a slow LinkedIn port
+    # (e.g. due to Cloudflare re-challenge) MUST NOT block the
+    # Indeed / InfoJobs returns on the dashboard.
+    #
+    # Set to a small value (e.g. 0.5) in tests to verify the
+    # timeout fires. Set to `0` to disable (each call awaits its
+    # port forever — NOT recommended in production).
+    # ------------------------------------------------------------------
+
+    stats_port_timeout_seconds: float = Field(
+        default=2.0,
+        validation_alias=AliasChoices("STATS_PORT_TIMEOUT_SECONDS", "stats_port_timeout_seconds"),
+    )
     # `linkedin_li_at` (T-002 of `backend-linkedin-auth` —
     # REQ-LA-CFG-001..004). The operator's personal `li_at`
     # session cookie. Mirrors the v1 `llm_api_key: SecretStr |
