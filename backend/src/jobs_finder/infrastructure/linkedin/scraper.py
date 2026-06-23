@@ -50,6 +50,7 @@ Errors:
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -71,6 +72,7 @@ from jobs_finder.application.ports import (
     JobSearchPort,
     LinkedInAuthCookiePort,
     LinkedInAuthCookiesPort,
+    LinkedInCookieRefresherPort,
     LocationResolverPort,
 )
 from jobs_finder.domain.job import Job
@@ -149,6 +151,10 @@ class LinkedInScraperSettings:
     __slots__ = (
         "auth_cookie",
         "auth_cookies",
+        "cache_invalidator",
+        "cookie_refresher",
+        "cookie_refresher_backoff_seconds",
+        "cookie_refresh_enabled",
         "headless",
         "inter_page_delay_seconds",
         "launch_channel",
@@ -174,6 +180,10 @@ class LinkedInScraperSettings:
         headless: bool = True,
         xvfb_display: str | None = None,
         launch_channel: str | None = None,
+        cookie_refresher: Any | None = None,
+        cache_invalidator: Callable[[], Awaitable[None]] | None = None,
+        cookie_refresh_enabled: bool = True,
+        cookie_refresher_backoff_seconds: float = 3600.0,
     ) -> None:
         self.user_agent = user_agent
         self.timeout_ms = timeout_ms
@@ -256,11 +266,46 @@ class LinkedInScraperSettings:
         # When `None` (the default), no `channel=` kwarg is passed
         # to `chromium.launch(...)`, preserving the current behavior.
         self.launch_channel = launch_channel
+        # T-LCR-007 + REQ-LS-201 — the auto-refresh port.
+        # When set, the scraper's `_maybe_refresh_cookies` (REQ-LS-202)
+        # is consulted on `is_auth_wall` / `is_cloudflare_challenge`
+        # (the soft-WARNING paths). The default `None` preserves
+        # the v1 byte-identical behavior (no refresh ever
+        # happens — REQ-LCR-008).
+        self.cookie_refresher = cookie_refresher
+        # T-LCR-007 + REQ-LS-201 — the cache invalidator callback.
+        # When set, the scraper `await`s it on successful refresh
+        # (the per-source `InMemoryTTLCache.clear()` from
+        # `app_factory.build_app()`). The default `None` is the
+        # safe pre-change behavior (no invalidation on
+        # non-refresh paths). The scraper does NOT raise if the
+        # callback is missing — the ctor emits a WARNING and
+        # the refresh path proceeds without invalidation.
+        self.cache_invalidator = cache_invalidator
+        # T-LCR-007 + REQ-LS-202 step 2 — the kill switch.
+        # When `False`, `_maybe_refresh_cookies` short-circuits
+        # to `False` (REQ-LCR-007). Default `True` matches
+        # `Settings.linkedin_cookie_refresh_enabled` (zero-touch
+        # is the user's intent; env var is the explicit opt-OUT).
+        self.cookie_refresh_enabled = cookie_refresh_enabled
+        # T-LCR-007 + REQ-LS-202 step 3 + REQ-LCR-004 — backoff.
+        # The scraper skips refresh within this many seconds of
+        # `_last_refresh_attempt_at`. Default `3600.0` matches
+        # `Settings.linkedin_cookie_refresh_backoff_seconds`.
+        self.cookie_refresher_backoff_seconds = (
+            cookie_refresher_backoff_seconds
+        )
 
     def __repr__(self) -> str:
         auth_cookie_repr = "<set>" if self.auth_cookie is not None else "<unset>"
         auth_cookies_repr = "<set>" if self.auth_cookies is not None else "<unset>"
         stealth_repr = "<set>" if self.stealth is not None else "<unset>"
+        cookie_refresher_repr = (
+            "<set>" if self.cookie_refresher is not None else "<unset>"
+        )
+        cache_invalidator_repr = (
+            "<set>" if self.cache_invalidator is not None else "<unset>"
+        )
         return (
             f"LinkedInScraperSettings(user_agent={self.user_agent!r}, "
             f"timeout_ms={self.timeout_ms}, max_pages={self.max_pages}, "
@@ -271,7 +316,11 @@ class LinkedInScraperSettings:
             f"stealth={stealth_repr}, "
             f"headless={self.headless}, "
             f"xvfb_display={self.xvfb_display!r}, "
-            f"launch_channel={self.launch_channel!r})"
+            f"launch_channel={self.launch_channel!r}, "
+            f"cookie_refresher={cookie_refresher_repr}, "
+            f"cache_invalidator={cache_invalidator_repr}, "
+            f"cookie_refresh_enabled={self.cookie_refresh_enabled}, "
+            f"cookie_refresher_backoff_seconds={self.cookie_refresher_backoff_seconds})"
         )
 
     def __eq__(self, other: object) -> bool:
@@ -289,6 +338,11 @@ class LinkedInScraperSettings:
             and self.headless == other.headless
             and self.xvfb_display == other.xvfb_display
             and self.launch_channel == other.launch_channel
+            and self.cookie_refresher == other.cookie_refresher
+            and self.cache_invalidator == other.cache_invalidator
+            and self.cookie_refresh_enabled == other.cookie_refresh_enabled
+            and self.cookie_refresher_backoff_seconds
+            == other.cookie_refresher_backoff_seconds
         )
 
     def __hash__(self) -> int:
@@ -305,6 +359,10 @@ class LinkedInScraperSettings:
                 self.headless,
                 self.xvfb_display,
                 self.launch_channel,
+                self.cookie_refresher,
+                self.cache_invalidator,
+                self.cookie_refresh_enabled,
+                self.cookie_refresher_backoff_seconds,
             )
         )
 
@@ -335,6 +393,18 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         # `infojobs/scraper.py:326-327`). The default is
         # `None` (preserves v1 behavior).
         self._stealth: Any | None = settings.stealth
+        # T-LCR-007 + REQ-LCR-004 — backoff state. The
+        # `time.monotonic()` timestamp of the last refresh
+        # attempt (success OR failure). `None` until the
+        # first attempt. The scraper skips refresh within
+        # `linkedin_cookie_refresh_backoff_seconds` of this
+        # value to prevent refresh-storm on per-scheduler-
+        # cycle cadence (~25-35 min). The field lives on the
+        # SCRAPER (per-process, per-scraper-instance) so
+        # `__aenter__` / `__aexit__` boundaries reset it on
+        # context exit (a long-lived scraper would otherwise
+        # keep accumulating state across many searches).
+        self._last_refresh_attempt_at: float | None = None
 
     async def __aenter__(self) -> Self:
         if self._browser_factory is not None:
@@ -728,21 +798,46 @@ class LinkedInPlaywrightScraper(JobSearchPort):
                 # Cookie path: softest filter first
                 # (Cloudflare 302-loop is network-layer,
                 # softer than the cookie-injected auth wall).
-                if is_cloudflare_challenge(soup):
-                    _logger.warning(
-                        "LinkedIn Cloudflare challenge detected; stealth "
-                        "may be insufficient. Consider setting "
-                        "LINKEDIN_JSESSIONID, LINKEDIN_BCOOKIE, "
-                        "LINKEDIN_LI_GC in .env, or upgrading to a "
-                        "residential proxy."
-                    )
-                    return _parse_cards(soup, remaining)
-                if is_auth_wall(soup):
-                    _logger.warning(
-                        "LinkedIn SERP appears auth-walled despite cookie "
-                        "injection; cookie may be expired. Returning 0 "
-                        "jobs from this page (degraded)."
-                    )
+                if is_cloudflare_challenge(soup) or is_auth_wall(soup):
+                    # T-LCR-008 + REQ-LCR-003 — when the soft
+                    # filters fire, consult the cookie refresher
+                    # BEFORE the v1 WARNING. On success: the
+                    # scraper writes new cookies back, invalidates
+                    # the cache, and returns the freshly-parsed
+                    # cards from the page-0 retry (REQ-LS-203).
+                    # On failure: the v1 WARNING is emitted AND
+                    # the backoff is recorded.
+                    should_retry = await self._maybe_refresh_cookies(soup)
+                    if should_retry:
+                        # REQ-LS-203 — retry page 0 ONCE. The
+                        # helper returns the freshly-parsed
+                        # cards (a `list[Job]`); the pagination
+                        # loop accumulates them and continues
+                        # from page 1 onward.
+                        return await self._retry_page_zero(
+                            page=page,
+                            keywords=keywords,
+                            location=location,
+                            geo_id=geo_id,
+                            structured=structured,
+                            remaining=remaining,
+                        )
+                    # Fall through: v1 WARNING + return
+                    # `_parse_cards` (degraded behavior).
+                    if is_cloudflare_challenge(soup):
+                        _logger.warning(
+                            "LinkedIn Cloudflare challenge detected; stealth "
+                            "may be insufficient. Consider setting "
+                            "LINKEDIN_JSESSIONID, LINKEDIN_BCOOKIE, "
+                            "LINKEDIN_LI_GC in .env, or upgrading to a "
+                            "residential proxy."
+                        )
+                    else:
+                        _logger.warning(
+                            "LinkedIn SERP appears auth-walled despite cookie "
+                            "injection; cookie may be expired. Returning 0 "
+                            "jobs from this page (degraded)."
+                        )
                     return _parse_cards(soup, remaining)
                 if is_block_page(soup):
                     raise LinkedInBlockedError("LinkedIn returned an auth-wall / verification page")
@@ -875,6 +970,128 @@ class LinkedInPlaywrightScraper(JobSearchPort):
                 "scraper: playwright error during navigation",
                 details={"url": url, "cause": str(e)},
             ) from e
+
+    async def _maybe_refresh_cookies(self, soup: BeautifulSoup) -> bool:
+        """REQ-LS-202 — encapsulate the cookie-refresh decision.
+
+        Returns `True` when the scraper should retry page 0
+        (the refresh succeeded + new cookies were written +
+        cache was invalidated); `False` when the scraper
+        should fall through to the v1 soft-WARNING path.
+
+        Decision flow (8 steps per REQ-LS-202):
+        1. `cookie_refresher is None` → `False`
+           (REQ-LCR-008 — backward-compat with v1 callers).
+        2. `cookie_refresh_enabled is False` → `False`
+           (REQ-LCR-007 — kill switch).
+        3. Backoff active → `False` (silent skip, NO
+           WARNING — REQ-LCR-004 spec: "no WARNING to
+           avoid flood of WARNINGs").
+        4. Soup is NOT auth-walled NOR cloudflare-challenged
+           → `False` (the v1 `_parse_cards` path runs).
+        5. Record `_last_refresh_attempt_at = time.monotonic()`
+           BEFORE the await (backoff clock starts at attempt,
+           not at result).
+        6. `new = await self._settings.cookie_refresher.refresh()`.
+        7. If `new is None` → WARNING + `False`.
+        8. If `new is not None` →
+           a. `await self._settings.auth_cookies.set_cookies(new)`
+              (REQ-AC-101).
+           b. If `cache_invalidator is not None`:
+              `await self._settings.cache_invalidator()`.
+           c. INFO log (count only, NO values).
+           d. `return True`.
+        """
+        # Step 1: backward-compat with v1 callers.
+        if self._settings.cookie_refresher is None:
+            return False
+        # Step 2: kill switch.
+        if not self._settings.cookie_refresh_enabled:
+            return False
+        # Step 3: backoff.
+        if self._last_refresh_attempt_at is not None:
+            elapsed = time.monotonic() - self._last_refresh_attempt_at
+            if elapsed < self._settings.cookie_refresher_backoff_seconds:
+                # Silent skip — no WARNING (per spec).
+                return False
+        # Step 4: only refresh on auth-wall OR Cloudflare.
+        is_wall = is_auth_wall(soup)
+        is_cf = is_cloudflare_challenge(soup)
+        if not (is_wall or is_cf):
+            return False
+        # Step 5: record attempt time BEFORE the await.
+        self._last_refresh_attempt_at = time.monotonic()
+        # Step 6: invoke the refresher.
+        new: list[dict[str, object]] | None = (
+            await self._settings.cookie_refresher.refresh()
+        )
+        # Step 7: failure path.
+        if new is None:
+            _logger.warning(
+                "LinkedIn cookie refresh failed; returning 0 jobs and "
+                "entering backoff"
+            )
+            return False
+        # Step 8: success path.
+        if self._settings.auth_cookies is not None:
+            await self._settings.auth_cookies.set_cookies(new)  # type: ignore[arg-type]
+        if self._settings.cache_invalidator is not None:
+            await self._settings.cache_invalidator()
+        _logger.info(
+            "LinkedIn cookie refresh succeeded; replaced %d cookies and "
+            "invalidated cache; retrying page 0",
+            len(new),
+        )
+        return True
+
+    async def _retry_page_zero(
+        self,
+        *,
+        page: Any,
+        keywords: str,
+        location: str,
+        geo_id: int | None,
+        structured: tuple[str, str, str] | None,
+        remaining: int,
+    ) -> list[Job]:
+        """REQ-LS-203 — retry page 0 ONCE after successful refresh.
+
+        Re-navigates to the page-0 URL (the new cookies are
+        already in the context — they were injected by
+        `auth_cookies.set_cookies()` in `_maybe_refresh_cookies`,
+        but Playwright's per-page cookie context reads from
+        the browser context on the next `goto` / `reload`),
+        waits for results, parses, and returns the cards.
+        The caller (the pagination loop) accumulates them
+        and continues from page 1 onward if `limit` is not
+        yet reached.
+
+        A second auth-wall on the retry triggers the v1 soft
+        WARNING + return `[]` (no infinite-loop protection
+        needed because the backoff in REQ-LCR-004 caps
+        future refresh attempts within 1 hour).
+        """
+        url = self._build_url(
+            keywords, location, 0, geo_id=geo_id, structured=structured
+        )
+        await self._navigate_and_wait(page, url)
+        content = await page.content()
+        retry_soup = BeautifulSoup(content, "html.parser")
+        # On the retry: if the page STILL has an auth-wall
+        # or Cloudflare challenge, return `[]` (no second
+        # refresh attempt — the backoff is now active and
+        # the loop is bounded). Otherwise, return the parsed
+        # cards.
+        if is_auth_wall(retry_soup) or is_cloudflare_challenge(retry_soup):
+            return []
+        if is_block_page(retry_soup):
+            # HARD raise on a confirmed block page (the v1
+            # semantics — this is no longer "soft").
+            raise LinkedInBlockedError(
+                "LinkedIn returned an auth-wall / verification page "
+                "after refresh"
+            )
+        return _parse_cards(retry_soup, remaining)
 
 
 def _parse_cards(soup: BeautifulSoup, remaining: int) -> list[Job]:
