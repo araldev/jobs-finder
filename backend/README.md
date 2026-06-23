@@ -2189,6 +2189,136 @@ FastAPI restarts and can be supervised by `systemd`, `supervisord`, or
 verify the script without spawning a real Xvfb, run `XVFB_DRY_RUN=1 bash
 scripts/start_xvfb.sh` (prints the spawn command and exits 0).
 
+### Cookie refresh (auto)
+
+> **`linkedin-cookie-refresh` cycle 4.** This section describes the
+> auto-refresh feature that handles LinkedIn's
+> expiring-every-few-days `li_at` cookie without operator
+> intervention. The 3 env vars below replace the v1 "manual
+> `extract_linkedin_cookies.py` + restart" workflow for the common
+> case.
+
+LinkedIn's `li_at` session cookie expires every few days. The v1
+scraper hit the auth wall, logged a WARNING, and returned `[]`
+until a human re-ran the `extract_linkedin_cookies.py` script and
+restarted the process. The `linkedin-cookie-refresh` change adds
+**auto-refresh**: when the scraper detects the auth wall or a
+Cloudflare challenge, a `PlaywrightLinkedInCookieRefresher`
+re-logs in with the operator's `LINKEDIN_EMAIL` /
+`LINKEDIN_PASSWORD` credentials and writes the new cookies back
+into the auth-cookie adapter. The next `search()` runs with the
+fresh session.
+
+#### The 3 env vars
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `LINKEDIN_COOKIE_REFRESH_ENABLED` | `true` | Master switch. `false` reverts to the v1 "WARNING + return 0 jobs" path. |
+| `LINKEDIN_COOKIE_REFRESH_BACKOFF_SECONDS` | `3600.0` | Skip refresh within this many seconds of the last attempt (1 hour, the per-scheduler-cycle cadence). MUST be positive (`gt=0.0`). |
+| `LINKEDIN_COOKIE_REFRESH_TIMEOUT_SECONDS` | `300.0` | Wall-clock cap on the post-login URL poll. Matches the `extract_linkedin_cookies.py` precedent. MUST be positive. |
+
+The composition root ALSO reads `LINKEDIN_EMAIL` and
+`LINKEDIN_PASSWORD` (NOT in `Settings` — credentials are
+never promoted to typed fields per AGENTS.md rule #7). When
+`LINKEDIN_COOKIE_REFRESH_ENABLED=true` AND both creds are set, the
+composition root wires a `PlaywrightLinkedInCookieRefresher`.
+Otherwise, it wires a `DisabledLinkedInCookieRefresher` whose
+`refresh()` is identity (returns existing cookies unchanged).
+
+#### What the operator sees in the logs
+
+A successful refresh emits an INFO line on the cookie-refresh
+path (no cookie values — count only, per REQ-LCR-005):
+
+```
+INFO  jobs_finder.infrastructure.linkedin.cookie_refresher
+  LinkedIn cookie refresh succeeded; got 5 cookies
+INFO  jobs_finder.infrastructure.linkedin.scraper
+  LinkedIn cookie refresh succeeded; replaced 5 cookies and
+  invalidated cache; retrying page 0
+```
+
+A failed refresh emits a WARNING (no cookie values):
+
+```
+WARNING jobs_finder.infrastructure.linkedin.cookie_refresher
+  LinkedIn cookie refresh failed: TimeoutError
+WARNING jobs_finder.infrastructure.linkedin.scraper
+  LinkedIn cookie refresh failed; returning 0 jobs and
+  entering backoff
+```
+
+The `_last_refresh_attempt_at` clock on the scraper records the
+timestamp BEFORE the await — the backoff window is measured
+from the attempt, not the result. While the backoff is active,
+subsequent auth-wall events are silent skips (no WARNING flood).
+
+#### Xvfb requirement
+
+`PlaywrightLinkedInCookieRefresher.refresh()` launches Chromium
+non-headless (mirrors the v1 script's behavior). The browser
+needs a real display context to avoid Cloudflare 2026's
+headless-Chromium fingerprint detection. **Xvfb is the standard
+way to provide a virtual display** — see the [Running under
+Xvfb](#running-under-xvfb) section above for the install /
+launch procedure. The `headless=False` default in the production
+refresher matches `extract_linkedin_cookies.py` byte-for-byte
+(same launch args, same anti-detection flags).
+
+#### 2FA / SMS checkpoints — manual fallback
+
+Auto-refresh does NOT resolve 2FA or SMS verification codes.
+LinkedIn shows a `checkpoint` URL when the operator's account
+has 2FA enabled; the production refresher detects the
+`checkpoint` URL during the post-login poll and returns `None`
+with a WARNING:
+
+```
+WARNING jobs_finder.infrastructure.linkedin.cookie_refresher
+  LinkedIn cookie refresh hit a checkpoint;
+  2FA requires manual resolution
+```
+
+When 2FA is required, the operator MUST run the script
+manually (it accepts the checkpoint interactively because the
+browser window is visible — either real desktop or Xvfb):
+
+```bash
+# 1. Start Xvfb (if running headless on a server).
+export DISPLAY=:99
+bash scripts/start_xvfb.sh &
+
+# 2. Run the script. The browser window opens, you fill the
+#    2FA code, and the script writes a fresh linkedin_cookies.json.
+DISPLAY=:99 uv run --env-file .env python scripts/extract_linkedin_cookies.py \
+    --output /tmp/jobs-finder-linkedin-cookies.json \
+    --wait-seconds 600
+```
+
+The script's CLI surface is unchanged from the v1 spec
+(`--output` + `--wait-seconds`; `argparse`, not `click` /
+`typer`). Internally, the script now delegates to
+`PlaywrightLinkedInCookieRefresher.refresh()` — the same class
+the auto-refresh path uses. This guarantees the manual fallback
+and the auto path never drift (a single source of truth for the
+login + cookie extraction flow).
+
+#### Disable auto-refresh — kill switch
+
+To opt out entirely (e.g. on a server where the operator
+prefers the v1 "WARNING + return 0 jobs" path), set:
+
+```bash
+# .env
+LINKEDIN_COOKIE_REFRESH_ENABLED=false
+```
+
+The composition root wires a `DisabledLinkedInCookieRefresher`
+whose `refresh()` returns the existing cookies unchanged (no
+browser launch, no `set_cookies()`, no cache invalidation). The
+scraper's `_maybe_refresh_cookies` short-circuits to `False`
+on the first auth-wall event.
+
 ## Manual verification — Indeed
 
 > **Re-read the Legal Notice — Indeed above before proceeding.**
@@ -2512,3 +2642,147 @@ to bypass Distil/Geetest; ensure Chromium is installed via
 refresh the parser fixture lives in `/tmp/capture_infojobs.py` (NOT
 committed) and is regenerated from a residential IP when the live
 DOM drifts.
+
+## Manual verification — LinkedIn cookie refresh
+
+> **Re-read the Legal Notice — LinkedIn above before proceeding.**
+> This procedure launches a real Chromium against LinkedIn's
+> login flow. It is **never** executed in CI or in the automated
+> test suite (AGENTS.md rule #1). The auto-refresh path is
+> unit-tested offline with a mocked `browser_factory` injection
+> seam — the procedure below confirms the live wiring works
+> end-to-end.
+
+The auto-refresh path is exercised end-to-end through
+`app_factory.build_app()`: when the operator sets
+`LINKEDIN_EMAIL` / `LINKEDIN_PASSWORD` AND
+`LINKEDIN_COOKIE_REFRESH_ENABLED=true`, the composition root
+wires a `PlaywrightLinkedInCookieRefresher` into the
+`LinkedInScraperSettings.cookie_refresher` slot. The scraper's
+`_make_fetch_one_page` closure consults the refresher on
+`is_auth_wall` / `is_cloudflare_challenge` and retries page 0
+ONCE on success.
+
+### Prerequisites
+
+- Python 3.12, `uv` installed.
+- A valid LinkedIn account with `li_at` / `JSESSIONID` /
+  `bcookie` cookies (any of the 4, the auto-refresh will refresh
+  all 5 on success).
+- `LINKEDIN_EMAIL` and `LINKEDIN_PASSWORD` exported in the
+  shell (or in `backend/.env`, gitignored).
+- Either a real desktop (Linux + X server, macOS, or Windows)
+  OR a running Xvfb server on `:99` (see [Running under
+  Xvfb](#running-under-xvfb)).
+- Chromium binary installed via `uv run playwright install chromium`.
+
+### Procedure
+
+```bash
+# 1. Set credentials in the shell.
+export LINKEDIN_EMAIL='your@email.com'
+export LINKEDIN_PASSWORD='your_password'
+
+# 2. (Optional but recommended) Lower the backoff so the
+#    refresh can fire again quickly during testing.
+export LINKEDIN_COOKIE_REFRESH_BACKOFF_SECONDS=10.0
+export LINKEDIN_COOKIE_REFRESH_TIMEOUT_SECONDS=60.0
+
+# 3. Start Xvfb if running headless on a server.
+export DISPLAY=:99
+bash scripts/start_xvfb.sh &
+
+# 4. Start the FastAPI service. The composition root builds a
+#    `PlaywrightLinkedInCookieRefresher` and wires it into the
+#    LinkedIn scraper settings.
+uv run uvicorn jobs_finder.main:app --port 8000
+```
+
+```bash
+# 5. Force an auth wall by clearing the li_at cookie from the
+#    operator's env AND starting with an EXPIRED `li_at` value.
+#    The scraper injects the cookie, LinkedIn rejects it, the
+#    auto-refresh kicks in, and the log shows the INFO line:
+#
+#      INFO ... LinkedIn cookie refresh succeeded; got 5 cookies
+#      INFO ... LinkedIn cookie refresh succeeded; replaced 5
+#             cookies and invalidated cache; retrying page 0
+#
+#    A 200 response follows (the retry succeeded).
+LINKEDIN_LI_AT='AQE_EXPIRED_COOKIE_VALUE_PAST_EXPIRY' \
+  curl -i "http://localhost:8000/jobs/linkedin?keywords=python&location=madrid"
+```
+
+```http
+HTTP/1.1 200 OK
+x-cache: MISS
+content-type: application/json
+x-request-id: <uuid-or-your-trace-id>
+
+{
+  "jobs": [
+    {
+      "id": "4428834914",
+      "title": "Senior Python Developer",
+      "company": "Acme Corp",
+      ...
+    }
+  ]
+}
+```
+
+A 200 response with at least 1 job (NOT `{"jobs": []}`) is the
+"refresh succeeded + retry succeeded" path. The next call within
+the cache TTL window returns `X-Cache: HIT` without a browser
+launch (the cache invalidator cleared the per-source cache after
+the refresh).
+
+```bash
+# 6. Verify the WARNING path: simulate a 2FA checkpoint by
+#    forcing a refresh failure. The cleanest way is to set
+#    `LINKEDIN_COOKIE_REFRESH_BACKOFF_SECONDS=0` (rejected by
+#    pydantic — use a tiny value instead) and observing the
+#    backoff skip on the 2nd call.
+LINKEDIN_COOKIE_REFRESH_BACKOFF_SECONDS=0.01 \
+LINKEDIN_LI_AT='AQE_EXPIRED' \
+  curl "http://localhost:8000/jobs/linkedin?keywords=python&location=madrid"
+```
+
+The log shows:
+
+```
+WARNING ... LinkedIn cookie refresh failed; returning 0 jobs
+         and entering backoff
+```
+
+### Force a refresh-retry scenario (advanced)
+
+To deterministically exercise the **refresh + page-0 retry**
+path without waiting for the auth wall to fire naturally, the
+operator can:
+
+1. Set `LINKEDIN_LI_AT` to a value LinkedIn recognizes as
+   expired (a 30+ day-old `li_at` from a previously captured
+   session).
+2. Start the API with `LINKEDIN_COOKIE_REFRESH_ENABLED=true` +
+   valid `LINKEDIN_EMAIL` / `LINKEDIN_PASSWORD`.
+3. Hit `GET /jobs/linkedin?keywords=python&location=madrid`.
+4. Observe the **2-INFO-line sequence** in the logs (refresh
+   succeeded + retry succeeded).
+5. The response is `200 {"jobs": [...]}` with the new cookies
+   in effect on the page-0 retry.
+
+### Disable auto-refresh
+
+To opt out entirely (the v1 behavior), set:
+
+```bash
+# .env
+LINKEDIN_COOKIE_REFRESH_ENABLED=false
+```
+
+The composition root wires a `DisabledLinkedInCookieRefresher`
+(no browser launch, no `set_cookies()`, no cache invalidation).
+The scraper's `_maybe_refresh_cookies` short-circuits to
+`False` and the v1 soft-WARNING path runs.
+

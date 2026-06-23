@@ -1,162 +1,210 @@
-"""Extract LinkedIn cookies from chromium-browser (system channel).
-Matches the exact browser fingerprint the scraper uses.
+"""Extract LinkedIn cookies via the production `PlaywrightLinkedInCookieRefresher`.
+
+This script is the manual fallback for `LinkedInCookieRefresherPort`:
+when the auto-refresh path fails (e.g. 2FA checkpoint, network outage,
+or the operator's env-var creds are stale), you can run this script
+to log in interactively and write a fresh `linkedin_cookies.json`.
+
+The login + cookie extraction logic is now a thin wrapper around
+`PlaywrightLinkedInCookieRefresher.refresh()` (REQ-LCR-006). The
+class owns the actual Playwright session, the credential injection,
+and the post-login URL poll — this script only handles CLI parsing,
+JSON persistence, and the diagnostic output the operator wants
+when running manually.
 
 Usage:
-    DISPLAY=:99 uv run --env-file .env python scripts/extract_linkedin_cookies.py
+    DISPLAY=:99 uv run --env-file .env python scripts/extract_linkedin_cookies.py \\
+        --output linkedin_cookies.json --wait-seconds 300
 
-Credentials are read from environment variables:
+Credentials are read from environment variables (or the `--password`
+flag — see CLI help):
     LINKEDIN_EMAIL    - LinkedIn login email
     LINKEDIN_PASSWORD - LinkedIn login password
+
+CLI flags:
+    --output <path>         Output JSON path (default: ./linkedin_cookies.json)
+    --wait-seconds <float>  Max seconds to wait for post-login redirect
+                            (default: 300.0). Maps to
+                            `LinkedInCookieRefresherSettings.timeout_seconds`.
+
+NOTE — the script does NOT log cookie values. The diagnostic output
+shows cookie NAMES only (and the first 15 chars of `li_at` /
+`JSESSIONID` for operator convenience — the production refresher
+path masks them via `SecretStr`; this script's stdout is the
+operator's own terminal, so partial visibility is acceptable).
 """
 
+from __future__ import annotations
+
+import argparse
 import asyncio
 import json
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 
-from playwright.async_api import async_playwright
+from pydantic import SecretStr
 
-LINKEDIN_EMAIL = os.environ.get("LINKEDIN_EMAIL")
-LINKEDIN_PASSWORD = os.environ.get("LINKEDIN_PASSWORD")
-COOKIES_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "linkedin_cookies.json",
+from jobs_finder.infrastructure.linkedin.cookie_refresher import (
+    LinkedInCookieRefresherSettings,
+    PlaywrightLinkedInCookieRefresher,
 )
 
+DEFAULT_OUTPUT = "linkedin_cookies.json"
+DEFAULT_WAIT_SECONDS = 300.0
 
-async def main() -> None:
-    if not LINKEDIN_EMAIL or not LINKEDIN_PASSWORD:
-        print("❌ Error: LINKEDIN_EMAIL and LINKEDIN_PASSWORD must be set in environment")
-        print("   Set them in backend/.env or export before running:")
-        print("     export LINKEDIN_EMAIL='your@email.com'")
-        print("     export LINKEDIN_PASSWORD='your_password'")
-        sys.exit(1)
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse CLI args. Preserves the spec's `argparse` contract."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Manually extract LinkedIn session cookies via "
+            "Playwright. The login flow delegates to "
+            "`PlaywrightLinkedInCookieRefresher`; this script "
+            "only handles JSON persistence and CLI ergonomics."
+        )
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=DEFAULT_OUTPUT,
+        help=(
+            "Output JSON file path for the cookie dicts "
+            f"(default: {DEFAULT_OUTPUT!r}). The script writes "
+            "the full `context.cookies()` shape (name, value, "
+            "domain, path, expires, httpOnly, secure, sameSite) "
+            "via `os.replace` for atomicity."
+        ),
+    )
+    parser.add_argument(
+        "--wait-seconds",
+        type=float,
+        default=DEFAULT_WAIT_SECONDS,
+        help=(
+            "Max seconds to wait for the post-login redirect "
+            "(default: %(default)s). Maps to "
+            "`LinkedInCookieRefresherSettings.timeout_seconds`."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+async def _extract_cookies(
+    *,
+    email: str,
+    password: str,
+    wait_seconds: float,
+) -> list[dict[str, object]] | None:
+    """Run `PlaywrightLinkedInCookieRefresher.refresh()`.
+
+    Returns the cookie list on success, `None` on any failure
+    (the spec's `refresh()` contract — never raises).
+    """
+    refresher = PlaywrightLinkedInCookieRefresher(
+        LinkedInCookieRefresherSettings(
+            enabled=True,
+            timeout_seconds=wait_seconds,
+            email=SecretStr(email),
+            password=SecretStr(password),
+            # The production refresher launches Chromium non-headless
+            # so the operator can see the browser window (mirrors the
+            # v1 script's behavior). Xvfb is the standard way to
+            # provide a virtual display in CI / Docker.
+            headless=False,
+        )
+    )
+    return await refresher.refresh()
+
+
+async def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    email = os.environ.get("LINKEDIN_EMAIL")
+    password = os.environ.get("LINKEDIN_PASSWORD")
+    if not email or not password:
+        print(
+            "❌ Error: LINKEDIN_EMAIL and LINKEDIN_PASSWORD must be set in environment",
+            file=sys.stderr,
+        )
+        print(
+            "   Set them in backend/.env or export before running:",
+            file=sys.stderr,
+        )
+        print("     export LINKEDIN_EMAIL='your@email.com'", file=sys.stderr)
+        print("     export LINKEDIN_PASSWORD='your_password'", file=sys.stderr)
+        return 1
 
     display = os.environ.get("DISPLAY", ":99")
     print(f"[*] DISPLAY={display}")
     print("[*] Channel: chromium (system chromium-browser)")
-    print(f"[*] Cookies will be saved to: {COOKIES_PATH}")
+    print(f"[*] Cookies will be saved to: {args.output}")
+    print(f"[*] Wait timeout: {args.wait_seconds}s")
+    print()
+    print(
+        "[i] Tip — this script is the manual fallback for the auto-refresh "
+        "feature. In production, the backend's "
+        "`PlaywrightLinkedInCookieRefresher` handles the same flow "
+        "automatically when `LINKEDIN_COOKIE_REFRESH_ENABLED=true` AND "
+        "credentials are set. See README 'Cookie refresh (auto)' for "
+        "the full operator guide.",
+    )
     print()
 
-    async with async_playwright() as p:
-        # ── Launch identical to scraper ──────────────────────────────────
-        browser = await p.chromium.launch(
-            headless=False,
-            channel="chromium",
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-            ],
+    cookies = await _extract_cookies(
+        email=email,
+        password=password,
+        wait_seconds=args.wait_seconds,
+    )
+    if cookies is None:
+        print(
+            "❌ Cookie refresh failed (no cookies returned). The "
+            "production refresher swallows all exceptions internally; "
+            "check the application logs for the WARNING line that "
+            "preceded this script. Common causes: 2FA / SMS "
+            "checkpoint, post-login URL never reached /feed or /m/, "
+            "or a LinkedIn anti-bot block. Re-run the script after "
+            "resolving manually.",
+            file=sys.stderr,
         )
-        context = await browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            user_agent=(
-                "Mozilla/5.0 (X11; Linux x86_64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/131.0.0.0 Safari/537.36"
-            ),
+        return 1
+
+    # ── Persist cookies atomically (os.replace) ──────────────────────
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = str(output_path) + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(cookies, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, output_path)
+    print(f"[4/4] Cookies written to {output_path}")
+    print(f"    → {len(cookies)} cookies saved")
+    # Diagnostic: show the first 15 chars of `li_at` and `JSESSIONID`
+    # so the operator can confirm the new session is fresh without
+    # exposing the full value.
+    li_at = next((c for c in cookies if c.get("name") == "li_at"), None)
+    if isinstance(li_at, dict):
+        value = li_at.get("value", "")
+        expires = li_at.get("expires")
+        expires_iso = (
+            datetime.fromtimestamp(expires).isoformat()
+            if isinstance(expires, (int, float))
+            else "N/A"
         )
-        page = await context.new_page()
-
-        # ── Go to LinkedIn login ─────────────────────────────────────────
-        print("[1/5] Navegando a linkedin.com/login ...")
-        await page.goto("https://www.linkedin.com/login", wait_until="domcontentloaded")
-        await page.wait_for_timeout(1000)
-        print(f"    → URL actual: {page.url}")
-
-        # ── Fill credentials ─────────────────────────────────────────────
-        print("[2/5] Llenando credenciales ...")
-
-        # LinkedIn usa IDs fijos: #username y #password
-        await asyncio.sleep(2)  # dar tiempo a JS
-
-        email_input = page.locator("#username").first
-        pass_input = page.locator("#password").first
-
-        await email_input.wait_for(state="visible", timeout=10000)
-        await pass_input.wait_for(state="visible", timeout=10000)
-
-        await email_input.fill(LINKEDIN_EMAIL)
-        await pass_input.fill(LINKEDIN_PASSWORD)
-        await page.wait_for_timeout(500)
-
-        # ── Click Sign In ────────────────────────────────────────────────
-        print("[3/5] Click en Sign In ...")
-
-        # LinkedIn muestra "Sign in" o "Iniciar sesión" + "Sign in with Apple"
-        # Usar el botón de submit o el rol button con texto Sign in
-        try:
-            signin_btn = page.get_by_role("button", name="Sign in", exact=True).first
-            await signin_btn.wait_for(state="visible", timeout=5000)
-            await signin_btn.click()
-        except Exception:
-            signin_btn = page.get_by_role("button", name="Iniciar sesión", exact=True).first
-            await signin_btn.wait_for(state="visible", timeout=5000)
-            await signin_btn.click()
-
-        print("    → Click enviado. Esperando redirección ...")
-
-        # ── Wait for successful login (poll URL, up to 300s) ─────────────
-        login_ok = False
-        for attempt in range(300):
-            current_url = page.url
-            if any(k in current_url for k in ["feed", "jobs", "mynetwork", "notifications"]):
-                login_ok = True
-                print(f"    ✅ Redirección detectada en {attempt}s: {current_url[:80]}")
-                break
-            if "checkpoint" in current_url:
-                # LinkedIn challenge - esperar hasta 5 min a que se resuelva
-                print(f"    ⚠️  Challenge en {attempt}s. Esperando resolución manual ...")
-                for wait_sec in range(300 - attempt):
-                    await asyncio.sleep(1)
-                    current_url = page.url
-                    if any(
-                        k in current_url for k in ["feed", "jobs", "mynetwork", "notifications"]
-                    ):
-                        login_ok = True
-                        print(f"    ✅ Challenge resuelto en {wait_sec}s")
-                        break
-                break
-            await asyncio.sleep(1)
-
-        if not login_ok:
-            print(f"    ⚠️  Sin redirección después del timeout. URL: {page.url[:80]}")
-            print("    → Continuando con cookies actuales ...")
-
-        print(f"    → URL final: {page.url[:80]}")
-
-        # ── Extract cookies ──────────────────────────────────────────────
-        print()
-        print("[4/4] Extrayendo cookies ...")
-        cookies = await context.cookies()
-        print(f"    → {len(cookies)} cookies extraídas")
-
-        # Save all cookies
-        with open(COOKIES_PATH, "w") as f:
-            json.dump(cookies, f, indent=2)
-
-        # Show li_at
-        li_at = next((c for c in cookies if c["name"] == "li_at"), None)
-        if li_at:
-            print(
-                f"    ✅ li_at: {li_at['value'][:15]}... (expira: {datetime.fromtimestamp(li_at['expires']).isoformat() if li_at.get('expires') else 'N/A'})"
-            )
-        else:
-            print("    ❌ li_at NO encontrada en cookies extraídas")
-
-        # Show JSESSIONID too
-        jsess = next((c for c in cookies if c["name"] == "JSESSIONID"), None)
-        if jsess:
-            print(f"    ✅ JSESSIONID: {jsess['value'][:15]}...")
-
-        # Show all cookie names
-        names = sorted(set(c["name"] for c in cookies))
-        print(f"\n    Cookies disponibles ({len(names)}): {', '.join(names)}")
-
-        await browser.close()
-        print("\n✨ Listo!")
+        if isinstance(value, str):
+            print(f"    ✅ li_at: {value[:15]}... (expira: {expires_iso})")
+    else:
+        print("    ❌ li_at NO encontrada en cookies extraídas")
+    jsess = next((c for c in cookies if c.get("name") == "JSESSIONID"), None)
+    if isinstance(jsess, dict):
+        value = jsess.get("value", "")
+        if isinstance(value, str):
+            print(f"    ✅ JSESSIONID: {value[:15]}...")
+    names = sorted({str(c.get("name", "")) for c in cookies if c.get("name")})
+    print(f"\n    Cookies disponibles ({len(names)}): {', '.join(names)}")
+    print("\n✨ Listo!")
+    return 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(asyncio.run(main()))
