@@ -28,7 +28,11 @@ class SupabaseEngagementRepository:
 
     Args:
         supabase_url: The Supabase project URL (e.g. ``https://abc.supabase.co``).
-        service_key: The ``service_role`` key (bypasses RLS).
+        service_key: The Supabase server-side API key — either the legacy
+            ``service_role`` JWT (starts with ``eyJ...``) OR the new
+            ``secret`` key (starts with ``sb_secret_...``). Both bypass RLS
+            and are sent as Bearer tokens to the REST API (Supabase accepts
+            either format in the ``Authorization`` header).
     """
 
     __slots__ = ("_base_url", "_headers")

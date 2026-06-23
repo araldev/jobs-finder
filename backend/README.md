@@ -827,7 +827,7 @@ the limit. The priority chain is: **user JWT > API key > IP address**.
 | --- | --- | --- |
 | `LLM_API_KEY` | `SecretStr` | Masked in logs/tracebacks. Empty → chat route not registered. |
 | `SUPABASE_JWT_JWKS_URL` | `str` (not secret) | URL of the public JWKS endpoint. Auto-derived from `SUPABASE_URL` if unset. Empty → JWTUserMiddleware is NOT added (WARNING logged). |
-| `SUPABASE_SERVICE_KEY` | `SecretStr` | Masked. Bypasses RLS — never expose to the browser. Empty → engagement port falls back to no-op. |
+| `SUPABASE_SERVICE_KEY` | `SecretStr` | Masked. Server-side API key for DB writes (bypasses RLS). Accepts legacy `service_role` JWT (`eyJ...`) or new `secret` key (`sb_secret_...`). Never expose to the browser. Empty → engagement port falls back to no-op. |
 
 If `SUPABASE_URL` (or the explicit `SUPABASE_JWT_JWKS_URL`) is unset
 at startup, a WARNING is logged and JWT-based auth is disabled.
@@ -850,13 +850,19 @@ logs/tracebacks).
    - Mark it as **active** so new user JWTs are signed with it
    - The kid (Key ID) is shown after creation — the backend uses it
      automatically via the JWKS lookup
-4. Get the service_role key: **Settings → API → Project API keys → service_role** → `SUPABASE_SERVICE_KEY`.
+4. Get a server-side API key: **Settings → API → Project API keys**.
+   The dashboard may offer either:
+   - Legacy `service_role` JWT (starts with `eyJ...`)
+   - New `secret` key (starts with `sb_secret_...`) — Supabase 2024+
+   Both formats are accepted by the backend (sent as Bearer tokens to
+   the REST API). Paste whichever the dashboard gives you into
+   `SUPABASE_SERVICE_KEY`.
 5. Set them in `backend/.env` (gitignored, never committed):
 
    ```bash
    SUPABASE_URL=https://<your-project>.supabase.co
    # `supabase_jwt_jwks_url` auto-derived from SUPABASE_URL — no need to set explicitly
-   SUPABASE_SERVICE_KEY=<your-service-role-key>
+   SUPABASE_SERVICE_KEY=<eyJ...-or-sb_secret_...>
    USER_CV_DAILY_QUOTA=5
    ```
 
