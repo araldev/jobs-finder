@@ -11,14 +11,17 @@ and never launches Playwright.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+import jwt
 import pytest
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
+from pydantic import SecretStr
 
 from jobs_finder.application.usecases.search_indeed_jobs import (
     SearchJobsUseCase as IndeedSearchJobsUseCase,
@@ -33,6 +36,20 @@ from jobs_finder.domain.job import Job
 from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCache
 from jobs_finder.infrastructure.config import Settings
 from jobs_finder.presentation.app_factory import build_app
+
+# 64-char hex key for PyJWT key-length warning suppression.
+_JWT_SECRET = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+_TEST_JWT = jwt.encode(
+    {
+        "sub": "test-user",
+        "email": "test@example.com",
+        "iat": int(time.time()),
+        "exp": int(time.time()) + 3600,
+        "aud": "authenticated",
+    },
+    _JWT_SECRET,
+    algorithm="HS256",
+)
 
 
 class FakeJobSearchPort:
@@ -103,10 +120,14 @@ class TestSchedulerStatusApi:
 
         Spec: REQ-STATUS-002 scenario 2 — graceful degradation.
         """
-        app = build_app()
+        settings = Settings(supabase_jwt_secret=SecretStr(_JWT_SECRET))
+        app = build_app(settings=settings)
 
         async with _client_with_lifespan(app) as client:
-            resp = await client.get("/scheduler/status")
+            resp = await client.get(
+                "/scheduler/status",
+                headers={"Authorization": f"Bearer {_TEST_JWT}"},
+            )
 
         assert resp.status_code == 200
         data = resp.json()
@@ -147,6 +168,7 @@ class TestSchedulerStatusApi:
             scheduler_min_interval_seconds=10000.0,
             scheduler_max_interval_seconds=20000.0,
             scheduler_queries=[{"keywords": "python", "location": "Madrid"}],
+            supabase_jwt_secret=SecretStr(_JWT_SECRET),
         )
 
         app = build_app(
@@ -164,7 +186,10 @@ class TestSchedulerStatusApi:
             # (all fakes return instantly).
             await asyncio.sleep(0.05)
 
-            resp = await client.get("/scheduler/status")
+            resp = await client.get(
+                "/scheduler/status",
+                headers={"Authorization": f"Bearer {_TEST_JWT}"},
+            )
 
         assert resp.status_code == 200
         data = resp.json()
@@ -210,6 +235,7 @@ class TestSchedulerStatusApi:
             scheduler_min_interval_seconds=10000.0,
             scheduler_max_interval_seconds=20000.0,
             scheduler_queries=[{"keywords": "python", "location": "Madrid"}],
+            supabase_jwt_secret=SecretStr(_JWT_SECRET),
         )
 
         app = build_app(
@@ -223,7 +249,10 @@ class TestSchedulerStatusApi:
             scheduler = getattr(app.state, "scheduler", None)
             assert scheduler is not None
 
-            resp = await client.get("/scheduler/status")
+            resp = await client.get(
+                "/scheduler/status",
+                headers={"Authorization": f"Bearer {_TEST_JWT}"},
+            )
 
         assert resp.status_code == 200
         data = resp.json()

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 import jwt
 
@@ -25,7 +24,7 @@ class UserState:
     """
 
     user_id: str
-    email: Optional[str] = None
+    email: str | None = None
 
 
 def verify_supabase_jwt(

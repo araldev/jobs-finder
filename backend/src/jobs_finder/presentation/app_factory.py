@@ -1049,9 +1049,10 @@ def build_app(  # noqa: PLR0915, PLR0912
             SupabaseEngagementRepository,
         )
 
-        app.state.engagement_port = SupabaseEngagementRepository(
+        _service_key = effective_settings.supabase_service_key.get_secret_value()
+        engagement_port = SupabaseEngagementRepository(
             supabase_url=effective_settings.supabase_url,
-            service_key=effective_settings.supabase_service_key,
+            service_key=_service_key,
         )
 
     # Middleware — order matters. Starlette runs middlewares outermost
@@ -1110,10 +1111,19 @@ def build_app(  # noqa: PLR0915, PLR0912
     # skip JWT auth) and BEFORE RateLimit (future: user-based rate
     # limiting). NEVER blocks the request — only sets
     # `request.state.current_user` (or None).
-    if effective_settings.supabase_jwt_secret:
+    _jwt_secret_raw: str | None = None
+    if effective_settings.supabase_jwt_secret is not None:
+        _jwt_secret_raw = effective_settings.supabase_jwt_secret.get_secret_value()
+    if _jwt_secret_raw:
         app.add_middleware(
             JWTUserMiddleware,
-            jwt_secret=effective_settings.supabase_jwt_secret,
+            jwt_secret=_jwt_secret_raw,
+        )
+    else:
+        _logger.warning(
+            "SUPABASE_JWT_SECRET is not set. JWT-based authentication is DISABLED. "
+            "All routes that require Depends(get_current_user) will return 401. "
+            "Set SUPABASE_JWT_SECRET in .env to enable per-user auth."
         )
     if effective_settings.rate_limit_enabled:
         # Added BEFORE `RequestId` in nesting order so it runs AFTER

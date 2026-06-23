@@ -547,6 +547,11 @@ state as JSON. The endpoint is always registered; when the scheduler is
 disabled (`SCHEDULER_ENABLED=false`), it returns `{"enabled": false}`
 with default values (graceful degradation — never crashes).
 
+**Authentication required** (security fix, 2026-06-23): the endpoint
+requires a valid Supabase JWT (`Authorization: Bearer <token>`) because
+it exposes internal runtime state (`last_error`, `queries`, cycle
+counts). Returns `401` when the JWT is missing or invalid.
+
 #### Response shape
 
 ```json
@@ -778,6 +783,90 @@ dashboard UI.
 ```bash
 curl -s http://localhost:8000/jobs/stats | jq
 ```
+
+## Authentication & Security
+
+### Two layers of auth
+
+The backend supports two optional auth layers, both configurable via env vars:
+
+| Layer | Env var (when set) | Header | Effect |
+| --- | --- | --- | --- |
+| **API key** | `API_KEYS=<json-list>` | `X-API-Key: <key>` | All non-exempt requests require a valid key (401 otherwise). Per-key rate limit bucket. |
+| **User JWT** | `SUPABASE_JWT_SECRET=<secret>` | `Authorization: Bearer <jwt>` | JWT is verified (HS256). `request.state.current_user` is set for downstream handlers + per-user rate limit bucket. NEVER blocks (best-effort). |
+
+Both layers run in this middleware order:
+```
+RequestId → RateLimit → ApiKeyAuth → JWTUser → LogOnRequest → route
+```
+
+### Route auth coverage
+
+| Route | Auth requirement |
+| --- | --- |
+| `GET /health` | Public (k8s liveness probe). |
+| `GET /docs`, `/openapi.json`, `/redoc` | Public (dev docs). |
+| `GET /scheduler/status` | **`Depends(get_current_user)`** — 401 without JWT. Exposes `last_error`, queries, cycle state. |
+| `POST /jobs/chat` | `Depends(get_optional_user)` — non-blocking, JWT-aware for rate limiting. |
+| `POST /jobs/chat/stream` | `Depends(get_optional_user)` — same. |
+| `POST /cv/generate` | **`Depends(get_current_user)`** — 401 without JWT. Daily quota enforced. |
+| `GET /cv/count` | **`Depends(get_current_user)`** — 401 without JWT. |
+| `GET /jobs{,/linkedin,/indeed,/infojobs}` | Public (no auth dependency). Per-user rate limiting still applies when JWT is present. |
+| `GET /jobs/{stats,history,history/by-id/{id}}` | Public (no auth dependency). |
+
+### Per-user rate limiting
+
+When a valid JWT is present, `RateLimitMiddleware` keys the bucket as
+`user:{sha256(user_id)[:16]}` — independent of the IP hash. An authenticated
+user's bucket is decoupled from their IP, so cycling IPs does not bypass
+the limit. The priority chain is: **user JWT > API key > IP address**.
+
+### Secrets handling
+
+| Env var | Type | Notes |
+| --- | --- | --- |
+| `LLM_API_KEY` | `SecretStr` | Masked in logs/tracebacks. Empty → chat route not registered. |
+| `SUPABASE_JWT_SECRET` | `SecretStr` | Masked. Empty → JWTUserMiddleware is NOT added (WARNING logged). |
+| `SUPABASE_SERVICE_KEY` | `SecretStr` | Masked. Bypasses RLS — never expose to the browser. Empty → engagement port falls back to no-op. |
+
+If any of the above is unset at startup, a WARNING is logged. Routes that
+require the secret (e.g. `POST /cv/generate` with `SUPABASE_JWT_SECRET`
+unset) return 401 — never silently bypass.
+
+### Setting up Supabase auth
+
+1. Create a project in [Supabase Dashboard](https://app.supabase.com).
+2. Get the project URL: **Settings → API → Project URL** → `SUPABASE_URL`.
+3. Get the JWT secret: **Settings → API → JWT Settings → JWT Secret** → `SUPABASE_JWT_SECRET`.
+4. Get the service_role key: **Settings → API → Project API keys → service_role** → `SUPABASE_SERVICE_KEY`.
+5. Set them in `backend/.env` (gitignored, never committed):
+
+   ```bash
+   SUPABASE_URL=https://<your-project>.supabase.co
+   SUPABASE_JWT_SECRET=<your-jwt-secret>
+   SUPABASE_SERVICE_KEY=<your-service-role-key>
+   USER_CV_DAILY_QUOTA=5
+   ```
+
+6. Apply the migrations from `backend/supabase/migrations/` (see
+   `backend/supabase/README.md` for the local stack or dashboard workflow).
+
+### Regenerating a leaked secret
+
+If a `SUPABASE_JWT_SECRET` or `SUPABASE_SERVICE_KEY` is leaked
+(e.g. accidentally committed to git, posted in a log, etc.):
+
+1. Go to **Supabase Dashboard → Settings → API**.
+2. For **JWT secret**: click "Generate new secret" — this invalidates ALL
+   existing user sessions (every signed-in user must re-login).
+3. For **service_role key**: click "Rotate" — invalidate the old key,
+   update the env var.
+4. Update `backend/.env` with the new value immediately.
+5. Search git history for the leaked secret and rotate any other
+   systems that received it (the service_role key bypasses RLS, so any
+   leak grants full DB write access).
+6. Audit Supabase logs for unauthorized writes between leak time and
+   rotation.
 
 ## Stack
 

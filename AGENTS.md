@@ -37,6 +37,7 @@ is planned.
 | pydantic-settings| >= 2.0   | Env-driven configuration.                |
 | mypy             | >= 1.10  | Static type checking (`--strict`).       |
 | ruff             | >= 0.5   | Lint + format.                           |
+| PyJWT            | >= 2.8   | HS256 JWT verification (per-user auth).  |
 
 ## Stack (frontend)
 
@@ -402,7 +403,48 @@ CI runs the same commands. Do not commit if any check fails.
    **not** add `Co-Authored-By:` or any AI attribution trailer.
 7. **No secrets in the repo.** `li_at` cookies, proxy credentials, or
    any LinkedIn / Indeed authentication material are explicitly
-   forbidden by the spec.
+   forbidden by the spec. Backup files (`.env.bak`, `*.bak`) are also
+   forbidden — add `*.bak` to `.gitignore` if you encounter any.
+23. **Secrets use `SecretStr`.** Any env var that holds a credential
+    (`SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_KEY`, `LLM_API_KEY`,
+    etc.) MUST be declared as `SecretStr | None` in
+    `backend/src/jobs_finder/infrastructure/config.py` so the
+    credential is masked in `repr()`, `str()`, log lines, and
+    tracebacks. Use `field_validator(mode="before")` to normalize
+    empty strings to `None` (mirrors the existing
+    `_normalize_empty_secret` validator for `llm_api_key`).
+24. **Don't leak exception details to clients.** Route handlers MUST
+    NOT interpolate `f"...{exc}"` into `HTTPException.detail` or
+    SSE error payloads. Log the full exception server-side with
+    `_logger.warning(...)` or `_logger.error(..., exc_info=True)`
+    and return a STATIC user-facing message. Internal API
+    structure, LLM provider names, and library internals are
+    NOT for client consumption.
+25. **Per-user rate limiting** is automatically applied when a
+    valid Supabase JWT is present (the `JWTUserMiddleware` sets
+    `request.state.current_user` BEFORE `RateLimitMiddleware`
+    runs). Authenticated users get their own bucket keyed by
+    `user:{user_id_hash}`. Anonymous users fall back to the IP
+    hash. See `RateLimitMiddleware.dispatch()` for the priority
+    chain: **user JWT > API key > IP address**.
+26. **Auth-required routes** MUST use
+    `Depends(get_current_user)` (raises 401 when JWT is missing).
+    For routes that want JWT identification without blocking
+    anonymous access (job search, stats, history), use
+    `Depends(get_optional_user)` instead — this lets the
+    per-user rate limiter see the user without breaking the
+    current public-data behavior.
+27. **Sensitive endpoints** (`/scheduler/status`, anything
+    exposing internal state, queries, error traces) MUST require
+    `Depends(get_current_user)`. The scheduler/status endpoint
+    leaks runtime config + last_error + cycle internals — never
+    public.
+28. **File uploads MUST be validated.** Any `UploadFile = File(...)`
+    parameter MUST have:
+    - `content_type` whitelist check (e.g. `application/pdf` only)
+    - `max_length` cap (current default for CV: 10 MB)
+    - Generic error messages (don't echo file contents or library
+      internals back to the client).
 8. **Use `pnpm`, not `npm` or `yarn`** (frontend). All Node
    dependency operations go through `cd frontend && pnpm install`
    and `cd frontend && pnpm run ...`. The lockfile is

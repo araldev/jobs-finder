@@ -14,14 +14,17 @@ the test is hermetic (no Playwright, no live scrapers, no live DB).
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+import jwt
 import pytest
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
+from pydantic import SecretStr
 
 from jobs_finder.application.usecases.search_indeed_jobs import (
     SearchJobsUseCase as IndeedSearchJobsUseCase,
@@ -39,6 +42,20 @@ from jobs_finder.presentation.app_factory import build_app
 
 # The exact header value mandated by design OQ1 (REQ-CACHEUX-002).
 EXPECTED_CACHE_CONTROL = "public, max-age=60"
+
+# 64-char hex key for PyJWT key-length warning suppression.
+_JWT_SECRET = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+_TEST_JWT = jwt.encode(
+    {
+        "sub": "test-user",
+        "email": "test@example.com",
+        "iat": int(time.time()),
+        "exp": int(time.time()) + 3600,
+        "aud": "authenticated",
+    },
+    _JWT_SECRET,
+    algorithm="HS256",
+)
 
 
 class FakeJobSearchPort:
@@ -188,11 +205,15 @@ class TestJobsHistoryCacheControl:
             scheduler_min_interval_seconds=10000.0,
             scheduler_max_interval_seconds=20000.0,
             scheduler_queries=[{"keywords": "python", "location": "Madrid"}],
+            supabase_jwt_secret=SecretStr(_JWT_SECRET),
         )
         app = _make_app_with_fakes(settings)
 
         async with _client_with_lifespan(app) as client:
-            resp = await client.get("/scheduler/status")
+            resp = await client.get(
+                "/scheduler/status",
+                headers={"Authorization": f"Bearer {_TEST_JWT}"},
+            )
 
         assert resp.status_code == 200
         # Negative assertion: the public cache directive is NOT

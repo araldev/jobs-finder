@@ -323,7 +323,8 @@ async def test_chat_route_returns_502_when_llm_unavailable() -> None:
     assert response.status_code == 502
     body = response.json()
     assert "LLM provider unavailable" in body["detail"]
-    assert "upstream down" in body["detail"]
+    # Exception detail is no longer leaked to the client (security fix).
+    assert "upstream down" not in body["detail"]
 
 
 async def test_chat_route_returns_422_when_llm_response_unparseable() -> None:
@@ -351,7 +352,8 @@ async def test_chat_route_returns_422_when_llm_response_unparseable() -> None:
     assert response.status_code == 422
     body = response.json()
     assert "LLM response could not be parsed" in body["detail"]
-    assert "could not extract JSON" in body["detail"]
+    # Exception detail is no longer leaked to the client (security fix).
+    assert "could not extract JSON" not in body["detail"]
 
 
 # ---------------------------------------------------------------------------

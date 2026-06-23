@@ -491,7 +491,8 @@ async def test_2stage_returns_502_when_llm_unavailable_stage_1(
     assert response.status_code == 502
     body = response.json()
     assert "LLM provider unavailable" in body["detail"]
-    assert "upstream down" in body["detail"]
+    # Exception detail is no longer leaked to the client (security fix).
+    assert "upstream down" not in body["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -523,7 +524,8 @@ async def test_2stage_returns_502_when_llm_unavailable_stage_3(
     assert response.status_code == 502
     body = response.json()
     assert "LLM provider unavailable" in body["detail"]
-    assert "stage-3 upstream down" in body["detail"]
+    # Exception detail is no longer leaked to the client (security fix).
+    assert "stage-3 upstream down" not in body["detail"]
     # 1 LLM call (stage 3 only; the FakeIntentExtractor does
     # NOT invoke the LLM).
     assert len(llm.calls) == 1

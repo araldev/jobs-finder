@@ -8,17 +8,22 @@ default values, never crashes.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 from jobs_finder.application.ports import JobRepositoryPort
+from jobs_finder.infrastructure.auth._jwt import UserState
 from jobs_finder.infrastructure.scheduler import BackgroundJobScheduler
+from jobs_finder.presentation.dependencies import get_current_user
 from jobs_finder.presentation.schemas import SchedulerStatusResponse
 
 router = APIRouter(tags=["scheduler"])
 
 
 @router.get("/scheduler/status")
-async def scheduler_status(request: Request) -> SchedulerStatusResponse:
+async def scheduler_status(
+    request: Request,
+    _user: UserState = Depends(get_current_user),  # noqa: B008
+) -> SchedulerStatusResponse:
     """Return the scheduler's runtime state.
 
     Reads `app.state.scheduler` (may be `None` when scheduler is

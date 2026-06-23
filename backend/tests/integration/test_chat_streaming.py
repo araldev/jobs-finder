@@ -401,7 +401,9 @@ async def test_chat_stream_error_event_on_llm_unavailable() -> None:
     assert data["code"] == "llm_unavailable"
     message_str: object = data["message"]
     assert isinstance(message_str, str)
-    assert "upstream down" in message_str
+    # Generic error message (security fix: original exception
+    # detail is no longer leaked to the client).
+    assert "upstream down" not in message_str
 
 
 # ---------------------------------------------------------------------------

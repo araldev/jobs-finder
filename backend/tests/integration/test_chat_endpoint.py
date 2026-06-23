@@ -287,7 +287,8 @@ async def test_chat_endpoint_returns_502_when_llm_unavailable(
     assert response.status_code == 502
     body = response.json()
     assert "LLM provider unavailable" in body["detail"]
-    assert "upstream down" in body["detail"]
+    # Exception detail is no longer leaked to the client (security fix).
+    assert "upstream down" not in body["detail"]
 
 
 # ---------------------------------------------------------------------------

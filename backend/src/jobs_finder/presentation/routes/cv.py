@@ -93,14 +93,32 @@ def build_cv_router(
                 )
             quota_remaining = daily_quota - today_count - 1
 
-        # 2. Read the uploaded PDF
+        # 2. Validate the uploaded file
+        # Reject non-PDF content types (client-side check — not authoritative
+        # since content_type can be spoofed, but catches accidental wrong files).
+        if file.content_type and file.content_type != "application/pdf":
+            raise HTTPException(
+                status_code=400,
+                detail="Solo se aceptan archivos PDF.",
+            )
+
+        # 3. Read the uploaded PDF (capped at 10MB to prevent OOM)
+        max_file_size = 10 * 1024 * 1024  # 10 MB
         try:
             pdf_bytes = await file.read()
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Error leyendo PDF: {exc}") from exc
+            _logger.warning("Error reading uploaded PDF: %s", exc)
+            raise HTTPException(status_code=400, detail="Error leyendo el archivo PDF.") from exc
 
         if not pdf_bytes:
-            raise HTTPException(status_code=400, detail="PDF vacío")
+            raise HTTPException(status_code=400, detail="El archivo PDF está vacío.")
+
+        if len(pdf_bytes) > max_file_size:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El archivo PDF excede el tamaño máximo de 10 MB "
+                f"(tamaño actual: {len(pdf_bytes) / 1024 / 1024:.1f} MB).",
+            )
 
         # 3. Build a synthetic Job object from the form data
         job = Job(
@@ -120,16 +138,23 @@ def build_cv_router(
                 GenerateAdaptedCVRequest(cv_pdf_bytes=pdf_bytes, job=job)
             )
         except CVAdaptationError as exc:
+            _logger.warning("CV adaptation error: %s", exc)
             raise HTTPException(
                 status_code=422,
-                detail=f"Error adaptando el CV: {exc}",
+                detail="No se pudo adaptar el CV al perfil solicitado. "
+                "Verificá que el PDF sea legible y contenGa información curricular.",
             ) from exc
         except JobSearchError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            _logger.warning("Job search error during CV generation: %s", exc)
+            raise HTTPException(  # noqa: E501
+                status_code=502,
+                detail="Servicio de búsqueda no disponible.",
+            ) from exc
         except Exception as exc:
+            _logger.error("Unexpected error generating CV: %s", exc, exc_info=True)
             raise HTTPException(
                 status_code=500,
-                detail=f"Error generando CV: {exc}",
+                detail="Error interno al generar el CV. Intentalo de nuevo más tarde.",
             ) from exc
 
         # 5. Record the engagement event (ENG-002 — best-effort)

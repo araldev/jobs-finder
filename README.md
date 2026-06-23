@@ -177,6 +177,10 @@ El template completo está en `backend/.env.example`. Las principales:
 | `CACHE_BACKEND` | `memory` o `redis` | No (default: memory) |
 | `RATE_LIMIT_ENABLED` | Rate limiting por IP | No (default: true) |
 | `DB_PATH` | Ruta a BD SQLite para scheduler | No |
+| `SUPABASE_URL` | URL del proyecto Supabase | Sí (para auth) |
+| `SUPABASE_JWT_SECRET` | Secret para verificar JWT de Supabase | Sí (para auth) |
+| `SUPABASE_SERVICE_KEY` | Service role key (bypass RLS) | Sí (para engagement events) |
+| `USER_CV_DAILY_QUOTA` | Límite diario de CVs por user | No (default: 5, 0 = ilimitado) |
 | `SUPABASE_AUTH_REDIRECT_URL` | URL de callback para auth | No (default: localhost) |
 
 Para defaults operacionales no-sensibles (throttles, timeouts, dominios),
@@ -198,16 +202,20 @@ ver `backend/config/default.toml`.
 
 ### Backend
 
-| Endpoint | Descripción |
-|---|---|
-| `GET /health` | Health check |
-| `GET /jobs/linkedin?keywords=&location=` | Búsqueda en LinkedIn |
-| `GET /jobs/indeed?keywords=&location=` | Búsqueda en Indeed |
-| `GET /jobs/infojobs?keywords=&location=` | Búsqueda en InfoJobs |
-| `GET /jobs?q=&location=&sources=` | Agregador multi-fuente con dedup |
-| `GET /jobs/stats` | Estadísticas consolidadas para dashboard |
-| `GET /jobs/history` | Historial paginado desde BD |
-| `GET /scheduler/status` | Estado del scheduler |
+| Endpoint | Descripción | Auth |
+|---|---|---|
+| `GET /health` | Health check | Pública |
+| `GET /jobs/linkedin?keywords=&location=` | Búsqueda en LinkedIn | Pública |
+| `GET /jobs/indeed?keywords=&location=` | Búsqueda en Indeed | Pública |
+| `GET /jobs/infojobs?keywords=&location=` | Búsqueda en InfoJobs | Pública |
+| `GET /jobs?q=&location=&sources=` | Agregador multi-fuente con dedup | Pública |
+| `GET /jobs/stats` | Estadísticas consolidadas para dashboard | Pública |
+| `GET /jobs/history` | Historial paginado desde BD | Pública |
+| `POST /jobs/chat` | Filtro de jobs por chat con LLM | `get_optional_user` (rate-limit per-user) |
+| `POST /jobs/chat/stream` | Filtro de jobs por chat (SSE) | `get_optional_user` |
+| `POST /cv/generate` | Genera un CV adaptado en PDF | **JWT requerido** (cuota diaria) |
+| `GET /cv/count` | CVs adaptados hoy por user | **JWT requerido** |
+| `GET /scheduler/status` | Estado del scheduler | **JWT requerido** |
 
 ### Frontend (Route Handlers — proxy al backend)
 

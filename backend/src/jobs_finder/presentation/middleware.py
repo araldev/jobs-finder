@@ -333,11 +333,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         #    not the raw IP. Both `InMemoryTokenBucket._buckets`
         #    and the `RedisTokenBucket._key()` use the hash; raw
         #    IPs NEVER reach storage.
-        #    If an API key is present (set by ApiKeyAuthMiddleware),
-        #    prepend it to the client_id so each key gets its own
-        #    rate limit bucket.
+        #    Priority: user JWT > API key > IP address.
+        #    When a JWT is present, the user gets their own bucket
+        #    (by user_id hash) so IP cycling doesn't bypass the
+        #    rate limit.
+        current_user: object | None = getattr(request.state, "current_user", None)
+        user_id: str | None = getattr(current_user, "user_id", None) if current_user else None
         api_key: str | None = getattr(request.state, "api_key", None)
-        if api_key:
+        if user_id:
+            client_id = f"user:{hash_client_id(user_id)}"
+        elif api_key:
             # Prefix with "key:" so API-key buckets are distinct from IP buckets.
             client_id = f"key:{hash_client_id(api_key)}"
         else:

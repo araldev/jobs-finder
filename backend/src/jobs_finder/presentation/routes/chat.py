@@ -16,11 +16,12 @@ REQ-META-001, REQ-CACHE-001, REQ-ERROR-MAPPING-001.
 from __future__ import annotations
 
 import asyncio
+import logging
 import unicodedata
 import uuid
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from jobs_finder.application.usecases.filter_jobs_by_intent import (
@@ -30,12 +31,14 @@ from jobs_finder.application.usecases.filter_jobs_by_intent import (
     StreamEventText,
 )
 from jobs_finder.domain.exceptions import JobSearchError
+from jobs_finder.infrastructure.auth._jwt import UserState
 from jobs_finder.infrastructure.llm.exceptions import (
     LLMRequestTimeoutError,
     LLMResponseParseError,
     LLMStreamError,
     LLMUnavailableError,
 )
+from jobs_finder.presentation.dependencies import get_optional_user
 from jobs_finder.presentation.schemas import (
     ChatRequest,
     ChatResponse,
@@ -44,6 +47,8 @@ from jobs_finder.presentation.schemas import (
     ChatStreamTextEvent,
     to_response,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 def build_chat_router(
@@ -78,6 +83,7 @@ def build_chat_router(
     async def chat(
         body: ChatRequest,
         request: Request,
+        _user: UserState | None = Depends(get_optional_user),  # noqa: B008
     ) -> ChatResponse:
         # 1. Explicit char cap (Q2). Runs BEFORE the use case so
         #    the aggregator + LLM are NEVER invoked on an
@@ -114,21 +120,16 @@ def build_chat_router(
                 sources=None,
             )
         except LLMUnavailableError as exc:
-            # 502 mapping (route-local explicit; the global
-            # `JobSearchError` handler would also map to 502,
-            # but the route-local catch is testable + carries
-            # the LLM-specific detail in the response body).
+            _logger.warning("LLM provider unavailable: %s", exc)
             raise HTTPException(
                 status_code=502,
-                detail=f"LLM provider unavailable: {exc}",
+                detail="LLM provider unavailable. Please try again later.",
             ) from exc
         except LLMResponseParseError as exc:
-            # 422 mapping (route-local; the global handler would
-            # map to 502, so the route-local catch is required
-            # to surface a 422 to the client).
+            _logger.warning("LLM response could not be parsed: %s", exc)
             raise HTTPException(
                 status_code=422,
-                detail=f"LLM response could not be parsed: {exc}",
+                detail="LLM response could not be parsed. Please rephrase your query.",
             ) from exc
         # Other `JobSearchError` subclasses (per-source errors
         # from the aggregator, etc.) propagate to the global
@@ -241,6 +242,15 @@ def _serialize_event(event: object, request_id: str) -> str:
     return _serialize_error(RuntimeError(f"unknown stream event type: {type(event).__name__}"))
 
 
+_SSE_ERROR_MESSAGES: dict[str, str] = {
+    "llm_stream": "LLM stream failed. Please try again.",
+    "llm_timeout": "LLM request timed out. Please try again.",
+    "llm_unavailable": "LLM provider unavailable. Please try again later.",
+    "llm_parse": "LLM response could not be parsed. Please rephrase your query.",
+    "internal": "Internal error. Please try again.",
+}
+
+
 def _serialize_error(exc: BaseException) -> str:
     """Map a domain exception to its SSE `event: error\\ndata: ...\\n\\n` shape.
 
@@ -249,6 +259,12 @@ def _serialize_error(exc: BaseException) -> str:
     SPECIFIC subclasses MUST be checked before the parent
     (`LLMStreamError`/`LLMRequestTimeoutError` before
     `LLMUnavailableError` before `JobSearchError`).
+
+    The serialized message is a STATIC user-facing string keyed
+    by the error code — the original exception's `str(exc)` is
+    NOT sent to the client (security fix: prevents leaking
+    internal API structure or LLM provider names). The full
+    exception details are logged server-side for debugging.
     """
     if isinstance(exc, LLMStreamError):
         code = "llm_stream"
@@ -266,7 +282,10 @@ def _serialize_error(exc: BaseException) -> str:
         # they propagate, the producer's generic catch routes them
         # here). The catch-all `internal` covers anything else.
         code = "internal"
-    payload = f'{{"code": "{code}", "message": "{str(exc).replace(chr(34), chr(92) + chr(34))}"}}'
+    _logger.warning("SSE stream error: code=%s, exception=%s", code, exc)
+    safe_message = _SSE_ERROR_MESSAGES.get(code, _SSE_ERROR_MESSAGES["internal"])
+    safe_message = safe_message.replace("\\", "\\\\").replace('"', '\\"')
+    payload = f'{{"code": "{code}", "message": "{safe_message}"}}'
     return f"event: error\ndata: {payload}\n\n"
 
 
@@ -307,7 +326,11 @@ def build_chat_stream_router(
     router = APIRouter()
 
     @router.post("/jobs/chat/stream")
-    async def chat_stream(body: ChatRequest, request: Request) -> StreamingResponse:
+    async def chat_stream(
+        body: ChatRequest,
+        request: Request,
+        _user: UserState | None = Depends(get_optional_user),  # noqa: B008
+    ) -> StreamingResponse:
         # 1. Pre-stream 400 (mirrors v1's behavior).
         if len(body.message) > max_message_chars:
             raise HTTPException(

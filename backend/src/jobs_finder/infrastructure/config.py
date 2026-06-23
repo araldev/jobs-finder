@@ -1592,12 +1592,12 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("SUPABASE_URL", "supabase_url"),
     )
-    supabase_jwt_secret: str = Field(
-        default="",
+    supabase_jwt_secret: SecretStr | None = Field(
+        default=None,
         validation_alias=AliasChoices("SUPABASE_JWT_SECRET", "supabase_jwt_secret"),
     )
-    supabase_service_key: str = Field(
-        default="",
+    supabase_service_key: SecretStr | None = Field(
+        default=None,
         validation_alias=AliasChoices("SUPABASE_SERVICE_KEY", "supabase_service_key"),
     )
     user_cv_daily_quota: int = Field(
@@ -1605,6 +1605,23 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("USER_CV_DAILY_QUOTA", "user_cv_daily_quota"),
         ge=0,
     )
+
+    # Shared validator for both supabase secrets — normalizes empty
+    # strings to None (same pattern as llm_api_key validator above).
+    # Both fields MUST use mode="before" so they intercept the raw
+    # string BEFORE SecretStr coercion.
+    @field_validator("supabase_jwt_secret", "supabase_service_key", mode="before")
+    @classmethod
+    def _normalize_empty_supabase_secret(
+        cls, v: SecretStr | str | None
+    ) -> SecretStr | None:
+        if v is None:
+            return None
+        if isinstance(v, SecretStr):
+            return v if v.get_secret_value() else None
+        if isinstance(v, str):
+            return SecretStr(v) if v else None
+        return v
 
     @field_validator("retention_days", mode="after")
     @classmethod

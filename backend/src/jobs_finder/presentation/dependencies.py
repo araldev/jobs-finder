@@ -13,15 +13,13 @@ Routes that need the authenticated user can either:
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import Depends, HTTPException, status
 from fastapi.requests import Request
 
 from jobs_finder.infrastructure.auth._jwt import UserState
 
 
-async def _get_user_from_request(request: Request) -> Optional[UserState]:
+async def _get_user_from_request(request: Request) -> UserState | None:
     """Read ``request.state.current_user`` (set by JWTUserMiddleware).
 
     Returns ``None`` when the middleware hasn't set it (the request
@@ -32,7 +30,7 @@ async def _get_user_from_request(request: Request) -> Optional[UserState]:
 
 
 async def get_current_user(
-    current_user: Optional[UserState] = Depends(_get_user_from_request),
+    current_user: UserState | None = Depends(_get_user_from_request),  # noqa: B008
 ) -> UserState:
     """Require an authenticated user.
 
@@ -56,8 +54,8 @@ async def get_current_user(
 
 
 async def get_optional_user(
-    current_user: Optional[UserState] = Depends(_get_user_from_request),
-) -> Optional[UserState]:
+    current_user: UserState | None = Depends(_get_user_from_request),  # noqa: B008
+) -> UserState | None:
     """Return the authenticated user (if any) or ``None``.
 
     Unlike ``get_current_user``, this does NOT raise 401 — the

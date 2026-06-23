@@ -20,6 +20,7 @@ import httpx
 import jwt
 import pytest
 from fastapi import FastAPI
+from pydantic import SecretStr
 
 from jobs_finder.application.usecases.generate_adapted_cv import (
     GenerateAdaptedCVRequest,
@@ -106,9 +107,9 @@ async def _build_test_client(
     Returns an ``httpx.AsyncClient`` (caller must close it).
     """
     settings = Settings(
-        supabase_jwt_secret=_JWT_SECRET,
+        supabase_jwt_secret=SecretStr(_JWT_SECRET),
         supabase_url="https://test.supabase.co",
-        supabase_service_key="test-service-key",
+        supabase_service_key=SecretStr("test-service-key"),
         user_cv_daily_quota=quota,
         rate_limit_enabled=False,
         # Minimal settings for fake ports to work
@@ -224,7 +225,7 @@ async def test_cv_generate_valid_jwt_passes_auth(client: httpx.AsyncClient) -> N
 async def test_cv_generate_quota_exceeded_returns_429(client: httpx.AsyncClient) -> None:
     """GIVEN quota exceeded WHEN POST /cv/generate THEN 429."""
     token = _make_jwt()
-    fake_eng: FakeEngagementPort = client._transport.app.state.engagement_port  # type: ignore[union-attr]
+    fake_eng: FakeEngagementPort = client._transport.app.state.engagement_port  # type: ignore[attr-defined]
     fake_eng.count_today = 5  # quota is 5, so this exceeds it
 
     # Send a dummy file + required form fields so FastAPI validation
@@ -287,7 +288,7 @@ async def test_cv_count_reflects_quota_used(client: httpx.AsyncClient) -> None:
     """GIVEN user has used quota WHEN GET /cv/count THEN returns correct total."""
     token = _make_jwt()
     # Set the fake so count returns 3
-    fake_eng: FakeEngagementPort = client._transport.app.state.engagement_port  # type: ignore[union-attr]
+    fake_eng: FakeEngagementPort = client._transport.app.state.engagement_port  # type: ignore[attr-defined]
     fake_eng.count_today = 3
 
     response = await client.get(
