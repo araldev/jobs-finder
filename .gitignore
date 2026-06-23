@@ -18,6 +18,9 @@ build/
 *.egg
 .eggs/
 
+# Backup files (never commit; may contain secrets from .env copies)
+*.bak
+
 # uv
 uv.lock.bak
 

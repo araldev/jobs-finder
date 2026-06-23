@@ -1,29 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { JOBS_FINDER_STORAGE_KEYS } from "@/lib/auth/storageKeys";
 
-const CV_ADAPTED_STORAGE_KEY = JOBS_FINDER_STORAGE_KEYS.cvAdaptedCount;
-
-function readCVAdaptedCount(): number {
-  if (typeof window === "undefined") return 0;
-  try {
-    const raw = localStorage.getItem(CV_ADAPTED_STORAGE_KEY);
-    if (!raw) return 0;
-    const parsed = JSON.parse(raw);
-    return typeof parsed === "number" ? parsed : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function writeCVAdaptedCount(count: number): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(CV_ADAPTED_STORAGE_KEY, JSON.stringify(count));
-  } catch {
-    // localStorage full or unavailable — silently ignore
-  }
+interface CVCountResponse {
+  total_today: number;
 }
 
 export interface UseCVAdaptedReturn {
@@ -31,19 +11,43 @@ export interface UseCVAdaptedReturn {
   incrementCVAdapted: () => void;
 }
 
+/**
+ * Track how many CVs the user has generated today.
+ *
+ * On mount, fetches the count from `/api/cv/count` (which proxies
+ * to the backend `GET /cv/count`, returning the server-side daily
+ * total from the engagement events table).
+ *
+ * After a successful CV generation, call `incrementCVAdapted()`
+ * to optimistically bump the local count (the backend already
+ * recorded the event server-side). On the next page load the
+ * true count is fetched from the API.
+ */
 export function useCVAdapted(): UseCVAdaptedReturn {
   const [cvAdaptedCount, setCVAdaptedCount] = useState<number>(0);
 
   useEffect(() => {
-    setCVAdaptedCount(readCVAdaptedCount());
+    let cancelled = false;
+    fetch("/api/cv/count")
+      .then((res) => {
+        if (!res.ok) return null;
+        return res.json() as Promise<CVCountResponse>;
+      })
+      .then((data) => {
+        if (!cancelled && data) {
+          setCVAdaptedCount(data.total_today);
+        }
+      })
+      .catch(() => {
+        // Backend unreachable — keep default 0
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const incrementCVAdapted = useCallback(() => {
-    setCVAdaptedCount((prev) => {
-      const next = prev + 1;
-      writeCVAdaptedCount(next);
-      return next;
-    });
+    setCVAdaptedCount((prev) => prev + 1);
   }, []);
 
   return { cvAdaptedCount, incrementCVAdapted };

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { type NextRequest, NextResponse } from "next/server";
+import { getUserHeaders } from "@/lib/api-client";
 
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8000";
 const BACKEND_API_KEY = process.env.BACKEND_API_KEY;
@@ -32,12 +33,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
   }
 
-  // Forward the multipart form to FastAPI
+  // Forward the multipart form to FastAPI, including the user's
+  // JWT so the backend can authenticate and enforce per-user quota.
+  const authHeader = request.headers.get("authorization");
+  const backendHeaders = getUserHeaders(authHeader);
+  backendHeaders["X-API-Key"] = BACKEND_API_KEY;
+
   const backendResponse = await fetch(`${BACKEND_URL}/cv/generate`, {
     method: "POST",
-    headers: {
-      "X-API-Key": BACKEND_API_KEY,
-    },
+    headers: backendHeaders,
     body: formData,
   });
 

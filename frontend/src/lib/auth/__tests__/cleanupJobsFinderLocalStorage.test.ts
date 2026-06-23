@@ -104,7 +104,6 @@ describe("cleanupJobsFinderLocalStorage (REQ-AUTH-012 / ADR-005)", () => {
       JOBS_FINDER_STORAGE_KEYS: {
         favorites: `${FAKE_PREFIX}favorites`,
         chat: `${FAKE_PREFIX}chat-v1`,
-        cvAdaptedCount: `${FAKE_PREFIX}cv-adapted-count`,
       },
     }));
     const { cleanupJobsFinderLocalStorage: mockedCleanup } = await import(

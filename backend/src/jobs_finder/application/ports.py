@@ -483,6 +483,65 @@ class JobRepositoryPort(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Engagement port (backend-user-awareness change)
+#
+# `EngagementPort` is the application layer's seam for recording and
+# querying user engagement events. Implementations live in
+# `infrastructure/engagement/`. The Protocol is NOT `@runtime_checkable`
+# (mirrors the `JobSearchPort`, `LLMClientPort`, and `IntentExtractorPort`
+# patterns in this file). Structural conformance is enforced at
+# mypy --strict time.
+# ---------------------------------------------------------------------------
+
+
+class EngagementPort(Protocol):
+    """User engagement event recording and querying.
+
+    Spec: ENG-001 — two async methods: record_event and count_events_today.
+    The concrete implementation (SupabaseEngagementRepository) lives in
+    `infrastructure/engagement/`. A `FakeEngagementPort` with the right
+    method signatures satisfies the Protocol structurally.
+    """
+
+    async def record_event(
+        self,
+        user_id: str,
+        event_type: str,
+        job_id: int | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> None:
+        """Record a user engagement event.
+
+        Args:
+            user_id: The authenticated user's UUID.
+            event_type: Event type (e.g. 'cv_adapted', 'job_view', 'search').
+            job_id: Optional job ID associated with the event.
+            metadata: Optional structured metadata JSON blob.
+
+        Raises:
+            Nothing. Implementations MUST be best-effort (log warning
+            on failure, never crash the request).
+        """
+        ...
+
+    async def count_events_today(self, user_id: str, event_type: str) -> int:
+        """Count events of a given type for a user today (UTC).
+
+        Args:
+            user_id: The authenticated user's UUID.
+            event_type: Event type to count (e.g. 'cv_adapted').
+
+        Returns:
+            The count of matching events in the current UTC day.
+
+        Raises:
+            Nothing. Implementations MUST be best-effort (return 0 on
+            failure, never crash the request).
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
 # LLM intent extraction (REQ-CHAT-INT-001, REQ-LLM-SEC-002,
 # `chat-filter-2stage` change T-002)
 #

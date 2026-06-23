@@ -15,7 +15,6 @@ export const STORAGE_KEY_PREFIX = "jobs-finder-";
 export const JOBS_FINDER_STORAGE_KEYS = Object.freeze({
   favorites: `${STORAGE_KEY_PREFIX}favorites`,
   chat: `${STORAGE_KEY_PREFIX}chat-v1`,
-  cvAdaptedCount: `${STORAGE_KEY_PREFIX}cv-adapted-count`,
 });
 
 export type JobsFinderStorageKey =

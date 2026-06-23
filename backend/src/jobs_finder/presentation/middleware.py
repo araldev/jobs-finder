@@ -524,6 +524,74 @@ class ChatRateLimitMiddleware(BaseHTTPMiddleware):
 
 
 # ---------------------------------------------------------------------------
+# JWT user authentication middleware (backend-user-awareness change)
+#
+# Reads the `Authorization: Bearer <token>` header, verifies the JWT
+# (HS256) against `SUPABASE_JWT_SECRET`, and sets
+# `request.state.current_user` to a `UserState` dataclass when the
+# token is valid — or `None` when absent / invalid.
+#
+# This middleware NEVER blocks the request (it's purely additive).
+# Routes that require authentication use the `get_current_user`
+# FastAPI dependency, which raises 401 on missing/invalid auth.
+#
+# Stack order (innermost → outermost):
+#   route → LogOnRequest → ApiKeyAuth → JWTUser → RateLimit → …
+#
+# `JWTUser` sits BETWEEN `ApiKeyAuth` and `RateLimit` because:
+#   - It must run AFTER `ApiKeyAuth` (API-key-authenticated requests
+#     that do NOT carry a JWT should still reach the route — the
+#     user just won't have `request.state.current_user`).
+#   - It must run BEFORE `RateLimit` so the rate-limiter could,
+#     in the future, key off the authenticated user rather than
+#     the raw client IP.
+# ---------------------------------------------------------------------------
+
+AUTH_HEADER = "Authorization"
+BEARER_PREFIX = "Bearer "
+
+
+class JWTUserMiddleware(BaseHTTPMiddleware):
+    """Optionally verify a Bearer JWT and set ``request.state.current_user``.
+
+    NEVER blocks the request. On a valid JWT, sets
+    ``request.state.current_user = UserState(...)``. On an absent or
+    invalid token, sets ``request.state.current_user = None``.
+
+    Args:
+        app: The ASGI app.
+        jwt_secret: The HS256 secret for verifying the JWT.
+    """
+
+    __slots__ = ("_jwt_secret",)
+
+    def __init__(self, app: ASGIApp, *, jwt_secret: str) -> None:
+        super().__init__(app)
+        self._jwt_secret: str = jwt_secret
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        raw = request.headers.get(AUTH_HEADER, "")
+        if raw.startswith(BEARER_PREFIX):
+            token = raw[len(BEARER_PREFIX) :]
+            # Import here to avoid circular imports at module level;
+            # the verifier is in infrastructure/auth/ and uses PyJWT.
+            from jobs_finder.infrastructure.auth._jwt import verify_supabase_jwt  # noqa: PLC0415
+
+            request.state.current_user = verify_supabase_jwt(
+                token,
+                secret=self._jwt_secret,
+            )
+        else:
+            request.state.current_user = None
+
+        return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
 # API Key authentication middleware (api-key-auth change)
 #
 # Validates X-API-Key header against the configured set of valid keys.

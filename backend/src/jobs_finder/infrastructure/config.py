@@ -1574,6 +1574,38 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("RETENTION_DAYS", "retention_days"),
     )
 
+    # ------------------------------------------------------------------
+    # Supabase / JWT auth settings (backend-user-awareness change)
+    #
+    # 4 new fields for Supabase integration:
+    # - `supabase_url`: the Supabase project URL (e.g. https://abc.supabase.co)
+    # - `supabase_jwt_secret`: the JWT secret from Supabase dashboard
+    #   (Settings → API → JWT Settings → JWT Secret). Used to verify
+    #   Supabase-issued JWTs (HS256) in JWTUserMiddleware.
+    # - `supabase_service_key`: the service_role key (secret). Used by
+    #   SupabaseEngagementRepository to write engagement events.
+    # - `user_cv_daily_quota`: per-user daily CV generation limit (int,
+    #   default 5). Set to 0 for unlimited. Enforced in POST /cv/generate.
+    # ------------------------------------------------------------------
+
+    supabase_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("SUPABASE_URL", "supabase_url"),
+    )
+    supabase_jwt_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("SUPABASE_JWT_SECRET", "supabase_jwt_secret"),
+    )
+    supabase_service_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("SUPABASE_SERVICE_KEY", "supabase_service_key"),
+    )
+    user_cv_daily_quota: int = Field(
+        default=5,
+        validation_alias=AliasChoices("USER_CV_DAILY_QUOTA", "user_cv_daily_quota"),
+        ge=0,
+    )
+
     @field_validator("retention_days", mode="after")
     @classmethod
     def _clamp_negative_retention_days(cls, v: int) -> int:

@@ -67,7 +67,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from playwright_stealth import Stealth  # type: ignore[import-untyped]
 
 from jobs_finder.application.aggregator import SearchAllSourcesUseCase
-from jobs_finder.application.ports import RateLimitPort
+from jobs_finder.application.ports import EngagementPort, RateLimitPort
 from jobs_finder.application.stats_aggregator import (
     DashboardStatsPayload,
     StatsAggregator,
@@ -143,6 +143,7 @@ from jobs_finder.presentation.logging_config import configure_logging
 from jobs_finder.presentation.middleware import (
     ApiKeyAuthMiddleware,
     ChatRateLimitMiddleware,
+    JWTUserMiddleware,
     LogOnRequestMiddleware,
     RateLimitMiddleware,
     RequestIdMiddleware,
@@ -172,6 +173,8 @@ def build_app(  # noqa: PLR0915, PLR0912
     indeed_use_case: IndeedSearchJobsUseCase | None = None,
     infojobs_use_case: InfoJobsSearchJobsUseCase | None = None,
     aggregator_use_case: SearchAllSourcesUseCase | None = None,
+    cv_use_case_override: GenerateAdaptedCVUseCase | None = None,
+    engagement_port: EngagementPort | None = None,
     settings: Settings | None = None,
 ) -> FastAPI:
     """Construct a configured FastAPI app with ALL THREE source routes AND
@@ -1027,20 +1030,42 @@ def build_app(  # noqa: PLR0915, PLR0912
     app.state.filter_use_case = chat_use_case
 
     # CV adaptation use case — uses the same LLM client as the chat filter.
-    # Enabled when chat is enabled (same LLM dependency).
+    # Enabled when chat is enabled (same LLM dependency), or when a
+    # `cv_use_case_override` is injected (test injection path).
     cv_use_case: GenerateAdaptedCVUseCase | None = None
-    if chat_enabled:
+    if cv_use_case_override is not None:
+        cv_use_case = cv_use_case_override
+    elif chat_enabled:
         cv_use_case = GenerateAdaptedCVUseCase(llm_client=llm_client)
+
+    # ── Engagement port (backend-user-awareness change) ─────────────────
+    #
+    # Wired to `app.state.engagement_port` so the CV route (and future
+    # engagement-aware routes) can read it via `request.app.state`.
+    if engagement_port is not None:
+        app.state.engagement_port = engagement_port
+    elif effective_settings.supabase_url and effective_settings.supabase_service_key:
+        from jobs_finder.infrastructure.engagement._supabase import (  # noqa: PLC0415
+            SupabaseEngagementRepository,
+        )
+
+        app.state.engagement_port = SupabaseEngagementRepository(
+            supabase_url=effective_settings.supabase_url,
+            service_key=effective_settings.supabase_service_key,
+        )
 
     # Middleware — order matters. Starlette runs middlewares outermost
     # first; the LAST `add_middleware` call wraps everything else.
     # 1. `LogOnRequest` is innermost: it runs inside `RequestId` so
     #    the `ContextVar` is bound when it logs.
-    # 2. `RateLimit` is next: it runs AFTER `RequestId` in execution
+    # 2. `ApiKeyAuth` validates X-API-Key (conditional).
+    # 3. `JWTUser` optionally verifies Bearer JWT and sets
+    #    `request.state.current_user` (between ApiKeyAuth and RateLimit).
+    # 4. `RateLimit` next: it runs AFTER `RequestId` in execution
     #    order (because it's added BEFORE `RequestId` in nesting
     #    order) so the 429 body can read `request.state.request_id`.
-    # 3. `RequestId` is next: it sets the id and binds the `ContextVar`.
-    # 4. `CORS` is outermost: preflights get a request_id echo too.
+    # 5. `RequestId` is next: it sets the id and binds the `ContextVar`.
+    # 6. `CORS` is outermost: preflights get a request_id echo too.
     #
     # T-003 (rate-limiting): the limiter is built via
     # `build_rate_limiter(settings)` — the factory selects
@@ -1080,6 +1105,15 @@ def build_app(  # noqa: PLR0915, PLR0912
         app.add_middleware(
             ApiKeyAuthMiddleware,
             valid_keys=effective_settings.api_keys,
+        )
+    # JWT user middleware — runs AFTER ApiKeyAuth (API-key requests can
+    # skip JWT auth) and BEFORE RateLimit (future: user-based rate
+    # limiting). NEVER blocks the request — only sets
+    # `request.state.current_user` (or None).
+    if effective_settings.supabase_jwt_secret:
+        app.add_middleware(
+            JWTUserMiddleware,
+            jwt_secret=effective_settings.supabase_jwt_secret,
         )
     if effective_settings.rate_limit_enabled:
         # Added BEFORE `RequestId` in nesting order so it runs AFTER

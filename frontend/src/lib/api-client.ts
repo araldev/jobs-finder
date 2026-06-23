@@ -12,6 +12,27 @@ function _headers() {
   return h;
 }
 
+/**
+ * Return backend request headers that include the user's JWT
+ * from an incoming Next.js Route Handler request.
+ *
+ * Pass the `Authorization` header value (e.g. `"Bearer <jwt>"`)
+ * extracted from the incoming `NextRequest`:
+ *
+ * ```ts
+ * const authHeader = request.headers.get("authorization");
+ * const headers = getUserHeaders(authHeader);
+ * ```
+ *
+ * If no auth header is present (anonymous request), only the
+ * base headers (`Accept`, `X-API-Key`) are returned.
+ */
+export function getUserHeaders(authHeader: string | null): Record<string, string> {
+  const h = _headers();
+  if (authHeader) h["Authorization"] = authHeader;
+  return h;
+}
+
 export interface FetchJobsHistoryArgs {
   readonly keywords?: string;
   readonly location?: string;

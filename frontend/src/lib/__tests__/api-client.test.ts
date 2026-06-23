@@ -22,6 +22,7 @@ import {
   fetchDashboardStats,
   fetchJobsHistory,
   fetchSchedulerStatus,
+  getUserHeaders,
 } from "../api-client";
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -94,5 +95,18 @@ describe("fetchDashboardStats — revalidate:60 + tag (REQ-PDPRSC-003)", () => {
     expect(opts.next?.revalidate).toBe(60);
     // The next.tags contains the canonical jobs-stats tag.
     expect(opts.next?.tags).toEqual(["jobs-stats"]);
+  });
+});
+
+describe("getUserHeaders", () => {
+  it("returns base headers when authHeader is null", () => {
+    const headers = getUserHeaders(null);
+    expect(headers.Accept).toBe("application/json");
+    expect(headers.Authorization).toBeUndefined();
+  });
+
+  it("includes Authorization when authHeader is provided", () => {
+    const headers = getUserHeaders("Bearer test-jwt");
+    expect(headers.Authorization).toBe("Bearer test-jwt");
   });
 });
