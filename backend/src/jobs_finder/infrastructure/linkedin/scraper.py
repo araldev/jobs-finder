@@ -49,6 +49,7 @@ Errors:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -1176,15 +1177,29 @@ async def _enrich_with_detail_visits(
     for _i, job in enumerate(jobs):
         url = job.url
         desc: str | None = None
-        try:
-            # If the URL doesn't look like a LinkedIn job URL,
-            # skip the visit (defensive: `parse_url` should
-            # always produce a valid LinkedIn URL, but a bad
-            # fixture could break this).
-            if "/jobs/view/" not in url:
-                enriched.append(job)
-                continue
-            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+
+        # Skip non-LinkedIn URLs (defensive: `parse_url` should
+        # always produce a valid LinkedIn URL, but a bad
+        # fixture could break this).
+        if "/jobs/view/" not in url:
+            enriched.append(job)
+            continue
+
+        # Wrapper: bound each detail visit to a maximum of 20s so
+        # a stuck navigation (e.g. auth-wall redirect loop or a
+        # play-silent redirect chain) does NOT hang the entire
+        # scraper. After `page.goto`, check if the browser landed
+        # on the auth-wall or a non-jobs page — if so, skip the
+        # selector wait and move on immediately.
+        _per_job_budget = 20.0
+
+        async def _visit_one(url: str, budget: float) -> tuple[str | None, str]:
+            """Returns (description, final_url)."""
+            await page.goto(url, wait_until="domcontentloaded", timeout=budget)
+            final_url = page.url
+            # Auth-wall or non-jobs page → skip selector
+            if "/authwall" in final_url or "/jobs/view/" not in final_url:
+                return None, final_url
             await page.wait_for_selector(
                 panel_selector,
                 state="attached",
@@ -1192,8 +1207,13 @@ async def _enrich_with_detail_visits(
             )
             panel_html = await page.eval_on_selector(panel_selector, "el => el.outerHTML")
             panel_soup = BeautifulSoup(panel_html, "html.parser")
-            desc = parse_description(panel_soup)
-        except (PlaywrightTimeoutError, Exception):  # noqa: BLE001
+            return parse_description(panel_soup), final_url
+
+        try:
+            desc, _final = await asyncio.wait_for(
+                _visit_one(url, _per_job_budget), timeout=_per_job_budget
+            )
+        except (PlaywrightTimeoutError, TimeoutError, Exception):  # noqa: BLE001
             # Catch-all: any failure leaves description=None.
             desc = None
         if desc:

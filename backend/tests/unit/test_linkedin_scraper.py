@@ -998,12 +998,18 @@ class _LinkedInFakePage:
     def __init__(self, html: str = "") -> None:
         self._html = html
         self.goto_calls: list[str] = []
+        self._url: str = "about:blank"
         self.wait_calls: list[tuple[str, int]] = []
         self.eval_calls: list[tuple[str, str]] = []
         self.closed = False
 
+    @property
+    def url(self) -> str:
+        return self._url
+
     async def goto(self, url: str, **kwargs: object) -> None:
         self.goto_calls.append(url)
+        self._url = url
 
     async def wait_for_selector(self, selector: str, *, timeout: int = 0, **kwargs: object) -> None:
         self.wait_calls.append((selector, timeout))

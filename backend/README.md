@@ -327,6 +327,15 @@ baseline.
 - **Error caching**: errors (502) are NOT cached (REQ-C-006),
   so a transient Distil/Cloudflare block doesn't poison the
   cache. The next request after a failure retries the scraper.
+- **LinkedIn auth-wall timeouts**: without `LINKEDIN_LI_AT` (or the
+  multi-cookie adapter), LinkedIn's job detail pages redirect to an
+  auth wall. Playwright's `wait_for_selector` can become stuck
+  waiting for the auth-wall redirect chain to settle. The scraper
+  now detects `/authwall` in the URL after `page.goto` and skips the
+  selector wait (per-job budget of 20s via `asyncio.wait_for`). The
+  SERP results are still returned — only the full description is
+  lost. Set `LINKEDIN_LI_AT` or `linkedin_cookies.json` to bypass
+  the auth wall entirely.
 
 ### Rate limiting
 
@@ -576,11 +585,29 @@ with default values (graceful degradation — never crashes).
 | `min_interval_seconds` | float | Minimum sleep between cycles. |
 | `max_interval_seconds` | float | Maximum sleep between cycles. |
 
-#### Example
+#### Env vars
+
+| Env var | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `SCHEDULER_ENABLED` | bool | `false` | Enable periodic background scraping. |
+| `SCHEDULER_MIN_INTERVAL_SECONDS` | float | `1500.0` | Minimum sleep (seconds) between cycles (≈25 min). |
+| `SCHEDULER_MAX_INTERVAL_SECONDS` | float | `2100.0` | Maximum sleep (seconds) between cycles (≈35 min). |
+| `SCHEDULER_QUERIES` | JSON | `[{"keywords":"","location":"Madrid"},{"keywords":"","location":"Barcelona"},{"keywords":"","location":"Málaga"}]` | The search queries the scheduler iterates over each cycle. |
+| `DB_PATH` | str | `""` | **SQLite** path. When set (e.g. `jobs.db`), the scheduler persists to a local SQLite database. Mutually exclusive with `DATABASE_URL`. |
+| `DATABASE_URL` | str | `""` | **PostgreSQL** connection URL (e.g. `postgresql://user:pass@host:5432/db`). When set, the scheduler persists to the remote database (Supabase, Neon, etc.). Mutually exclusive with `DB_PATH`. |
+| `RETENTION_DAYS` | int | `0` | TTL in days. `0` (default) disables retention entirely. Positive values (e.g. `30`) enable cleanup after each scheduler cycle. |
+
+The scheduler uses `DATABASE_URL` when present, falling back to `DB_PATH`. When neither is set, the scheduler reads count + 0 from the state endpoint.
+
+#### Examples
 
 ```bash
-# Start the API with scheduler enabled and a DB path set:
+# SQLite backend:
 SCHEDULER_ENABLED=true DB_PATH=jobs.db \
+  uv run uvicorn jobs_finder.main:app --port 8000
+
+# PostgreSQL / Supabase backend:
+SCHEDULER_ENABLED=true DATABASE_URL="postgresql://user:pass@host:5432/db" \
   uv run uvicorn jobs_finder.main:app --port 8000
 
 # Query the status endpoint:
@@ -618,11 +645,11 @@ curl -s http://localhost:8000/scheduler/status
 ### Historical Jobs Endpoint
 
 `GET /jobs/history` returns paginated historical job data from the
-SQLite database, with optional filters by source, keywords, and date
+database (SQLite or PostgreSQL), with optional filters by source, keywords, and date
 range. The endpoint works without the scheduler: it reads from the
-same `DB_PATH` database that the scheduler writes to, so jobs
-persisted by a previous scheduler run (or by a manual ingest) are
-always queryable.
+same database backend (`DB_PATH` or `DATABASE_URL`) that the
+scheduler writes to, so jobs persisted by a previous scheduler run
+(or by a manual ingest) are always queryable.
 
 #### Query parameters
 
@@ -686,7 +713,7 @@ curl -s "http://localhost:8000/jobs/history?sources=linkedin,indeed&keywords=pyt
 curl -s "http://localhost:8000/jobs/history?limit=1" | jq '.total'
 ```
 
-When no database is configured (`DB_PATH` empty or unset), the endpoint
+When neither `DB_PATH` nor `DATABASE_URL` is configured, the endpoint
 returns `{"items": [], "total": 0, "limit": 50, "offset": 0}` —
 graceful degradation, never a 500.
 
@@ -699,7 +726,8 @@ group, results are sorted by `posted_at DESC` (most recent first).
 
 #### Database deduplication
 
-The database uses `ON CONFLICT(source, source_id)` as the upsert key. A job
+Both backends (SQLite via `DB_PATH` and PostgreSQL via `DATABASE_URL`)
+use `ON CONFLICT(source, source_id)` as the upsert key. A job
 is considered a duplicate only when the **same source reports the same
 external ID** — a LinkedIn job and an Indeed job with identical title/company
 are stored as separate rows (different `source`). The aggregator endpoint
