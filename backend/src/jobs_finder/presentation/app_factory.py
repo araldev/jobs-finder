@@ -1108,22 +1108,26 @@ def build_app(  # noqa: PLR0915, PLR0912
             valid_keys=effective_settings.api_keys,
         )
     # JWT user middleware — runs AFTER ApiKeyAuth (API-key requests can
-    # skip JWT auth) and BEFORE RateLimit (future: user-based rate
-    # limiting). NEVER blocks the request — only sets
-    # `request.state.current_user` (or None).
-    _jwt_secret_raw: str | None = None
-    if effective_settings.supabase_jwt_secret is not None:
-        _jwt_secret_raw = effective_settings.supabase_jwt_secret.get_secret_value()
-    if _jwt_secret_raw:
+    # skip JWT auth) and BEFORE RateLimit (per-user rate limiting). NEVER
+    # blocks the request — only sets `request.state.current_user` (or None).
+    #
+    # ES256+JWKS verification (2026-06-23 migration): the middleware
+    # receives the JWKS URL (auto-derived from SUPABASE_URL by the
+    # Settings._compute_jwks_url validator). The HS256 shared-secret
+    # path was removed — see backend/src/jobs_finder/infrastructure/auth/_jwt.py
+    # for the rationale (leaked shared secrets are unrecoverable).
+    _jwks_url: str = effective_settings.supabase_jwt_jwks_url
+    if _jwks_url:
         app.add_middleware(
             JWTUserMiddleware,
-            jwt_secret=_jwt_secret_raw,
+            jwks_url=_jwks_url,
         )
     else:
         _logger.warning(
-            "SUPABASE_JWT_SECRET is not set. JWT-based authentication is DISABLED. "
+            "SUPABASE_URL is not set (or SUPABASE_JWT_JWKS_URL unset). "
+            "JWT-based authentication is DISABLED. "
             "All routes that require Depends(get_current_user) will return 401. "
-            "Set SUPABASE_JWT_SECRET in .env to enable per-user auth."
+            "Set SUPABASE_URL in .env to enable per-user auth."
         )
     if effective_settings.rate_limit_enabled:
         # Added BEFORE `RequestId` in nesting order so it runs AFTER

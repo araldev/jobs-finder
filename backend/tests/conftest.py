@@ -30,6 +30,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import FastAPI
 from pydantic import SecretStr
 
@@ -49,6 +50,56 @@ def scheduler_bypass_work_hours(monkeypatch: pytest.MonkeyPatch) -> None:
     do NOT use this fixture - they test the actual hour-based logic.
     """
     monkeypatch.setattr(scheduler_module, "_is_within_active_hours", lambda: True)
+
+
+@pytest.fixture
+def jwks_keypair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey]:
+    """Generate a fresh ES256 keypair + patch JWKS lookup to use the public key.
+
+    Returns the (private_key, public_key) tuple. The private key can be
+    used to sign test JWTs (`jwt.encode(payload, private_key, algorithm="ES256")`);
+    the public key is returned by the stubbed JWKS client when the
+    middleware fetches it during verification.
+
+    Use this fixture in any test that:
+      - Builds the full app via `build_app()` with `supabase_url=...`
+      - Needs to authenticate requests with a Bearer JWT
+      - Should NOT hit the real Supabase JWKS endpoint
+
+    The fixture generates a NEW keypair per test (so tests are isolated)
+    and patches `jobs_finder.infrastructure.auth._jwt._get_jwks_client`
+    to return a stub client that yields the matching public key for
+    any token it sees.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from jobs_finder.infrastructure.auth import _jwt as jwt_module
+    from jobs_finder.infrastructure.auth._jwt import _reset_jwks_client_cache_for_tests
+
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_key = private_key.public_key()
+
+    class _FakeSigningKey:
+        def __init__(self, key: ec.EllipticCurvePublicKey) -> None:
+            self.key = key
+
+    class _FakeJWKSClient:
+        def __init__(self, key: ec.EllipticCurvePublicKey) -> None:
+            self._key = key
+
+        def get_signing_key_from_jwt(self, _token: str) -> _FakeSigningKey:  # noqa: ARG002
+            return _FakeSigningKey(self._key)
+
+    _reset_jwks_client_cache_for_tests()
+    monkeypatch.setattr(
+        jwt_module,
+        "_get_jwks_client",
+        lambda _url: _FakeJWKSClient(public_key),
+    )
+
+    return private_key, public_key
 
 
 from jobs_finder.application.usecases._cached_search import CachedJobSearchUseCase

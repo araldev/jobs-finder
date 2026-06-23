@@ -37,7 +37,7 @@ is planned.
 | pydantic-settings| >= 2.0   | Env-driven configuration.                |
 | mypy             | >= 1.10  | Static type checking (`--strict`).       |
 | ruff             | >= 0.5   | Lint + format.                           |
-| PyJWT            | >= 2.8   | HS256 JWT verification (per-user auth).  |
+| PyJWT            | >= 2.8   | ES256 JWT verification via JWKS (per-user auth).  |
 
 ## Stack (frontend)
 
@@ -406,13 +406,16 @@ CI runs the same commands. Do not commit if any check fails.
    forbidden by the spec. Backup files (`.env.bak`, `*.bak`) are also
    forbidden — add `*.bak` to `.gitignore` if you encounter any.
 23. **Secrets use `SecretStr`.** Any env var that holds a credential
-    (`SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_KEY`, `LLM_API_KEY`,
-    etc.) MUST be declared as `SecretStr | None` in
+    (`SUPABASE_SERVICE_KEY`, `LLM_API_KEY`, `DATABASE_URL`, etc.)
+    MUST be declared as `SecretStr | None` in
     `backend/src/jobs_finder/infrastructure/config.py` so the
     credential is masked in `repr()`, `str()`, log lines, and
     tracebacks. Use `field_validator(mode="before")` to normalize
     empty strings to `None` (mirrors the existing
     `_normalize_empty_secret` validator for `llm_api_key`).
+    **JWT verification uses asymmetric ES256 via JWKS** — the backend
+    holds NO signing key, only the public key fetched from
+    Supabase's JWKS endpoint.
 24. **Don't leak exception details to clients.** Route handlers MUST
     NOT interpolate `f"...{exc}"` into `HTTPException.detail` or
     SSE error payloads. Log the full exception server-side with

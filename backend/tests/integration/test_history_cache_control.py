@@ -23,8 +23,8 @@ from typing import Any
 import jwt
 import pytest
 from asgi_lifespan import LifespanManager
+from cryptography.hazmat.primitives.asymmetric import ec
 from httpx import ASGITransport, AsyncClient
-from pydantic import SecretStr
 
 from jobs_finder.application.usecases.search_indeed_jobs import (
     SearchJobsUseCase as IndeedSearchJobsUseCase,
@@ -43,19 +43,25 @@ from jobs_finder.presentation.app_factory import build_app
 # The exact header value mandated by design OQ1 (REQ-CACHEUX-002).
 EXPECTED_CACHE_CONTROL = "public, max-age=60"
 
-# 64-char hex key for PyJWT key-length warning suppression.
-_JWT_SECRET = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
-_TEST_JWT = jwt.encode(
-    {
-        "sub": "test-user",
-        "email": "test@example.com",
+
+def _sign_test_jwt(
+    private_key: ec.EllipticCurvePrivateKey,
+    *,
+    sub: str = "test-user",
+    email: str = "test@example.com",
+) -> str:
+    """Sign an ES256 JWT for the test user. The matching public key is
+    exposed via the `jwks_keypair` fixture (which also patches the
+    JWKS client to return it).
+    """
+    payload: dict[str, Any] = {
+        "sub": sub,
+        "email": email,
         "iat": int(time.time()),
         "exp": int(time.time()) + 3600,
         "aud": "authenticated",
-    },
-    _JWT_SECRET,
-    algorithm="HS256",
-)
+    }
+    return jwt.encode(payload, private_key, algorithm="ES256")
 
 
 class FakeJobSearchPort:
@@ -191,7 +197,10 @@ class TestJobsHistoryCacheControl:
         assert resp.headers.get("cache-control") == EXPECTED_CACHE_CONTROL
 
     @pytest.mark.asyncio
-    async def test_scheduler_status_does_not_set_cache_control_public(self) -> None:
+    async def test_scheduler_status_does_not_set_cache_control_public(
+        self,
+        jwks_keypair: tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey],
+    ) -> None:
         """Negative: `/scheduler/status` MUST NOT set the public cache header.
 
         REQ-CACHEUX-002 only applies to `/jobs/history` and its
@@ -199,20 +208,21 @@ class TestJobsHistoryCacheControl:
         in `chat.py` is for SSE — irrelevant here. We assert the
         EXACT value is NOT `public, max-age=60`.
         """
+        private_key, _ = jwks_keypair
         settings = Settings(
             scheduler_enabled=True,
             db_path=":memory:",
             scheduler_min_interval_seconds=10000.0,
             scheduler_max_interval_seconds=20000.0,
             scheduler_queries=[{"keywords": "python", "location": "Madrid"}],
-            supabase_jwt_secret=SecretStr(_JWT_SECRET),
+            supabase_url="https://test.supabase.co",
         )
         app = _make_app_with_fakes(settings)
 
         async with _client_with_lifespan(app) as client:
             resp = await client.get(
                 "/scheduler/status",
-                headers={"Authorization": f"Bearer {_TEST_JWT}"},
+                headers={"Authorization": f"Bearer {_sign_test_jwt(private_key)}"},
             )
 
         assert resp.status_code == 200

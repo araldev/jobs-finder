@@ -826,24 +826,36 @@ the limit. The priority chain is: **user JWT > API key > IP address**.
 | Env var | Type | Notes |
 | --- | --- | --- |
 | `LLM_API_KEY` | `SecretStr` | Masked in logs/tracebacks. Empty → chat route not registered. |
-| `SUPABASE_JWT_SECRET` | `SecretStr` | Masked. Empty → JWTUserMiddleware is NOT added (WARNING logged). |
+| `SUPABASE_JWT_JWKS_URL` | `str` (not secret) | URL of the public JWKS endpoint. Auto-derived from `SUPABASE_URL` if unset. Empty → JWTUserMiddleware is NOT added (WARNING logged). |
 | `SUPABASE_SERVICE_KEY` | `SecretStr` | Masked. Bypasses RLS — never expose to the browser. Empty → engagement port falls back to no-op. |
 
-If any of the above is unset at startup, a WARNING is logged. Routes that
-require the secret (e.g. `POST /cv/generate` with `SUPABASE_JWT_SECRET`
-unset) return 401 — never silently bypass.
+If `SUPABASE_URL` (or the explicit `SUPABASE_JWT_JWKS_URL`) is unset
+at startup, a WARNING is logged and JWT-based auth is disabled.
+Routes that require it (`POST /cv/generate`, `GET /cv/count`,
+`GET /scheduler/status`) return 401 — never silently bypass.
 
-### Setting up Supabase auth
+The backend holds **no JWT signing key** — it only fetches the public
+key from Supabase's JWKS endpoint at verification time. Leaking
+`backend/.env` cannot be used to forge user JWTs (only the
+`service_role` key is sensitive, and it's `SecretStr`-masked in
+logs/tracebacks).
+
+### Setting up Supabase auth (ES256 / JWKS — 2026-06-23 migration)
 
 1. Create a project in [Supabase Dashboard](https://app.supabase.com).
 2. Get the project URL: **Settings → API → Project URL** → `SUPABASE_URL`.
-3. Get the JWT secret: **Settings → API → JWT Settings → JWT Secret** → `SUPABASE_JWT_SECRET`.
+3. **Create a JWT Signing Key** (asymmetric):
+   - **Settings → API → JWT Signing Keys → Create new**
+   - Algorithm: **ES256** (recommended) or RS256
+   - Mark it as **active** so new user JWTs are signed with it
+   - The kid (Key ID) is shown after creation — the backend uses it
+     automatically via the JWKS lookup
 4. Get the service_role key: **Settings → API → Project API keys → service_role** → `SUPABASE_SERVICE_KEY`.
 5. Set them in `backend/.env` (gitignored, never committed):
 
    ```bash
    SUPABASE_URL=https://<your-project>.supabase.co
-   SUPABASE_JWT_SECRET=<your-jwt-secret>
+   # `supabase_jwt_jwks_url` auto-derived from SUPABASE_URL — no need to set explicitly
    SUPABASE_SERVICE_KEY=<your-service-role-key>
    USER_CV_DAILY_QUOTA=5
    ```
@@ -851,22 +863,49 @@ unset) return 401 — never silently bypass.
 6. Apply the migrations from `backend/supabase/migrations/` (see
    `backend/supabase/README.md` for the local stack or dashboard workflow).
 
+### Why ES256 / JWKS instead of HS256 shared secret?
+
+The legacy HS256 path (where the backend held a copy of the JWT signing
+secret) was **removed 2026-06-23** because:
+
+- The shared secret could leak (e.g. via a `.env` backup, a log line,
+  or a misconfigured deployment). Once leaked, an attacker can **forge
+  any JWT** for any user.
+- Supabase's recommended path in 2024+ is "JWT Signing Keys" with
+  asymmetric crypto (ES256 by default). The private signing key never
+  leaves Supabase.
+
+With ES256/JWKS:
+- The backend fetches the **public key** from Supabase's JWKS endpoint
+  (`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`) and uses it to verify
+  JWT signatures.
+- The private signing key stays at Supabase. **Leaking the public key
+  is harmless** — you can't sign new tokens without the private key.
+- Key rotation is automatic: when Supabase rotates the signing key,
+  the new `kid` is fetched from the JWKS on the next verification.
+
 ### Regenerating a leaked secret
 
-If a `SUPABASE_JWT_SECRET` or `SUPABASE_SERVICE_KEY` is leaked
-(e.g. accidentally committed to git, posted in a log, etc.):
+If `SUPABASE_SERVICE_KEY` is leaked (the only credential the backend
+holds now):
 
-1. Go to **Supabase Dashboard → Settings → API**.
-2. For **JWT secret**: click "Generate new secret" — this invalidates ALL
-   existing user sessions (every signed-in user must re-login).
-3. For **service_role key**: click "Rotate" — invalidate the old key,
-   update the env var.
-4. Update `backend/.env` with the new value immediately.
-5. Search git history for the leaked secret and rotate any other
-   systems that received it (the service_role key bypasses RLS, so any
-   leak grants full DB write access).
-6. Audit Supabase logs for unauthorized writes between leak time and
-   rotation.
+1. Go to **Supabase Dashboard → Settings → API → Project API keys**.
+2. Click **"Rotate"** on the `service_role` row — invalidates the old key.
+3. Update `backend/.env` with the new value immediately.
+4. Audit Supabase logs (Dashboard → Logs) for unauthorized writes
+   between leak time and rotation. The service_role key bypasses RLS,
+   so any leak grants full DB write access until rotated.
+
+If a JWT signing key needs to be rotated (employee left, suspicion
+of compromise, periodic rotation):
+
+1. Go to **Settings → API → JWT Signing Keys**.
+2. Click **"Create new"** with the same algorithm (ES256).
+3. Mark it as **active** (this invalidates the old key immediately).
+4. **No backend restart needed** — the next JWT verification fetches
+   the new `kid` from the JWKS.
+5. Existing user sessions are invalidated (every signed-in user must
+   re-login). This is unavoidable with HS256 too.
 
 ## Stack
 

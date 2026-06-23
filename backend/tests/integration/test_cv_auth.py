@@ -19,6 +19,7 @@ from collections.abc import AsyncGenerator
 import httpx
 import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import FastAPI
 from pydantic import SecretStr
 
@@ -32,18 +33,21 @@ from jobs_finder.infrastructure.config import Settings
 from jobs_finder.presentation.app_factory import build_app
 from tests.conftest import FakeJobSearchPort, _build_cached_linkedin_use_case
 
-# 64-char hex key for PyJWT key-length warning suppression.
-_JWT_SECRET = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
 _VALID_USER_ID = "user-abc-123"
 
 
 def _make_jwt(
+    private_key: ec.EllipticCurvePrivateKey,
     *,
     sub: str = _VALID_USER_ID,
     email: str = "test@example.com",
-    secret: str = _JWT_SECRET,
 ) -> str:
-    """Build a valid-looking HS256 JWT for testing."""
+    """Build a valid-looking ES256 JWT for testing.
+
+    ES256 (asymmetric) — the matching public key is exposed via the
+    `jwks_keypair` fixture (which also patches the JWKS client to
+    return it). See the fixture docstring for details.
+    """
     payload: dict[str, object] = {
         "sub": sub,
         "email": email,
@@ -51,7 +55,7 @@ def _make_jwt(
         "exp": int(time.time()) + 3600,
         "aud": "authenticated",
     }
-    return jwt.encode(payload, secret, algorithm="HS256")
+    return jwt.encode(payload, private_key, algorithm="ES256")
 
 
 class FakeEngagementPort:
@@ -107,8 +111,12 @@ async def _build_test_client(
     Returns an ``httpx.AsyncClient`` (caller must close it).
     """
     settings = Settings(
-        supabase_jwt_secret=SecretStr(_JWT_SECRET),
+        # ES256+JWKS: setting `supabase_url` causes Settings to auto-compute
+        # `supabase_jwt_jwks_url = {supabase_url}/auth/v1/.well-known/jwks.json`.
+        # The `jwks_keypair` fixture (passed by callers) intercepts the
+        # JWKS lookup so we never hit the real endpoint.
         supabase_url="https://test.supabase.co",
+        # `supabase_service_key` stays as SecretStr (it's still a credential).
         supabase_service_key=SecretStr("test-service-key"),
         user_cv_daily_quota=quota,
         rate_limit_enabled=False,
@@ -200,9 +208,13 @@ async def test_cv_generate_invalid_jwt_returns_401(client: httpx.AsyncClient) ->
     assert response.status_code == 401
 
 
-async def test_cv_generate_valid_jwt_passes_auth(client: httpx.AsyncClient) -> None:
+async def test_cv_generate_valid_jwt_passes_auth(
+    client: httpx.AsyncClient,
+    jwks_keypair: tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey],
+) -> None:
     """GIVEN valid JWT WHEN POST /cv/generate THEN not 401 (200 expected)."""
-    token = _make_jwt()
+    private_key, _ = jwks_keypair
+    token = _make_jwt(private_key)
     response = await client.post(
         "/cv/generate",
         headers={"Authorization": f"Bearer {token}"},
@@ -222,9 +234,13 @@ async def test_cv_generate_valid_jwt_passes_auth(client: httpx.AsyncClient) -> N
 # ── Quota tests ───────────────────────────────────────────────────────────────
 
 
-async def test_cv_generate_quota_exceeded_returns_429(client: httpx.AsyncClient) -> None:
+async def test_cv_generate_quota_exceeded_returns_429(
+    client: httpx.AsyncClient,
+    jwks_keypair: tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey],
+) -> None:
     """GIVEN quota exceeded WHEN POST /cv/generate THEN 429."""
-    token = _make_jwt()
+    private_key, _ = jwks_keypair
+    token = _make_jwt(private_key)
     fake_eng: FakeEngagementPort = client._transport.app.state.engagement_port  # type: ignore[attr-defined]
     fake_eng.count_today = 5  # quota is 5, so this exceeds it
 
@@ -247,9 +263,11 @@ async def test_cv_generate_quota_exceeded_returns_429(client: httpx.AsyncClient)
 
 async def test_cv_generate_quota_zero_is_unlimited(
     client_quota_zero: httpx.AsyncClient,
+    jwks_keypair: tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey],
 ) -> None:
     """GIVEN user_cv_daily_quota=0 WHEN POST /cv/generate THEN 200 (no quota)."""
-    token = _make_jwt()
+    private_key, _ = jwks_keypair
+    token = _make_jwt(private_key)
     response = await client_quota_zero.post(
         "/cv/generate",
         headers={"Authorization": f"Bearer {token}"},
@@ -272,9 +290,13 @@ async def test_cv_count_requires_auth(client: httpx.AsyncClient) -> None:
     assert response.status_code == 401
 
 
-async def test_cv_count_returns_today_total(client: httpx.AsyncClient) -> None:
+async def test_cv_count_returns_today_total(
+    client: httpx.AsyncClient,
+    jwks_keypair: tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey],
+) -> None:
     """GIVEN valid JWT WHEN GET /cv/count THEN returns total_today."""
-    token = _make_jwt()
+    private_key, _ = jwks_keypair
+    token = _make_jwt(private_key)
     response = await client.get(
         "/cv/count",
         headers={"Authorization": f"Bearer {token}"},
@@ -284,9 +306,13 @@ async def test_cv_count_returns_today_total(client: httpx.AsyncClient) -> None:
     assert body == {"total_today": 0}
 
 
-async def test_cv_count_reflects_quota_used(client: httpx.AsyncClient) -> None:
+async def test_cv_count_reflects_quota_used(
+    client: httpx.AsyncClient,
+    jwks_keypair: tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey],
+) -> None:
     """GIVEN user has used quota WHEN GET /cv/count THEN returns correct total."""
-    token = _make_jwt()
+    private_key, _ = jwks_keypair
+    token = _make_jwt(private_key)
     # Set the fake so count returns 3
     fake_eng: FakeEngagementPort = client._transport.app.state.engagement_port  # type: ignore[attr-defined]
     fake_eng.count_today = 3

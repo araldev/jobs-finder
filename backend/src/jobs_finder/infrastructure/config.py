@@ -1575,26 +1575,37 @@ class Settings(BaseSettings):
     )
 
     # ------------------------------------------------------------------
-    # Supabase / JWT auth settings (backend-user-awareness change)
+    # Supabase / JWT auth settings (backend-user-awareness change +
+    # ES256/JWKS migration)
     #
     # 4 new fields for Supabase integration:
-    # - `supabase_url`: the Supabase project URL (e.g. https://abc.supabase.co)
-    # - `supabase_jwt_secret`: the JWT secret from Supabase dashboard
-    #   (Settings → API → JWT Settings → JWT Secret). Used to verify
-    #   Supabase-issued JWTs (HS256) in JWTUserMiddleware.
-    # - `supabase_service_key`: the service_role key (secret). Used by
-    #   SupabaseEngagementRepository to write engagement events.
+    # - `supabase_url`: the Supabase project URL (e.g. https://abc.supabase.co).
+    #   Required for JWT auth (used to derive the JWKS URL) and engagement
+    #   events (used as the REST API base).
+    # - `supabase_jwt_jwks_url`: explicit override for the JWKS URL.
+    #   If unset, computed from `supabase_url` as
+    #   `{supabase_url}/auth/v1/.well-known/jwks.json`. The backend
+    #   fetches the ES256 (or RS256) public key from this URL to verify
+    #   Supabase-issued user JWTs.
+    # - `supabase_service_key`: the service_role key (SecretStr). Used by
+    #   SupabaseEngagementRepository to write engagement events (bypasses RLS).
     # - `user_cv_daily_quota`: per-user daily CV generation limit (int,
     #   default 5). Set to 0 for unlimited. Enforced in POST /cv/generate.
+    #
+    # Migration note (2026-06-23): the previous HS256 shared-secret path
+    # (`SUPABASE_JWT_SECRET`) was removed in favor of asymmetric
+    # ES256+JWKS — see backend/src/jobs_finder/infrastructure/auth/_jwt.py
+    # for the rationale. Leaking the JWKS public key is harmless; the
+    # private key stays server-side at Supabase.
     # ------------------------------------------------------------------
 
     supabase_url: str = Field(
         default="",
         validation_alias=AliasChoices("SUPABASE_URL", "supabase_url"),
     )
-    supabase_jwt_secret: SecretStr | None = Field(
-        default=None,
-        validation_alias=AliasChoices("SUPABASE_JWT_SECRET", "supabase_jwt_secret"),
+    supabase_jwt_jwks_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("SUPABASE_JWT_JWKS_URL", "supabase_jwt_jwks_url"),
     )
     supabase_service_key: SecretStr | None = Field(
         default=None,
@@ -1606,11 +1617,29 @@ class Settings(BaseSettings):
         ge=0,
     )
 
-    # Shared validator for both supabase secrets — normalizes empty
-    # strings to None (same pattern as llm_api_key validator above).
-    # Both fields MUST use mode="before" so they intercept the raw
-    # string BEFORE SecretStr coercion.
-    @field_validator("supabase_jwt_secret", "supabase_service_key", mode="before")
+    @model_validator(mode="after")
+    def _compute_jwks_url(self) -> Settings:
+        """Compute `supabase_jwt_jwks_url` from `supabase_url` if not set explicitly.
+
+        Supabase exposes the public JWKS at
+        ``{SUPABASE_URL}/auth/v1/.well-known/jwks.json`` — used by the
+        backend's JWTUserMiddleware to fetch the ES256/RS256 public key
+        for verifying user-issued JWTs.
+
+        If the operator sets `SUPABASE_JWT_JWKS_URL` explicitly, that
+        wins (escape hatch for non-standard Supabase deployments — e.g.
+        self-hosted Supabase behind a custom reverse proxy).
+        """
+        if not self.supabase_jwt_jwks_url and self.supabase_url:
+            base = self.supabase_url.rstrip("/")
+            object.__setattr__(
+                self,
+                "supabase_jwt_jwks_url",
+                f"{base}/auth/v1/.well-known/jwks.json",
+            )
+        return self
+
+    @field_validator("supabase_service_key", mode="before")
     @classmethod
     def _normalize_empty_supabase_secret(
         cls, v: SecretStr | str | None

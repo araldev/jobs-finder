@@ -20,8 +20,8 @@ from typing import Any
 import jwt
 import pytest
 from asgi_lifespan import LifespanManager
+from cryptography.hazmat.primitives.asymmetric import ec
 from httpx import ASGITransport, AsyncClient
-from pydantic import SecretStr
 
 from jobs_finder.application.usecases.search_indeed_jobs import (
     SearchJobsUseCase as IndeedSearchJobsUseCase,
@@ -37,19 +37,25 @@ from jobs_finder.infrastructure.cache.in_memory_ttl_cache import InMemoryTTLCach
 from jobs_finder.infrastructure.config import Settings
 from jobs_finder.presentation.app_factory import build_app
 
-# 64-char hex key for PyJWT key-length warning suppression.
-_JWT_SECRET = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
-_TEST_JWT = jwt.encode(
-    {
-        "sub": "test-user",
-        "email": "test@example.com",
+
+def _sign_test_jwt(
+    private_key: ec.EllipticCurvePrivateKey,
+    *,
+    sub: str = "test-user",
+    email: str = "test@example.com",
+) -> str:
+    """Sign an ES256 JWT for the test user. The matching public key is
+    exposed via the `jwks_keypair` fixture (which also patches the
+    JWKS client to return it).
+    """
+    payload: dict[str, Any] = {
+        "sub": sub,
+        "email": email,
         "iat": int(time.time()),
         "exp": int(time.time()) + 3600,
         "aud": "authenticated",
-    },
-    _JWT_SECRET,
-    algorithm="HS256",
-)
+    }
+    return jwt.encode(payload, private_key, algorithm="ES256")
 
 
 class FakeJobSearchPort:
@@ -115,18 +121,22 @@ class TestSchedulerStatusApi:
     """Integration tests for `GET /scheduler/status` (REQ-STATUS-002)."""
 
     @pytest.mark.asyncio
-    async def test_status_when_disabled(self) -> None:
+    async def test_status_when_disabled(
+        self,
+        jwks_keypair: tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey],
+    ) -> None:
         """When scheduler is disabled (default), returns `enabled=False`.
 
         Spec: REQ-STATUS-002 scenario 2 — graceful degradation.
         """
-        settings = Settings(supabase_jwt_secret=SecretStr(_JWT_SECRET))
+        private_key, _ = jwks_keypair
+        settings = Settings(supabase_url="https://test.supabase.co")
         app = build_app(settings=settings)
 
         async with _client_with_lifespan(app) as client:
             resp = await client.get(
                 "/scheduler/status",
-                headers={"Authorization": f"Bearer {_TEST_JWT}"},
+                headers={"Authorization": f"Bearer {_sign_test_jwt(private_key)}"},
             )
 
         assert resp.status_code == 200
@@ -134,7 +144,10 @@ class TestSchedulerStatusApi:
         assert data["enabled"] is False
 
     @pytest.mark.asyncio
-    async def test_status_when_enabled(self) -> None:
+    async def test_status_when_enabled(
+        self,
+        jwks_keypair: tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey],
+    ) -> None:
         """When scheduler is enabled, returns `enabled=True` and state fields.
 
         All three use cases are fake so the scheduler never contacts
@@ -162,13 +175,14 @@ class TestSchedulerStatusApi:
             source="infojobs",
         )
 
+        private_key, _ = jwks_keypair
         settings = Settings(
             scheduler_enabled=True,
             db_path=":memory:",
             scheduler_min_interval_seconds=10000.0,
             scheduler_max_interval_seconds=20000.0,
             scheduler_queries=[{"keywords": "python", "location": "Madrid"}],
-            supabase_jwt_secret=SecretStr(_JWT_SECRET),
+            supabase_url="https://test.supabase.co",
         )
 
         app = build_app(
@@ -188,7 +202,7 @@ class TestSchedulerStatusApi:
 
             resp = await client.get(
                 "/scheduler/status",
-                headers={"Authorization": f"Bearer {_TEST_JWT}"},
+                headers={"Authorization": f"Bearer {_sign_test_jwt(private_key)}"},
             )
 
         assert resp.status_code == 200
@@ -205,11 +219,15 @@ class TestSchedulerStatusApi:
         assert data["last_error"] is None or isinstance(data["last_error"], str)
 
     @pytest.mark.asyncio
-    async def test_status_response_shape(self) -> None:
+    async def test_status_response_shape(
+        self,
+        jwks_keypair: tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey],
+    ) -> None:
         """Status response shape matches `SchedulerStatusResponse` schema.
 
         Validates all fields exist and have the correct types.
         """
+        private_key, _ = jwks_keypair
         linkedin_port = FakeJobSearchPort(jobs=[])
         linkedin_use_case = SearchLinkedInJobsUseCase(
             port=linkedin_port,
@@ -235,7 +253,7 @@ class TestSchedulerStatusApi:
             scheduler_min_interval_seconds=10000.0,
             scheduler_max_interval_seconds=20000.0,
             scheduler_queries=[{"keywords": "python", "location": "Madrid"}],
-            supabase_jwt_secret=SecretStr(_JWT_SECRET),
+            supabase_url="https://test.supabase.co",
         )
 
         app = build_app(
@@ -251,7 +269,7 @@ class TestSchedulerStatusApi:
 
             resp = await client.get(
                 "/scheduler/status",
-                headers={"Authorization": f"Bearer {_TEST_JWT}"},
+                headers={"Authorization": f"Bearer {_sign_test_jwt(private_key)}"},
             )
 
         assert resp.status_code == 200
