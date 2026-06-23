@@ -27,6 +27,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 
 import pytest
@@ -34,11 +35,72 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import FastAPI
 from pydantic import SecretStr
 
-# Session-scoped fixture that mocks _is_within_active_hours to return True.
+# Session-scoped fixture that mocks _is_within_active hours to return True.
 # This allows scheduler tests to run regardless of actual Madrid time.
 # The work-hours gate behavior is verified by TestIsWithinActiveHours boundary tests.
 import jobs_finder.infrastructure.scheduler as scheduler_module
 from jobs_finder.application.ports import Intent
+
+
+# Session-scoped autouse fixture: clear env vars that would cause the test
+# suite to reach real Supabase / Supabase Postgres from the test environment.
+# The user's local `.env` may set `DATABASE_URL` / `SUPABASE_URL` for the
+# live dev server — those MUST NOT bleed into the test run.
+@pytest.fixture(autouse=True, scope="session")
+def _isolate_test_environment() -> None:
+    """Strip env vars that would cause tests to reach real external services.
+
+    Without this, a user's `backend/.env` with `DATABASE_URL=postgres://supabase...`
+    would make every `build_app()` try to connect to a real Postgres instance
+    (which fails in CI / sandboxed envs with `Network is unreachable`).
+    The same applies to `SUPABASE_URL` if a test forgets to set
+    `jwks_keypair` — the JWKS lookup would hit the real endpoint.
+
+    Tests that NEED a real connection (the supabase_local-marked tests)
+    should re-set the env var explicitly with `monkeypatch.setenv(...)`.
+    """
+    # Clear DB-related env so app_factory picks SQLite (db_path) over Postgres.
+    for var in (
+        "DATABASE_URL",
+        "DB_PATH",  # also clear so test fixtures can set their own db_path
+    ):
+        os.environ.pop(var, None)
+
+    # Clear Supabase env so the auth code's JWKS lookup doesn't try the real
+    # endpoint. Tests using `jwks_keypair` re-derive SUPABASE_URL via
+    # `Settings(supabase_url="https://test.supabase.co")` so this is safe.
+    for var in (
+        "SUPABASE_URL",
+        "SUPABASE_JWT_JWKS_URL",
+        "SUPABASE_SERVICE_KEY",
+    ):
+        os.environ.pop(var, None)
+
+    # Clear the LinkedIn auth cookie so the scraper runs anonymously in tests
+    # (avoiding Cloudflare walls that would 99% of the time succeed in CI).
+    for var in (
+        "LINKEDIN_LI_AT",
+        "LINKEDIN_JSESSIONID",
+        "LINKEDIN_BCOOKIE",
+        "LINKEDIN_LI_GC",
+        "LINKEDIN_BSCOOKIE",
+    ):
+        os.environ.pop(var, None)
+
+    # ALSO disable pydantic-settings' automatic `.env` loading at the
+    # source. The Settings class is configured with `env_file=".env"` —
+    # even if we clear `os.environ`, `Settings()` reads the file again
+    # via pydantic-settings' own loader. We patch the model_config to
+    # set `_env_file=None` (the pydantic-settings sentinel that disables
+    # .env loading) for the entire test session.
+    from pydantic_settings import SettingsConfigDict
+
+    from jobs_finder.infrastructure.config import Settings
+
+    original_config = Settings.model_config
+    Settings.model_config = SettingsConfigDict(
+        **{**original_config, "env_file": None}
+    )
 
 
 @pytest.fixture
