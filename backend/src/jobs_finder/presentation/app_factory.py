@@ -53,9 +53,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from types import MappingProxyType
+from typing import Any
 
 import httpx
 import redis.asyncio as redis_async
@@ -330,6 +332,68 @@ def build_app(  # noqa: PLR0915, PLR0912
                 bscookie=effective_settings.linkedin_bscookie,
                 li_gc=effective_settings.linkedin_li_gc,
             )
+        # T-LCR-009 + REQ-LCR-007 + REQ-LCR-002 — build the
+        # cookie refresher. When `linkedin_cookie_refresh_enabled`
+        # is `True` AND both `LINKEDIN_EMAIL` and
+        # `LINKEDIN_PASSWORD` env vars are set, build a
+        # `PlaywrightLinkedInCookieRefresher` (the production
+        # impl). Otherwise, build a `DisabledLinkedInCookieRefresher`
+        # (the kill switch — returns the adapter's existing
+        # cookies unchanged, no browser launch, no `set_cookies`).
+        # The kill switch is the explicit per-deployment opt-out
+        # AND the implicit opt-out when creds are missing
+        # (the spec's safety default: don't try to log in
+        # when we have no password).
+        from jobs_finder.infrastructure.linkedin.cookie_refresher import (  # noqa: PLC0415
+            DisabledLinkedInCookieRefresher,
+            LinkedInCookieRefresherSettings,
+            PlaywrightLinkedInCookieRefresher,
+        )
+
+        # The composition-root resolver reads the 3 env vars
+        # directly (the `Settings` class does NOT include the
+        # credentials — AGENTS.md rule #7: secrets in
+        # `.env.example` are not promoted to typed Settings
+        # fields). The Settings `linkedin_cookie_refresh_*`
+        # fields drive the BEHAVIOR knobs only.
+        _email_env = os.environ.get("LINKEDIN_EMAIL")
+        _password_env = os.environ.get("LINKEDIN_PASSWORD")
+        _has_creds = bool(
+            _email_env and _password_env and effective_settings.linkedin_cookie_refresh_enabled
+        )
+        if _has_creds:
+            from pydantic import SecretStr  # noqa: PLC0415
+
+            # mypy can't narrow `_email_env` / `_password_env`
+            # to `str` (the `bool(...)` check above proves
+            # truthy but the type is `str | None`); use `assert`
+            # to narrow the type.
+            assert _email_env is not None
+            assert _password_env is not None
+            cookie_refresher: Any = PlaywrightLinkedInCookieRefresher(
+                LinkedInCookieRefresherSettings(
+                    enabled=True,
+                    timeout_seconds=effective_settings.linkedin_cookie_refresh_timeout_seconds,
+                    email=SecretStr(_email_env),
+                    password=SecretStr(_password_env),
+                    # `headless=False` because the production
+                    # refresher launches Chromium non-headless
+                    # (mirrors `extract_linkedin_cookies.py`).
+                    # Xvfb is the standard way to provide a
+                    # virtual display in CI / Docker; see
+                    # README "Cookie refresh (auto)".
+                    headless=False,
+                )
+            )
+        else:
+            cookie_refresher = DisabledLinkedInCookieRefresher(auth_cookies=auth_cookies_port)
+        # T-LCR-009 — build the per-source LinkedIn cache BEFORE
+        # the scraper so we can wire `cache_invalidator=linkedin_cache.clear`
+        # (the scraper `await`s it on a successful refresh). The
+        # cache is otherwise built below in the use-case wrap
+        # step; we move the build up so the scraper settings
+        # see the live `clear` callback.
+        linkedin_cache = build_cache(effective_settings, source="linkedin", client=redis_client)
         # `Stealth()` is constructed at the composition root
         # (mirrors the Indeed+InfoJobs wires below at L340 and
         # L396). The instance lives in the
@@ -383,6 +447,21 @@ def build_app(  # noqa: PLR0915, PLR0912
                 headless=effective_settings.headless,  # NEW (T-001 bugfix wire)
                 xvfb_display=effective_settings.linkedin_xvfb_display,  # NEW (T-002 Xvfb wire)
                 launch_channel=effective_settings.linkedin_launch_channel,  # NEW (experiment)
+                # T-LCR-009 + REQ-LS-201 — wire the cookie
+                # refresher and the cache invalidator. The
+                # cache invalidator is the per-source
+                # `LinkedInCache.clear()` callback (the
+                # scraper `await`s it on a successful
+                # refresh). The refresher is built above
+                # per the `linkedin_cookie_refresh_enabled` +
+                # `LINKEDIN_EMAIL`/`PASSWORD` env-var
+                # decision (REQ-LCR-002 + REQ-LCR-007).
+                cookie_refresher=cookie_refresher,
+                cache_invalidator=linkedin_cache.clear,
+                cookie_refresh_enabled=(effective_settings.linkedin_cookie_refresh_enabled),
+                cookie_refresher_backoff_seconds=(
+                    effective_settings.linkedin_cookie_refresh_backoff_seconds
+                ),
             ),
         )
         raw_use_case = RawLinkedInJobsUseCase(port=scraper)
@@ -392,11 +471,10 @@ def build_app(  # noqa: PLR0915, PLR0912
         # scraper. The wrapper exposes `search(...)` which the route
         # calls (REQ-C-003 — the route sets the `X-Cache: HIT|MISS`
         # response header from the wrapper's `SearchResult.cache_status`).
-        # T-005 (persistent-cache): the cache is now built via the
-        # `build_cache` factory so it selects `InMemoryTTLCache` or
-        # `RedisCache` per `settings.cache_backend`. The shared
-        # `redis_client` is passed in for the Redis branch.
-        linkedin_cache = build_cache(effective_settings, source="linkedin", client=redis_client)
+        # T-LCR-009 — `linkedin_cache` is built above (so the
+        # scraper settings can wire `cache_invalidator=
+        # linkedin_cache.clear`); here we just wrap the
+        # `RawLinkedInJobsUseCase` in the cached wrapper.
         use_case = CachedJobSearchUseCase(
             port=raw_use_case,
             cache=linkedin_cache,
