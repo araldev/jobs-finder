@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from pydantic import SecretStr
 
 from jobs_finder.application.ports import (
@@ -400,3 +401,218 @@ class TestBscookieAdapter:
             "bcookie",
             "li_gc",
         ]
+
+
+# ---------------------------------------------------------------------------
+# REQ-AC-101 + REQ-AC-102 — `set_cookies()` mutation seam (T-LCR-004/005,
+# `linkedin-cookie-refresh` cycle 4).
+#
+# The 3 adapters each implement `async def set_cookies(cookies)` so the
+# runtime can swap the cookie set without restarting the process. The
+# env-based adapters write a side-channel JSON file (atomic `os.replace`);
+# the JSON adapter rewrites its JSON file (atomic `os.replace`) and
+# creates a rolling `.bak`.
+#
+# The 5 tests below pin the per-adapter behavior:
+#   1. Env adapter writes the side-channel file.
+#   2. Env adapter raises when `cookie_path` is None (no default
+#      exists for the singular v1 adapter).
+#   3. Multi-env adapter writes the side-channel file (using the
+#      same default path as the env adapter).
+#   4. JSON adapter rewrites the file atomically (REQ-AC-101 +
+#      C-6 + REQ-AC-102 read-after-write invariant).
+#   5. JSON adapter creates a `.bak` with PRE-write content.
+# ---------------------------------------------------------------------------
+
+
+import asyncio
+import json
+import logging
+
+from jobs_finder.infrastructure.linkedin.auth_cookie import (  # noqa: E402, PLC0415
+    JsonLinkedInAuthCookiesAdapter,
+    MultiEnvLinkedInAuthCookiesAdapter,
+)
+
+
+class TestSetCookies:
+    """REQ-AC-101 + REQ-AC-102 — the 3 adapters' `set_cookies()` impls."""
+
+    async def test_env_adapter_writes_sidechannel_file(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """REQ-AC-101 — `EnvLinkedInAuthCookieAdapter.set_cookies()`
+        writes the cookie dicts to the side-channel JSON file
+        atomically (`os.replace`). A WARNING log records the
+        side-channel write.
+        """
+        side_channel = tmp_path / "env-sidechannel.json"
+        adapter = EnvLinkedInAuthCookieAdapter(
+            SecretStr("AQE_INIT"),
+            cookie_path=str(side_channel),
+        )
+        with caplog.at_level(logging.WARNING):
+            await adapter.set_cookies(
+                [
+                    {
+                        "name": "li_at",
+                        "value": "AQE_NEW",
+                        "domain": ".linkedin.com",
+                        "path": "/",
+                        "httpOnly": True,
+                        "secure": True,
+                    }
+                ]
+            )
+        # Side-channel file exists and contains the new value.
+        assert side_channel.exists()
+        payload = json.loads(side_channel.read_text(encoding="utf-8"))
+        assert payload == [
+            {
+                "name": "li_at",
+                "value": "AQE_NEW",
+                "domain": ".linkedin.com",
+                "path": "/",
+                "httpOnly": True,
+                "secure": True,
+            }
+        ]
+        # WARNING substring in logs.
+        matching = [
+            r
+            for r in caplog.records
+            if "env-var-sourced cookie written to side-channel file" in r.getMessage()
+        ]
+        assert len(matching) == 1
+
+    async def test_env_adapter_set_cookies_raises_when_cookie_path_none(self) -> None:
+        """REQ-AC-101 — `EnvLinkedInAuthCookieAdapter.set_cookies()`
+        raises when `cookie_path` is None (no default path; the
+        v1 singular adapter has no implicit location).
+        """
+        adapter = EnvLinkedInAuthCookieAdapter(SecretStr("AQE_INIT"))
+        # No `cookie_path` was passed → adapter has no place to write.
+        with pytest.raises(RuntimeError, match="cookie_path"):
+            await adapter.set_cookies([{"name": "li_at", "value": "x"}])
+
+    async def test_multi_env_adapter_writes_sidechannel_file(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """REQ-AC-101 — `MultiEnvLinkedInAuthCookiesAdapter.set_cookies()`
+        writes to the same default side-channel file (path injected
+        via ctor). Updates the 5 internal slots from the new cookie
+        dicts.
+        """
+        side_channel = tmp_path / "multi-env-sidechannel.json"
+        adapter = MultiEnvLinkedInAuthCookiesAdapter(
+            li_at=SecretStr("AQE_INIT"),
+            jsessionid=None,
+            bcookie=None,
+            bscookie=None,
+            li_gc=None,
+            cookie_path=str(side_channel),
+        )
+        with caplog.at_level(logging.WARNING):
+            await adapter.set_cookies(
+                [
+                    {"name": "li_at", "value": "AQE_NEW"},
+                    {"name": "JSESSIONID", "value": "ajax:99999"},
+                ]
+            )
+        assert side_channel.exists()
+        payload = json.loads(side_channel.read_text(encoding="utf-8"))
+        assert len(payload) == 2
+        assert payload[0]["name"] == "li_at"
+        assert payload[0]["value"] == "AQE_NEW"
+        assert payload[1]["name"] == "JSESSIONID"
+        # Internal state updated (REQ-AC-102 read-after-write).
+        cookies = adapter.cookies()
+        assert cookies is not None
+        names = [n for n, _ in cookies]
+        assert "li_at" in names
+        assert "JSESSIONID" in names
+
+    async def test_json_adapter_rewrites_file_atomically(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """REQ-AC-101 + C-6 — `JsonLinkedInAuthCookiesAdapter.set_cookies()`
+        rewrites the JSON file at its constructed path via `os.replace`
+        (atomic — no partial content observable).
+
+        REQ-AC-102 — `cookies()` / `cookie_dicts()` return the new
+        values after `set_cookies()`.
+        """
+        path = tmp_path / "linkedin_cookies.json"
+        # Pre-existing file with 1 OLD cookie.
+        path.write_text(
+            json.dumps(
+                [
+                    {
+                        "name": "li_at",
+                        "value": "AQE_OLD",
+                        "domain": ".linkedin.com",
+                        "path": "/",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        adapter = JsonLinkedInAuthCookiesAdapter(path=str(path))
+        await adapter.set_cookies(
+            [
+                {
+                    "name": "li_at",
+                    "value": "AQE_NEW",
+                    "domain": ".linkedin.com",
+                    "path": "/",
+                    "httpOnly": True,
+                    "secure": True,
+                }
+            ]
+        )
+        # File was atomically rewritten.
+        assert path.exists()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert len(payload) == 1
+        assert payload[0]["value"] == "AQE_NEW"
+        # Internal state updated (REQ-AC-102).
+        cookies = adapter.cookies()
+        assert cookies is not None
+        assert cookies[0][1].get_secret_value() == "AQE_NEW"
+
+    async def test_json_adapter_creates_bak_on_write(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """REQ-AC-101 + C-7 — the JSON adapter creates a `<path>.bak`
+        with PRE-write content BEFORE the atomic `os.replace`.
+
+        The `.bak` is the single rolling backup that lets the operator
+        recover the previous cookie set if the new set is corrupt
+        (e.g. mid-write kill before the `os.replace`).
+        """
+        path = tmp_path / "linkedin_cookies.json"
+        bak_path = tmp_path / "linkedin_cookies.json.bak"
+        # Pre-existing file with 1 OLD cookie.
+        path.write_text(
+            json.dumps(
+                [{"name": "li_at", "value": "AQE_OLD", "domain": ".linkedin.com"}]
+            ),
+            encoding="utf-8",
+        )
+        adapter = JsonLinkedInAuthCookiesAdapter(path=str(path))
+        await adapter.set_cookies(
+            [{"name": "li_at", "value": "AQE_NEW", "domain": ".linkedin.com"}]
+        )
+        # `.bak` exists with PRE-write content.
+        assert bak_path.exists()
+        bak_payload = json.loads(bak_path.read_text(encoding="utf-8"))
+        assert bak_payload[0]["value"] == "AQE_OLD"
+        # Main file has POST-write content.
+        main_payload = json.loads(path.read_text(encoding="utf-8"))
+        assert main_payload[0]["value"] == "AQE_NEW"
