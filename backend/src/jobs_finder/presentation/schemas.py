@@ -13,7 +13,7 @@ objects (`Job`) are mapped back into API responses (`JobResponse`).
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -572,3 +572,53 @@ class DashboardStatsResponse(BaseModel):
     active_platforms: int
     last_sync: str | None = None
     platform_distribution: dict[str, int] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# User storage schemas (user-storage change)
+# ---------------------------------------------------------------------------
+
+
+class FavoriteAddRequest(BaseModel):
+    """`POST /users/me/favorites` body."""
+
+    job_id: int = Field(..., gt=0)
+
+
+class FavoriteRemoveResponse(BaseModel):
+    """`DELETE /users/me/favorites/{job_id}` response."""
+
+    removed: bool
+
+
+class UserSettingsResponse(BaseModel):
+    """`GET /users/me/settings` and `PUT /users/me/settings` response."""
+
+    enabled_platforms: list[str]
+    notifications_enabled: bool
+
+
+class UserSettingsUpdateRequest(BaseModel):
+    """`PUT /users/me/settings` body."""
+
+    enabled_platforms: list[str]
+    notifications_enabled: bool
+
+
+class EngagementEventRequest(BaseModel):
+    """`POST /users/me/engagement` body."""
+
+    event_type: Literal["job_view", "job_click", "search", "cv_adapted"]
+    job_id: int | None = Field(default=None, gt=0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class UserStatsResponse(BaseModel):
+    """`GET /users/me/stats` response."""
+
+    favorites_count: int
+    job_views: int
+    job_clicks: int
+    searches: int
+    cv_adapted: int
+    top_favorite_sources: list[dict[str, int | str]]

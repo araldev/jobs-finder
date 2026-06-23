@@ -1493,6 +1493,21 @@ class Settings(BaseSettings):
     # positive value deletes jobs with `last_seen_at` older than
     # that many days, capped at `LIMIT 1000` per call
     # (REQ-RET-001).
+    # ------------------------------------------------------------------
+    # PostgreSQL / Supabase connection (REQ-PG-001)
+    #
+    # When `database_url` is set, the app uses `PostgresJobRepository`
+    # instead of `SqliteJobRepository`. This enables production deployments
+    # with Supabase PostgreSQL or any other PostgreSQL instance.
+    #
+    # Format: postgresql://user:password@host:port/database
+    # Example: postgresql://postgres:secret@db.example.com:5432/postgres
+    # ------------------------------------------------------------------
+    database_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("DATABASE_URL", "database_url"),
+    )
+
     retention_days: int = Field(
         default=0,
         validation_alias=AliasChoices("RETENTION_DAYS", "retention_days"),

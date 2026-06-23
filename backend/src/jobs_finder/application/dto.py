@@ -11,6 +11,18 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
+class UserStatsDTO:
+    """Aggregated stats for a user."""
+
+    favorites_count: int
+    job_views: int
+    job_clicks: int
+    searches: int
+    cv_adapted: int
+    top_favorite_sources: list[dict[str, int | str]]
+
+
+@dataclass(frozen=True, slots=True)
 class SearchLinkedInInput:
     """Validated input for the LinkedIn job search use case.
 

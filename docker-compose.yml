@@ -1,0 +1,63 @@
+# =============================================================================
+# jobs-finder — Docker Compose for local development
+# =============================================================================
+#
+# Starts a local PostgreSQL 16 instance + your app.
+# For production, use the Dockerfile directly with your Supabase connection.
+#
+# Usage:
+#   docker compose up --build
+#   # App: http://localhost:8000
+#   # Database: localhost:5432 (user: postgres, pass: postgres, db: jobsfinder)
+#
+# For Supabase (production):
+#   Set DATABASE_URL in your environment or .env to your Supabase connection string.
+# =============================================================================
+
+services:
+  # ── Local PostgreSQL (dev-only) ───────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: jobsfinder
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/supabase/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Application ──────────────────────────────────────────────────────────
+  app:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      # For local dev: use the `db` service above
+      # For Supabase production: replace with your connection string:
+      # DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@db.XXX.supabase.co:5432/postgres
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/jobsfinder
+      - LINKEDIN_LOG_FORMAT=json
+      - CACHE_BACKEND=memory
+      - RATE_LIMIT_ENABLED=true
+      - SCHEDULER_ENABLED=false
+    env_file:
+      - path: ./backend/.env
+        required: false
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

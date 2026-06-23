@@ -126,6 +126,9 @@ from jobs_finder.infrastructure.llm._intent_parser import parse_intent_response
 from jobs_finder.infrastructure.location.hardcoded_resolver import (
     HardcodedLocationResolver,
 )
+from jobs_finder.infrastructure.persistence.postgres_job_repository import (
+    PostgresJobRepository,
+)
 from jobs_finder.infrastructure.persistence.sqlite_job_repository import (
     SqliteJobRepository,
 )
@@ -618,6 +621,7 @@ def build_app(  # noqa: PLR0915, PLR0912
         if _scheduler_repo is not None:
             await _scheduler_repo.__aenter__()
             _app.state.job_repository = _scheduler_repo
+
         if _scheduler_instance is not None:
             _scheduler_instance.start()
         try:
@@ -786,12 +790,18 @@ def build_app(  # noqa: PLR0915, PLR0912
     # The lifecycle (open → start → serve → stop → close) is managed in
     # the lifespan below. When `db_path` is empty (default `""`): the
     # repo is `None` and the lifespan skips it.
-    _scheduler_repo: SqliteJobRepository | None = None
+    _scheduler_repo: SqliteJobRepository | PostgresJobRepository | None = None
     _scheduler_instance: BackgroundJobScheduler | None = None
     _wire_scheduler: bool = effective_settings.scheduler_enabled and aggregator_use_case is not None
 
-    # Build repo when db_path is non-empty (REQ-HIST-002 scenario 2).
-    if effective_settings.db_path:
+    # Build repo from the primary backend:
+    #   1. PostgreSQL/Supabase when `database_url` is set (production).
+    #   2. SQLite when `db_path` is set (local dev/testing, default `jobs.db`).
+    if effective_settings.database_url:
+        _scheduler_repo = PostgresJobRepository(
+            database_url=effective_settings.database_url,
+        )
+    elif effective_settings.db_path:
         _scheduler_repo = SqliteJobRepository(db_path=effective_settings.db_path)
 
     if _wire_scheduler and _scheduler_repo is not None:
