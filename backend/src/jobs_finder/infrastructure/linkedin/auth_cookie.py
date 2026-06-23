@@ -24,6 +24,7 @@ the `NoOpRateLimiter` style at `application/ports.py`).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -462,15 +463,13 @@ class JsonLinkedInAuthCookiesAdapter:
         # Step 1: rolling .bak (best-effort).
         bak_path = self._path + ".bak"
         if os.path.exists(self._path):
-            try:
+            with contextlib.suppress(OSError):
                 # `os.replace` is atomic; if it fails (e.g.
                 # permission error), we still proceed to write
                 # the new file — the operator can recover the
                 # previous set from the `linkedin_cookies.json`
                 # git history if needed.
                 os.replace(self._path, bak_path)
-            except OSError:
-                pass
         # Step 2: validate + fill defaults. Reject cookies
         # missing `name` or `value` (Playwright's
         # `context.cookies()` always emits these — defense in

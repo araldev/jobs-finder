@@ -27,11 +27,11 @@ Test counts (per the spec):
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
 import pytest
+from pydantic import SecretStr
 
 from jobs_finder.application.ports import (
     LinkedInAuthCookiesPort,
@@ -42,9 +42,7 @@ from jobs_finder.infrastructure.linkedin.cookie_refresher import (
     LinkedInCookieRefresherSettings,
     PlaywrightLinkedInCookieRefresher,
 )
-from pydantic import SecretStr
 from tests.conftest import FakeLinkedInAuthCookiesPort
-
 
 # ---------------------------------------------------------------------------
 # Fakes — `_FakeBrowser` / `_FakeContext` / `_FakePage` for the
@@ -154,8 +152,8 @@ class _FakeBrowser:
 def _settings(
     *,
     enabled: bool = True,
-    email: str = "op@example.com",
-    password: str = "op_password",
+    email: str | None = "op@example.com",
+    password: str | None = "op_password",
     timeout_seconds: float = 1.0,
     headless: bool = True,
 ) -> LinkedInCookieRefresherSettings:
@@ -212,7 +210,7 @@ class TestPlaywrightLinkedInCookieRefresher:
 
         refresher = PlaywrightLinkedInCookieRefresher(
             settings=_settings(),
-            browser_factory=factory,  # type: ignore[arg-type]
+            browser_factory=factory,
         )
         result = await refresher.refresh()
         assert result is not None
@@ -253,7 +251,7 @@ class TestPlaywrightLinkedInCookieRefresher:
 
         refresher = PlaywrightLinkedInCookieRefresher(
             settings=_settings(email=None, password=None),
-            browser_factory=factory,  # type: ignore[arg-type]
+            browser_factory=factory,
         )
         result = await refresher.refresh()
         assert result is None
@@ -275,7 +273,7 @@ class TestPlaywrightLinkedInCookieRefresher:
 
         refresher = PlaywrightLinkedInCookieRefresher(
             settings=_settings(timeout_seconds=0.1),
-            browser_factory=factory,  # type: ignore[arg-type]
+            browser_factory=factory,
         )
         result = await refresher.refresh()
         assert result is None
@@ -297,7 +295,7 @@ class TestPlaywrightLinkedInCookieRefresher:
 
         refresher = PlaywrightLinkedInCookieRefresher(
             settings=_settings(),
-            browser_factory=factory,  # type: ignore[arg-type]
+            browser_factory=factory,
         )
         result = await refresher.refresh()
         assert result is None
@@ -338,7 +336,7 @@ class TestPlaywrightLinkedInCookieRefresher:
 
         refresher = PlaywrightLinkedInCookieRefresher(
             settings=_settings(),
-            browser_factory=factory,  # type: ignore[arg-type]
+            browser_factory=factory,
         )
         with caplog.at_level(logging.DEBUG):
             result = await refresher.refresh()
@@ -346,14 +344,10 @@ class TestPlaywrightLinkedInCookieRefresher:
         # Scan every record — message + args.
         for record in caplog.records:
             text = record.getMessage()
-            assert synthetic not in text, (
-                f"cookie value leaked into log: {text!r}"
-            )
+            assert synthetic not in text, f"cookie value leaked into log: {text!r}"
             if record.args:
                 for arg in record.args:
-                    assert synthetic not in str(arg), (
-                        f"cookie value leaked into log args: {arg!r}"
-                    )
+                    assert synthetic not in str(arg), f"cookie value leaked into log args: {arg!r}"
 
     async def test_no_log_call_with_cookie_values(
         self,
@@ -369,9 +363,7 @@ class TestPlaywrightLinkedInCookieRefresher:
         with caplog.at_level(logging.DEBUG):
             refresher = PlaywrightLinkedInCookieRefresher(
                 settings=_settings(email=None, password=None),
-                browser_factory=lambda: (_ for _ in ()).throw(
-                    AssertionError("not called")
-                ),  # type: ignore[arg-type,return-value]
+                browser_factory=lambda: (_ for _ in ()).throw(AssertionError("not called")),
             )
             result = await refresher.refresh()
         assert result is None
@@ -379,9 +371,7 @@ class TestPlaywrightLinkedInCookieRefresher:
         # seen in real cookies ("AQE" prefix).
         for record in caplog.records:
             text = record.getMessage()
-            assert "AQE" not in text, (
-                f"AQE-prefix value leaked into log: {text!r}"
-            )
+            assert "AQE" not in text, f"AQE-prefix value leaked into log: {text!r}"
 
 
 class TestDisabledLinkedInCookieRefresher:
@@ -410,8 +400,8 @@ class TestDisabledLinkedInCookieRefresher:
         adapter: LinkedInAuthCookiesPort = FakeLinkedInAuthCookiesPort(
             cookies=[("li_at", SecretStr("OLD_VAL"))]
         )
-        refresher: LinkedInCookieRefresherPort = (
-            DisabledLinkedInCookieRefresher(auth_cookies=adapter)
+        refresher: LinkedInCookieRefresherPort = DisabledLinkedInCookieRefresher(
+            auth_cookies=adapter
         )
         result = await refresher.refresh()
         assert result is not None

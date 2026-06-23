@@ -72,7 +72,6 @@ from jobs_finder.application.ports import (
     JobSearchPort,
     LinkedInAuthCookiePort,
     LinkedInAuthCookiesPort,
-    LinkedInCookieRefresherPort,
     LocationResolverPort,
 )
 from jobs_finder.domain.job import Job
@@ -292,20 +291,14 @@ class LinkedInScraperSettings:
         # The scraper skips refresh within this many seconds of
         # `_last_refresh_attempt_at`. Default `3600.0` matches
         # `Settings.linkedin_cookie_refresh_backoff_seconds`.
-        self.cookie_refresher_backoff_seconds = (
-            cookie_refresher_backoff_seconds
-        )
+        self.cookie_refresher_backoff_seconds = cookie_refresher_backoff_seconds
 
     def __repr__(self) -> str:
         auth_cookie_repr = "<set>" if self.auth_cookie is not None else "<unset>"
         auth_cookies_repr = "<set>" if self.auth_cookies is not None else "<unset>"
         stealth_repr = "<set>" if self.stealth is not None else "<unset>"
-        cookie_refresher_repr = (
-            "<set>" if self.cookie_refresher is not None else "<unset>"
-        )
-        cache_invalidator_repr = (
-            "<set>" if self.cache_invalidator is not None else "<unset>"
-        )
+        cookie_refresher_repr = "<set>" if self.cookie_refresher is not None else "<unset>"
+        cache_invalidator_repr = "<set>" if self.cache_invalidator is not None else "<unset>"
         return (
             f"LinkedInScraperSettings(user_agent={self.user_agent!r}, "
             f"timeout_ms={self.timeout_ms}, max_pages={self.max_pages}, "
@@ -341,8 +334,7 @@ class LinkedInScraperSettings:
             and self.cookie_refresher == other.cookie_refresher
             and self.cache_invalidator == other.cache_invalidator
             and self.cookie_refresh_enabled == other.cookie_refresh_enabled
-            and self.cookie_refresher_backoff_seconds
-            == other.cookie_refresher_backoff_seconds
+            and self.cookie_refresher_backoff_seconds == other.cookie_refresher_backoff_seconds
         )
 
     def __hash__(self) -> int:
@@ -1022,19 +1014,14 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         # Step 5: record attempt time BEFORE the await.
         self._last_refresh_attempt_at = time.monotonic()
         # Step 6: invoke the refresher.
-        new: list[dict[str, object]] | None = (
-            await self._settings.cookie_refresher.refresh()
-        )
+        new: list[dict[str, object]] | None = await self._settings.cookie_refresher.refresh()
         # Step 7: failure path.
         if new is None:
-            _logger.warning(
-                "LinkedIn cookie refresh failed; returning 0 jobs and "
-                "entering backoff"
-            )
+            _logger.warning("LinkedIn cookie refresh failed; returning 0 jobs and entering backoff")
             return False
         # Step 8: success path.
         if self._settings.auth_cookies is not None:
-            await self._settings.auth_cookies.set_cookies(new)  # type: ignore[arg-type]
+            await self._settings.auth_cookies.set_cookies(new)
         if self._settings.cache_invalidator is not None:
             await self._settings.cache_invalidator()
         _logger.info(
@@ -1071,9 +1058,7 @@ class LinkedInPlaywrightScraper(JobSearchPort):
         needed because the backoff in REQ-LCR-004 caps
         future refresh attempts within 1 hour).
         """
-        url = self._build_url(
-            keywords, location, 0, geo_id=geo_id, structured=structured
-        )
+        url = self._build_url(keywords, location, 0, geo_id=geo_id, structured=structured)
         await self._navigate_and_wait(page, url)
         content = await page.content()
         retry_soup = BeautifulSoup(content, "html.parser")
@@ -1088,8 +1073,7 @@ class LinkedInPlaywrightScraper(JobSearchPort):
             # HARD raise on a confirmed block page (the v1
             # semantics — this is no longer "soft").
             raise LinkedInBlockedError(
-                "LinkedIn returned an auth-wall / verification page "
-                "after refresh"
+                "LinkedIn returned an auth-wall / verification page after refresh"
             )
         return _parse_cards(retry_soup, remaining)
 

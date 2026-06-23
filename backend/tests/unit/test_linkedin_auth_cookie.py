@@ -17,6 +17,8 @@ the repo by AGENTS.md rule #7.
 
 from __future__ import annotations
 
+import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -29,6 +31,8 @@ from jobs_finder.application.ports import (
 )
 from jobs_finder.infrastructure.linkedin.auth_cookie import (
     EnvLinkedInAuthCookieAdapter,
+    JsonLinkedInAuthCookiesAdapter,
+    MultiEnvLinkedInAuthCookiesAdapter,
 )
 from jobs_finder.infrastructure.linkedin.scraper import LinkedInScraperSettings
 from tests.conftest import (
@@ -425,16 +429,6 @@ class TestBscookieAdapter:
 # ---------------------------------------------------------------------------
 
 
-import asyncio
-import json
-import logging
-
-from jobs_finder.infrastructure.linkedin.auth_cookie import (  # noqa: E402, PLC0415
-    JsonLinkedInAuthCookiesAdapter,
-    MultiEnvLinkedInAuthCookiesAdapter,
-)
-
-
 class TestSetCookies:
     """REQ-AC-101 + REQ-AC-102 — the 3 adapters' `set_cookies()` impls."""
 
@@ -600,9 +594,7 @@ class TestSetCookies:
         bak_path = tmp_path / "linkedin_cookies.json.bak"
         # Pre-existing file with 1 OLD cookie.
         path.write_text(
-            json.dumps(
-                [{"name": "li_at", "value": "AQE_OLD", "domain": ".linkedin.com"}]
-            ),
+            json.dumps([{"name": "li_at", "value": "AQE_OLD", "domain": ".linkedin.com"}]),
             encoding="utf-8",
         )
         adapter = JsonLinkedInAuthCookiesAdapter(path=str(path))

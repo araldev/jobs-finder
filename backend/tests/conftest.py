@@ -222,7 +222,7 @@ class FakeLinkedInCookieRefresherPort:
             return None
         # Return a copy so the caller cannot mutate the fake's
         # canned state via the returned list.
-        return [dict(c) for c in self._canned]  # type: ignore[return-value]  # noqa: E501
+        return [dict(c) for c in self._canned]  # noqa: E501
 
 
 def _build_cached_linkedin_use_case(

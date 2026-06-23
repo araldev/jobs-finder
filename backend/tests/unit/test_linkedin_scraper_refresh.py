@@ -28,12 +28,8 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-
 from pydantic import SecretStr
 
-from jobs_finder.infrastructure.linkedin.auth_cookie import (
-    MultiEnvLinkedInAuthCookiesAdapter,
-)
 from jobs_finder.infrastructure.linkedin.scraper import (
     LinkedInPlaywrightScraper,
     LinkedInScraperSettings,
@@ -139,7 +135,7 @@ def _settings(
         max_pages=max_pages,
         inter_page_delay_seconds=0.0,
         auth_cookies=auth_cookies,
-        cookie_refresher=cookie_refresher,  # type: ignore[arg-type]
+        cookie_refresher=cookie_refresher,
         cache_invalidator=cache_invalidator,
         cookie_refresh_enabled=cookie_refresh_enabled,
         cookie_refresher_backoff_seconds=cookie_refresher_backoff_seconds,
@@ -155,7 +151,12 @@ async def _make_scraper_with(
     cookie_refresh_enabled: bool = True,
     cookie_refresher_backoff_seconds: float = 3600.0,
     max_pages: int = 1,
-) -> tuple[LinkedInPlaywrightScraper, _FakeBrowser, FakeLinkedInAuthCookiesPort, FakeLinkedInCookieRefresherPort]:
+) -> tuple[
+    LinkedInPlaywrightScraper,
+    _FakeBrowser,
+    FakeLinkedInAuthCookiesPort,
+    FakeLinkedInCookieRefresherPort,
+]:
     """Build a scraper whose browser is the given fake page's parent.
 
     Mirrors the `test_linkedin_scraper_auth.py` pattern.
@@ -172,9 +173,7 @@ async def _make_scraper_with(
         return fake_browser
 
     if auth_cookies is None:
-        auth_cookies = FakeLinkedInAuthCookiesPort(
-            cookies=[("li_at", SecretStr("AQE_INIT"))]
-        )
+        auth_cookies = FakeLinkedInAuthCookiesPort(cookies=[("li_at", SecretStr("AQE_INIT"))])
     scraper = LinkedInPlaywrightScraper(
         throttle=throttle,
         settings=_settings(
@@ -195,16 +194,14 @@ async def _make_scraper_with(
 
 # Auth-wall HTML: body class="auth-wall" + 0 cards.
 AUTH_WALL_HTML = (
-    '<html><body class="auth-wall">'
-    "<main><h1>Sign in to continue</h1></main>"
-    "</body></html>"
+    '<html><body class="auth-wall"><main><h1>Sign in to continue</h1></main></body></html>'
 )
 
 
 # Cloudflare challenge HTML: title "Just a moment..." + noscript
 # + data-cf-challenge + 0 cards.
 CLOUDFLARE_HTML = (
-    '<html><head><title>Just a moment...</title></head>'
+    "<html><head><title>Just a moment...</title></head>"
     "<body>"
     "<noscript>redirect</noscript>"
     '<div data-cf-challenge="x"></div>'
@@ -287,9 +284,7 @@ async def test_scraper_replaces_cookies_and_invalidates_cache_on_refresh_success
     async def tracked_invalidator() -> None:
         cache_invalidator_called["n"] += 1
 
-    auth_cookies = FakeLinkedInAuthCookiesPort(
-        cookies=[("li_at", SecretStr("AQE_INIT"))]
-    )
+    auth_cookies = FakeLinkedInAuthCookiesPort(cookies=[("li_at", SecretStr("AQE_INIT"))])
     scraper, _, _, _ = await _make_scraper_with(
         page,
         auth_cookies=auth_cookies,
@@ -317,9 +312,7 @@ async def test_scraper_returns_empty_list_on_refresh_failure() -> None:
     """
     page = _FakePage(AUTH_WALL_HTML)
     refresher = FakeLinkedInCookieRefresherPort(canned=None)
-    auth_cookies = FakeLinkedInAuthCookiesPort(
-        cookies=[("li_at", SecretStr("AQE_INIT"))]
-    )
+    auth_cookies = FakeLinkedInAuthCookiesPort(cookies=[("li_at", SecretStr("AQE_INIT"))])
     invalidator_calls = {"n": 0}
 
     async def tracked_invalidator() -> None:
@@ -350,9 +343,7 @@ async def test_scraper_skips_refresh_within_backoff_window() -> None:
     # First search: refresh fails → records last_attempt_at.
     page1 = _FakePage(AUTH_WALL_HTML)
     refresher = FakeLinkedInCookieRefresherPort(canned=None)
-    auth_cookies = FakeLinkedInAuthCookiesPort(
-        cookies=[("li_at", SecretStr("AQE_INIT"))]
-    )
+    auth_cookies = FakeLinkedInAuthCookiesPort(cookies=[("li_at", SecretStr("AQE_INIT"))])
     scraper, _, _, _ = await _make_scraper_with(
         page1,
         auth_cookies=auth_cookies,
@@ -394,9 +385,7 @@ async def test_scraper_refreshes_after_backoff_expires() -> None:
     """
     page = _FakePage(AUTH_WALL_HTML)
     refresher = FakeLinkedInCookieRefresherPort(canned=None)
-    auth_cookies = FakeLinkedInAuthCookiesPort(
-        cookies=[("li_at", SecretStr("AQE_INIT"))]
-    )
+    auth_cookies = FakeLinkedInAuthCookiesPort(cookies=[("li_at", SecretStr("AQE_INIT"))])
     scraper, _, _, _ = await _make_scraper_with(
         page,
         auth_cookies=auth_cookies,
@@ -421,9 +410,7 @@ async def test_scraper_with_none_refresher_does_not_call_refresh() -> None:
     fake when `None` is passed for test convenience.
     """
     page = _FakePage(AUTH_WALL_HTML)
-    auth_cookies = FakeLinkedInAuthCookiesPort(
-        cookies=[("li_at", SecretStr("AQE_INIT"))]
-    )
+    auth_cookies = FakeLinkedInAuthCookiesPort(cookies=[("li_at", SecretStr("AQE_INIT"))])
     fake_browser = _FakeBrowser(page)
     throttle = AsyncThrottle(min_interval_seconds=0.0)
 
@@ -479,9 +466,7 @@ async def test_search_does_not_log_cookie_value(
     async def cache_invalidator() -> None:
         return None
 
-    auth_cookies = FakeLinkedInAuthCookiesPort(
-        cookies=[("li_at", SecretStr("AQE_INIT"))]
-    )
+    auth_cookies = FakeLinkedInAuthCookiesPort(cookies=[("li_at", SecretStr("AQE_INIT"))])
     scraper, _, _, _ = await _make_scraper_with(
         page,
         auth_cookies=auth_cookies,
@@ -494,9 +479,7 @@ async def test_search_does_not_log_cookie_value(
     # No record contains the cookie value.
     for record in caplog.records:
         text = record.getMessage()
-        assert synthetic_cookie_value not in text, (
-            f"cookie value leaked into log: {text!r}"
-        )
+        assert synthetic_cookie_value not in text, f"cookie value leaked into log: {text!r}"
         if record.args:
             for arg in record.args:
                 assert synthetic_cookie_value not in str(arg), (

@@ -29,11 +29,13 @@ Spec: REQ-LCR-001, REQ-LCR-002, REQ-LCR-005, REQ-LCR-007.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from playwright.async_api import async_playwright
 from pydantic import SecretStr
 
 from jobs_finder.application.ports import LinkedInAuthCookiesPort
@@ -208,8 +210,7 @@ class PlaywrightLinkedInCookieRefresher:
         )
         if not email_str or not password_str:
             _logger.warning(
-                "LinkedIn cookie refresh skipped: missing LINKEDIN_EMAIL "
-                "or LINKEDIN_PASSWORD"
+                "LinkedIn cookie refresh skipped: missing LINKEDIN_EMAIL or LINKEDIN_PASSWORD"
             )
             return None
 
@@ -221,8 +222,6 @@ class PlaywrightLinkedInCookieRefresher:
             if self._browser_factory is not None:
                 browser = await self._browser_factory()
             else:
-                from playwright.async_api import async_playwright  # type: ignore[import-untyped]
-
                 async with async_playwright() as p:
                     browser = await p.chromium.launch(
                         headless=self._settings.headless,
@@ -253,26 +252,20 @@ class PlaywrightLinkedInCookieRefresher:
             # `exception` is the `Exception`, which may carry
             # the cookie value via the exception args; we
             # mask it via `_safe_exc_repr`).
-            _logger.warning(
-                "LinkedIn cookie refresh failed: %s", _safe_exc_repr(exc)
-            )
+            _logger.warning("LinkedIn cookie refresh failed: %s", _safe_exc_repr(exc))
             return None
         finally:
             # REQ-LCR-002 step 8: close context + browser
             # in reverse order (close ctx first).
             if context is not None:
-                try:
+                with contextlib.suppress(Exception):  # best-effort cleanup
                     await context.close()
-                except Exception:  # noqa: BLE001 — best-effort cleanup
-                    pass
             if browser is not None and self._browser_factory is None:
                 # Only close the browser when WE launched it
                 # (production path). When the caller injected
                 # the browser, the caller owns its lifecycle.
-                try:
+                with contextlib.suppress(Exception):
                     await browser.close()
-                except Exception:  # noqa: BLE001
-                    pass
 
     async def _login_and_extract(
         self,
@@ -291,9 +284,7 @@ class PlaywrightLinkedInCookieRefresher:
         page = await context.new_page()
         try:
             # REQ-LCR-002 step 3: navigate.
-            await page.goto(
-                "https://www.linkedin.com/login", wait_until="domcontentloaded"
-            )
+            await page.goto("https://www.linkedin.com/login", wait_until="domcontentloaded")
             await asyncio.sleep(1)
             # REQ-LCR-002 step 4: fill credentials.
             await page.locator("#username").first.fill(email_str)
@@ -330,18 +321,15 @@ class PlaywrightLinkedInCookieRefresher:
                     return cookies
                 if "checkpoint" in current_url:
                     _logger.warning(
-                        "LinkedIn cookie refresh hit a checkpoint; "
-                        "2FA requires manual resolution"
+                        "LinkedIn cookie refresh hit a checkpoint; 2FA requires manual resolution"
                     )
                     return None
                 await asyncio.sleep(poll_interval)
             # Timed out without seeing `/feed` or `/m/`.
             return None
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 await page.close()
-            except Exception:  # noqa: BLE001
-                pass
 
 
 def _safe_exc_repr(exc: BaseException) -> str:
