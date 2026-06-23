@@ -5,7 +5,7 @@ Two implementations of `LinkedInCookieRefresherPort`:
 1. **`PlaywrightLinkedInCookieRefresher`** — the production impl.
    Reads `LINKEDIN_EMAIL` / `LINKEDIN_PASSWORD` from `os.environ`,
    launches Chromium (non-headless under Xvfb; headless for tests),
-   fills `#username` + `#password`, clicks submit, polls the URL
+   fills `input[type="email"]` + `input[type="password"]`, clicks submit, polls the URL
    for `/feed` or `/m/` up to `timeout_seconds`. Returns
    `context.cookies()` on success, `None` on ANY failure
    (REQ-LCR-002 — never raises). Logs at WARNING level on
@@ -287,8 +287,21 @@ class PlaywrightLinkedInCookieRefresher:
             await page.goto("https://www.linkedin.com/login", wait_until="domcontentloaded")
             await asyncio.sleep(1)
             # REQ-LCR-002 step 4: fill credentials.
-            await page.locator("#username").first.fill(email_str)
-            await page.locator("#password").first.fill(password_str)
+            #
+            # LinkedIn's login page no longer exposes stable HTML IDs
+            # (`#username` / `#password`) — they were replaced with
+            # obfuscated, request-specific IDs (e.g. `«Refvd3ksopa55j6»`).
+            # The stable selectors are now the `type` + `autocomplete`
+            # attributes: `input[type="email"]` for the username and
+            # `input[type="password"]` for the password.
+            #
+            # The page renders the inputs TWICE in the DOM (once visible,
+            # once for accessibility/automation — both with bbox 0x0
+            # vs visible). We MUST use the `:visible` filter, otherwise
+            # `.first` resolves to the hidden copy and Playwright
+            # times out waiting for it to become editable.
+            await page.locator('input[type="email"]:visible').first.fill(email_str)
+            await page.locator('input[type="password"]:visible').first.fill(password_str)
             await asyncio.sleep(0.5)
             # REQ-LCR-002 step 4: click submit. Try the
             # English "Sign in" button first, then the Spanish

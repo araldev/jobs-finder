@@ -220,8 +220,8 @@ class TestPlaywrightLinkedInCookieRefresher:
         # `page.locator(sel).first.fill(value)` /
         # `get_by_role(...).first.click()`).
         assert page._locator_fill_calls == [
-            ("#username", "op@example.com"),
-            ("#password", "op_password"),
+            ('input[type="email"]:visible', "op@example.com"),
+            ('input[type="password"]:visible', "op_password"),
         ]
         assert len(page._locator_click_calls) >= 1
         # Context was closed (the caller owns the browser
