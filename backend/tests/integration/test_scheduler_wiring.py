@@ -8,6 +8,13 @@ verify that the scheduler + repository are correctly wired.
 repository is now built when `db_path` is non-empty regardless of
 `scheduler_enabled`. The scheduler is only built when
 `scheduler_enabled=true`.
+
+The `TestSchedulerWiringEnabled` tests monkeypatch the three scrapers'
+`__aenter__` / `__aexit__` to no-ops so the lifespan never tries to
+launch a real Chromium browser. Real-browser launches fail in
+sandbox environments (EACCES) and would also slow the suite by
+multiple seconds per test. The scrapers' `__aenter__` is replaced with
+a fake that just sets `_browser = None` and returns `self`.
 """
 
 from __future__ import annotations
@@ -21,7 +28,42 @@ from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 
 from jobs_finder.infrastructure.config import Settings
+from jobs_finder.infrastructure.indeed.scraper import IndeedPlaywrightScraper
+from jobs_finder.infrastructure.infojobs.scraper import InfoJobsPlaywrightScraper
+from jobs_finder.infrastructure.linkedin.scraper import LinkedInPlaywrightScraper
 from jobs_finder.presentation.app_factory import build_app
+
+
+def _patch_scrapers_to_skip_browser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Patch the three scrapers' `__aenter__` / `__aexit__` to no-ops.
+
+    The lifespan opens the 3 default scrapers in parallel via
+    `asyncio.gather(..., return_exceptions=True)`. In a sandboxed CI
+    environment without Chromium execute permissions, real browser
+    launches fail with `Error: spawn . EACCES`. To keep these tests
+    deterministic we replace each scraper's `__aenter__` with a no-op
+    that sets `_browser = None` and returns `self`, and each
+    `__aexit__` with a no-op.
+    """
+
+    async def _fake_aenter(self: object) -> object:
+        # Mirror the production code's attribute set without
+        # actually launching Chromium.
+        self._browser = None  # type: ignore[attr-defined]
+        return self
+
+    async def _fake_aexit(self: object, *exc: object) -> None:
+        return None
+
+    for cls in (
+        LinkedInPlaywrightScraper,
+        IndeedPlaywrightScraper,
+        InfoJobsPlaywrightScraper,
+    ):
+        monkeypatch.setattr(cls, "__aenter__", _fake_aenter)
+        monkeypatch.setattr(cls, "__aexit__", _fake_aexit)
 
 
 @asynccontextmanager
@@ -85,6 +127,7 @@ class TestSchedulerWiringEnabled:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """When enabled, the lifespan opens the repo and starts the scheduler."""
+        _patch_scrapers_to_skip_browser(monkeypatch)
         monkeypatch.setenv("SCHEDULER_ENABLED", "true")
         monkeypatch.setenv("SCHEDULER_MIN_INTERVAL_SECONDS", "10000.0")
         monkeypatch.setenv("SCHEDULER_MAX_INTERVAL_SECONDS", "20000.0")
@@ -112,6 +155,7 @@ class TestSchedulerWiringEnabled:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
     ) -> None:
         """After lifespan shutdown, the repository connection should be closed."""
+        _patch_scrapers_to_skip_browser(monkeypatch)
         db_file = str(tmp_path / "test_scheduler.db")
         monkeypatch.setenv("SCHEDULER_ENABLED", "true")
         monkeypatch.setenv("SCHEDULER_MIN_INTERVAL_SECONDS", "10000.0")
@@ -149,6 +193,7 @@ class TestSchedulerRetentionWiring:
     @pytest.mark.asyncio
     async def test_retention_days_wired_to_scheduler(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When `RETENTION_DAYS=30`, the scheduler receives `retention_days=30`."""
+        _patch_scrapers_to_skip_browser(monkeypatch)
         monkeypatch.setenv("SCHEDULER_ENABLED", "true")
         monkeypatch.setenv("RETENTION_DAYS", "30")
         monkeypatch.setenv("SCHEDULER_MIN_INTERVAL_SECONDS", "10000.0")
