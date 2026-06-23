@@ -374,12 +374,18 @@ def _build_history_clauses(
 
     if date_from is not None:
         clauses.append(f"posted_at >= ${param_idx}")
-        params.append(date_from)
+        date_from_val: Any = (
+            datetime.fromisoformat(date_from).date() if isinstance(date_from, str) else date_from
+        )
+        params.append(date_from_val)
         param_idx += 1
 
     if date_to is not None:
         clauses.append(f"posted_at <= ${param_idx}")
-        params.append(date_to)
+        date_to_val: Any = (
+            datetime.fromisoformat(date_to).date() if isinstance(date_to, str) else date_to
+        )
+        params.append(date_to_val)
         param_idx += 1
 
     return clauses, params

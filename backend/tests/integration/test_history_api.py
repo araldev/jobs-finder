@@ -384,13 +384,16 @@ class TestHistoryByIdRegression:
     """Regression tests for the by-id endpoint's 404 contract (REQ-MAINT-012)."""
 
     @pytest.mark.asyncio
-    async def test_by_id_returns_404_when_repo_missing(self) -> None:
+    async def test_by_id_returns_404_when_repo_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """When the DB is not configured (repo is None), the endpoint returns 404.
 
         Before the fix: returned 200 with body `{"error": "Job not found"}`
         (because `JSONResponse(..., status=404)` silently dropped `status`).
         After the fix: raises `HTTPException(404)` → FastAPI handler → 404.
         """
+        monkeypatch.setenv("DATABASE_URL", "")
         # No db_path → repo is None
         settings = Settings(
             scheduler_enabled=False,

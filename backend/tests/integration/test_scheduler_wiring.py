@@ -50,8 +50,9 @@ class TestSchedulerWiringDisabled:
     """SCHEDULER_ENABLED=false: repo built only when db_path is set."""
 
     @pytest.mark.asyncio
-    async def test_no_repo_when_db_path_empty(self) -> None:
+    async def test_no_repo_when_db_path_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When `db_path=""`, no repository is built regardless of scheduler."""
+        monkeypatch.setenv("DATABASE_URL", "")
         app = build_app(settings=Settings(db_path=""))
 
         async with _client_with_lifespan(app):
@@ -59,8 +60,11 @@ class TestSchedulerWiringDisabled:
             assert repo is None, "Expected no job_repository when db_path=''"
 
     @pytest.mark.asyncio
-    async def test_repo_built_without_scheduler_when_db_path_set(self) -> None:
+    async def test_repo_built_without_scheduler_when_db_path_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """When db_path set and scheduler disabled, repo is built but scheduler is not."""
+        monkeypatch.setenv("DATABASE_URL", "")
         app = build_app(settings=Settings(db_path=":memory:", scheduler_enabled=False))
 
         async with _client_with_lifespan(app):
@@ -82,7 +86,6 @@ class TestSchedulerWiringEnabled:
     ) -> None:
         """When enabled, the lifespan opens the repo and starts the scheduler."""
         monkeypatch.setenv("SCHEDULER_ENABLED", "true")
-        monkeypatch.setenv("DB_PATH", ":memory:")
         monkeypatch.setenv("SCHEDULER_MIN_INTERVAL_SECONDS", "10000.0")
         monkeypatch.setenv("SCHEDULER_MAX_INTERVAL_SECONDS", "20000.0")
         monkeypatch.setenv(
@@ -90,7 +93,13 @@ class TestSchedulerWiringEnabled:
             '[{"keywords": "python", "location": "Madrid"}]',
         )
 
-        app = build_app()
+        app = build_app(
+            settings=Settings(
+                scheduler_enabled=True,
+                db_path=":memory:",
+                database_url="",  # Force SQLite regardless of env
+            )
+        )
 
         async with _client_with_lifespan(app):
             repo = getattr(app.state, "job_repository", None)
@@ -105,7 +114,6 @@ class TestSchedulerWiringEnabled:
         """After lifespan shutdown, the repository connection should be closed."""
         db_file = str(tmp_path / "test_scheduler.db")
         monkeypatch.setenv("SCHEDULER_ENABLED", "true")
-        monkeypatch.setenv("DB_PATH", db_file)
         monkeypatch.setenv("SCHEDULER_MIN_INTERVAL_SECONDS", "10000.0")
         monkeypatch.setenv("SCHEDULER_MAX_INTERVAL_SECONDS", "20000.0")
         monkeypatch.setenv(
@@ -113,7 +121,13 @@ class TestSchedulerWiringEnabled:
             '[{"keywords": "python", "location": "Madrid"}]',
         )
 
-        app = build_app()
+        app = build_app(
+            settings=Settings(
+                scheduler_enabled=True,
+                db_path=db_file,
+                database_url="",  # Force SQLite regardless of env
+            )
+        )
 
         async with _client_with_lifespan(app):
             repo = getattr(app.state, "job_repository", None)
@@ -136,7 +150,6 @@ class TestSchedulerRetentionWiring:
     async def test_retention_days_wired_to_scheduler(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When `RETENTION_DAYS=30`, the scheduler receives `retention_days=30`."""
         monkeypatch.setenv("SCHEDULER_ENABLED", "true")
-        monkeypatch.setenv("DB_PATH", ":memory:")
         monkeypatch.setenv("RETENTION_DAYS", "30")
         monkeypatch.setenv("SCHEDULER_MIN_INTERVAL_SECONDS", "10000.0")
         monkeypatch.setenv("SCHEDULER_MAX_INTERVAL_SECONDS", "20000.0")
@@ -145,7 +158,14 @@ class TestSchedulerRetentionWiring:
             '[{"keywords": "python", "location": "Madrid"}]',
         )
 
-        app = build_app()
+        app = build_app(
+            settings=Settings(
+                scheduler_enabled=True,
+                db_path=":memory:",
+                database_url="",
+                retention_days=30,
+            )
+        )
 
         async with _client_with_lifespan(app):
             scheduler = getattr(app.state, "scheduler", None)
