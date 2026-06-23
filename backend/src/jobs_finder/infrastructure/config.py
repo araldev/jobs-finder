@@ -511,6 +511,67 @@ class Settings(BaseSettings):
     )
 
     # ------------------------------------------------------------------
+    # LinkedIn cookie-refresh settings (REQ-CF-301/302/303,
+    # `linkedin-cookie-refresh` cycle 4).
+    #
+    # The 3 fields below configure the auto-refresh-on-auth-wall
+    # feature: when the LinkedIn scraper detects the auth wall or
+    # a Cloudflare challenge, the `PlaywrightLinkedInCookieRefresher`
+    # re-logs-in with the operator's `LINKEDIN_EMAIL` /
+    # `LINKEDIN_PASSWORD` credentials and writes new cookies back
+    # into the auth-cookie adapter.
+    #
+    # - `linkedin_cookie_refresh_enabled` (REQ-CF-301): kill switch.
+    #   Default `True` (zero-touch operation is the user's stated
+    #   intent). When `False`, the composition root wires a
+    #   `DisabledLinkedInCookieRefresher` whose `refresh()` is
+    #   identity (returns existing cookies unchanged) and the
+    #   scraper's `_maybe_refresh_cookies` short-circuits to
+    #   `False`.
+    # - `linkedin_cookie_refresh_backoff_seconds` (REQ-CF-302):
+    #   backoff window — the scraper skips refresh within this
+    #   many seconds of the last attempt to prevent refresh-storm
+    #   on per-scheduler-cycle cadence (~25-35 min). Default
+    #   `3600.0` (1 hour). `gt=0.0` enforces positive backoff;
+    #   operators who want zero backoff MUST set the kill switch
+    #   instead (the spec's explicit position).
+    # - `linkedin_cookie_refresh_timeout_seconds` (REQ-CF-303):
+    #   the `PlaywrightLinkedInCookieRefresher.refresh()` wall-
+    #   clock cap on the post-login poll (matches the
+    #   `extract_linkedin_cookies.py` precedent of 300s).
+    #   Default `300.0`. `gt=0.0` enforces positive timeout.
+    #
+    # Each field opts out of the model-level
+    # `env_prefix="LINKEDIN_"` by declaring its own
+    # `validation_alias` (same pattern used by the existing
+    # `linkedin_*` pagination fields above). The env-var
+    # contract for the existing LinkedIn fields is unchanged.
+    # ------------------------------------------------------------------
+
+    linkedin_cookie_refresh_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "LINKEDIN_COOKIE_REFRESH_ENABLED", "linkedin_cookie_refresh_enabled"
+        ),
+    )
+    linkedin_cookie_refresh_backoff_seconds: float = Field(
+        default=3600.0,
+        gt=0.0,
+        validation_alias=AliasChoices(
+            "LINKEDIN_COOKIE_REFRESH_BACKOFF_SECONDS",
+            "linkedin_cookie_refresh_backoff_seconds",
+        ),
+    )
+    linkedin_cookie_refresh_timeout_seconds: float = Field(
+        default=300.0,
+        gt=0.0,
+        validation_alias=AliasChoices(
+            "LINKEDIN_COOKIE_REFRESH_TIMEOUT_SECONDS",
+            "linkedin_cookie_refresh_timeout_seconds",
+        ),
+    )
+
+    # ------------------------------------------------------------------
     # Stats aggregator (REQ-PDPRSC-003, `perf-dashboard-rsc-migration`)
     #
     # `stats_port_timeout_seconds` (default 2.0) bounds the per-call

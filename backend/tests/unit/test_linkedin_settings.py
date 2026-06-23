@@ -248,3 +248,114 @@ def test_settings_equality_includes_resolver() -> None:
     # different hashes (not a strict requirement, but pins
     # the contract that `__eq__` and `__hash__` agree).
     assert hash(a) != hash(b)
+
+
+# ---------------------------------------------------------------------------
+# `Settings` — `linkedin_cookie_refresh_*` fields
+# (REQ-CF-301/302/303 — `linkedin-cookie-refresh` cycle 4).
+#
+# The 3 fields below are the kill switch + backoff + timeout for
+# the new auto-refresh feature. Each declares its own
+# `validation_alias` (`LINKEDIN_COOKIE_REFRESH_*` ↔ lowercase
+# programmatic) per the pattern used by the existing
+# `linkedin_max_pages` / `linkedin_inter_page_delay_seconds` /
+# `indeed_*` / `infojobs_*` fields.
+#
+# Defaults:
+#   - `enabled` defaults to `True` (REQ-CF-301: zero-touch
+#     operation is the user's stated intent; the env var is
+#     an explicit opt-OUT).
+#   - `backoff_seconds` defaults to `3600.0` (REQ-CF-302: 1 hour
+#     prevents refresh-storm on per-scheduler-cycle cadence of
+#     ~25-35 min).
+#   - `timeout_seconds` defaults to `300.0` (REQ-CF-303: matches
+#     the existing `extract_linkedin_cookies.py` poll-up-to-300s
+#     precedent).
+# ---------------------------------------------------------------------------
+
+
+def test_settings_linkedin_cookie_refresh_enabled_default_is_true() -> None:
+    """REQ-CF-301 — `Settings().linkedin_cookie_refresh_enabled` defaults to `True`.
+
+    Zero-touch operation is the user's stated intent; the env
+    var is the explicit opt-OUT (set to `false` to disable).
+    """
+    assert Settings().linkedin_cookie_refresh_enabled is True
+
+
+def test_settings_linkedin_cookie_refresh_enabled_env_var_overrides_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REQ-CF-301 — `LINKEDIN_COOKIE_REFRESH_ENABLED=false` overrides the default.
+
+    pydantic-settings auto-coerces `"false"` / `"0"` / `"no"` to
+    `bool(False)`. The default `True` is replaced.
+    """
+    monkeypatch.setenv("LINKEDIN_COOKIE_REFRESH_ENABLED", "false")
+    assert Settings().linkedin_cookie_refresh_enabled is False
+
+
+def test_settings_linkedin_cookie_refresh_enabled_programmatic_construction_works() -> None:
+    """REQ-CF-301 — programmatic `Settings(linkedin_cookie_refresh_enabled=...)` works."""
+    assert Settings(linkedin_cookie_refresh_enabled=False).linkedin_cookie_refresh_enabled is False
+
+
+def test_settings_linkedin_cookie_refresh_backoff_seconds_default_is_3600() -> None:
+    """REQ-CF-302 — `Settings().linkedin_cookie_refresh_backoff_seconds` defaults to `3600.0`.
+
+    1 hour — the recommended value to prevent refresh-storm
+    on per-scheduler-cycle cadence (~25-35 min).
+    """
+    assert Settings().linkedin_cookie_refresh_backoff_seconds == 3600.0
+
+
+def test_settings_linkedin_cookie_refresh_backoff_seconds_env_var_overrides_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REQ-CF-302 — `LINKEDIN_COOKIE_REFRESH_BACKOFF_SECONDS=120.0` overrides the default."""
+    monkeypatch.setenv("LINKEDIN_COOKIE_REFRESH_BACKOFF_SECONDS", "120.0")
+    assert Settings().linkedin_cookie_refresh_backoff_seconds == 120.0
+
+
+def test_settings_linkedin_cookie_refresh_backoff_seconds_rejects_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REQ-CF-302 — `backoff_seconds=0` is rejected (gt=0.0).
+
+    The `gt=0.0` constraint enforces positive backoff. A
+    zero backoff would disable backoff entirely, which the
+    spec explicitly forbids (operators must use
+    `linkedin_cookie_refresh_enabled=False` for that).
+    """
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("LINKEDIN_COOKIE_REFRESH_BACKOFF_SECONDS", "0")
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_settings_linkedin_cookie_refresh_timeout_seconds_default_is_300() -> None:
+    """REQ-CF-303 — `Settings().linkedin_cookie_refresh_timeout_seconds` defaults to `300.0`."""
+    assert Settings().linkedin_cookie_refresh_timeout_seconds == 300.0
+
+
+def test_settings_linkedin_cookie_refresh_timeout_seconds_env_var_overrides_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REQ-CF-303 — `LINKEDIN_COOKIE_REFRESH_TIMEOUT_SECONDS=60.0` overrides the default."""
+    monkeypatch.setenv("LINKEDIN_COOKIE_REFRESH_TIMEOUT_SECONDS", "60.0")
+    assert Settings().linkedin_cookie_refresh_timeout_seconds == 60.0
+
+
+def test_settings_linkedin_cookie_refresh_timeout_seconds_rejects_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REQ-CF-303 — `timeout_seconds=0` is rejected (gt=0.0).
+
+    A zero timeout would immediately time out — meaningless.
+    """
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("LINKEDIN_COOKIE_REFRESH_TIMEOUT_SECONDS", "0")
+    with pytest.raises(ValidationError):
+        Settings()

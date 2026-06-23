@@ -21,12 +21,20 @@ from pathlib import Path
 
 from pydantic import SecretStr
 
-from jobs_finder.application.ports import LinkedInAuthCookiePort
+from jobs_finder.application.ports import (
+    LinkedInAuthCookiePort,
+    LinkedInAuthCookiesPort,
+    LinkedInCookieRefresherPort,
+)
 from jobs_finder.infrastructure.linkedin.auth_cookie import (
     EnvLinkedInAuthCookieAdapter,
 )
 from jobs_finder.infrastructure.linkedin.scraper import LinkedInScraperSettings
-from tests.conftest import FakeLinkedInAuthCookiePort
+from tests.conftest import (
+    FakeLinkedInAuthCookiePort,
+    FakeLinkedInAuthCookiesPort,
+    FakeLinkedInCookieRefresherPort,
+)
 
 
 class TestPortProtocolStructuralConformance:
@@ -42,6 +50,135 @@ class TestPortProtocolStructuralConformance:
         fake = FakeLinkedInAuthCookiePort(cookie=SecretStr("AQEAAAAQEAAA"))
         port: LinkedInAuthCookiePort = fake
         assert port.cookie() is not None
+
+
+class TestCookieRefresherPortProtocol:
+    """REQ-LCR-001 — `LinkedInCookieRefresherPort` Protocol shape.
+
+    The Protocol has a single async method
+    `refresh() -> list[dict[str, Any]] | None`. The structural
+    conformance is enforced at mypy --strict time (a class with
+    a matching `async def refresh(self) -> list[dict[str, Any]]
+    | None` method satisfies the Protocol). The fake in
+    `tests/conftest.py` is the canonical test double.
+    """
+
+    async def test_port_returns_list_of_dicts_with_expected_keys(self) -> None:
+        """REQ-LCR-001 scenario — `refresh()` returns a list of dicts
+        whose only entry carries the Playwright `context.cookies()`
+        keys.
+        """
+        fake = FakeLinkedInCookieRefresherPort(
+            canned=[
+                {
+                    "name": "li_at",
+                    "value": "AQE_NEW",
+                    "domain": ".linkedin.com",
+                    "path": "/",
+                    "expires": -1,
+                    "httpOnly": True,
+                    "secure": True,
+                    "sameSite": "Lax",
+                }
+            ]
+        )
+        port: LinkedInCookieRefresherPort = fake
+        result = await port.refresh()
+        assert result is not None
+        assert len(result) == 1
+        cookie = result[0]
+        expected_keys = {
+            "name",
+            "value",
+            "domain",
+            "path",
+            "expires",
+            "httpOnly",
+            "secure",
+            "sameSite",
+        }
+        assert set(cookie.keys()) == expected_keys
+
+    async def test_port_returns_none_on_failure(self) -> None:
+        """REQ-LCR-001 scenario — `refresh()` returns `None` on failure.
+
+        The fake's `canned=None` shape drives the failure path.
+        """
+        fake = FakeLinkedInCookieRefresherPort(canned=None)
+        port: LinkedInCookieRefresherPort = fake
+        result = await port.refresh()
+        assert result is None
+
+    async def test_port_protocol_structural_typing(self) -> None:
+        """REQ-LCR-001 scenario 3 — the fake satisfies the Protocol.
+
+        mypy --strict checks the assignment at type-check time;
+        at runtime we just verify the structural shape matches.
+        """
+        fake = FakeLinkedInCookieRefresherPort(
+            canned=[{"name": "li_at", "value": "x", "domain": ".linkedin.com"}]
+        )
+        port: LinkedInCookieRefresherPort = fake
+        # Invoke to confirm the method exists with the right
+        # signature (no `await` would fail at runtime).
+        result = await port.refresh()
+        assert result is not None
+
+
+class TestAuthCookiesPortSetCookies:
+    """REQ-AC-101 — `LinkedInAuthCookiesPort.set_cookies()` mutation seam.
+
+    The plural Protocol gains an async `set_cookies(cookies)` method
+    so the `LinkedInCookieRefresherPort.refresh()` path can write
+    new cookies back into the adapter. The fake in conftest
+    (extended in T-LCR-004) records every call.
+    """
+
+    async def test_fake_double_conforms_to_protocol_with_set_cookies(self) -> None:
+        """The plural fake satisfies `LinkedInAuthCookiesPort` after the
+        Protocol gains `set_cookies()`.
+        """
+        fake = FakeLinkedInAuthCookiesPort()
+        port: LinkedInAuthCookiesPort = fake
+        # mypy --strict checks this assignment; the fake has both
+        # `cookies()` AND `set_cookies()` methods after the
+        # conftest extension in T-LCR-012.
+        assert port.cookies() is None
+        await port.set_cookies(
+            [
+                {
+                    "name": "li_at",
+                    "value": "AQE_NEW",
+                    "domain": ".linkedin.com",
+                    "path": "/",
+                    "expires": -1,
+                    "httpOnly": True,
+                    "secure": True,
+                    "sameSite": "Lax",
+                }
+            ]
+        )
+        assert fake.set_cookies_calls == [
+            [
+                {
+                    "name": "li_at",
+                    "value": "AQE_NEW",
+                    "domain": ".linkedin.com",
+                    "path": "/",
+                    "expires": -1,
+                    "httpOnly": True,
+                    "secure": True,
+                    "sameSite": "Lax",
+                }
+            ]
+        ]
+
+
+# Sentinel import so the LSP / mypy doesn't complain about the
+# unused Protocol symbols at the top of this file. The Protocol
+# import in T-LCR-002 is the load-bearing reference; the
+# `LinkedInAuthCookiePort` import was already in the file.
+_ = (LinkedInCookieRefresherPort, LinkedInAuthCookiesPort)
 
 
 class TestEnvLinkedInAuthCookieAdapter:

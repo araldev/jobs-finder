@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Literal, NamedTuple, Protocol, TypeVar
+from typing import Any, Literal, NamedTuple, Protocol, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
@@ -820,6 +820,112 @@ class LinkedInAuthCookiesPort(Protocol):
     (`FakeLinkedInAuthCookiesPort`) both satisfy it
     structurally so the scraper can be unit-tested with no
     `Settings` ctor and no env-var mutation.
+
+    REQ-AC-101 — `set_cookies()` mutation seam (added in
+    `linkedin-cookie-refresh` cycle 4). The Protocol gains a
+    second method `async def set_cookies(cookies)` that writes
+    the given cookie dicts back into the adapter. The 3
+    adapters in `infrastructure/linkedin/auth_cookie.py` each
+    implement this method (env-based adapters write a side-
+    channel JSON file via `os.replace`; the JSON adapter
+    rewrites its JSON file via `os.replace` and creates a
+    `.bak`). The scraper's `_maybe_refresh_cookies()` calls
+    this after a successful `cookie_refresher.refresh()` to
+    inject the new cookies into the running process (the next
+    `search()` re-reads from the adapter via `cookies()` /
+    `cookie_dicts()`).
     """
 
     def cookies(self) -> list[tuple[str, SecretStr]] | None: ...
+
+    async def set_cookies(self, cookies: list[dict[str, Any]]) -> None:
+        """Write the given cookie dicts back into the adapter.
+
+        REQ-AC-101 — the runtime seam that lets the LinkedIn
+        cookie refresher replace the operator's stale cookies
+        without restarting the process. The dict shape matches
+        Playwright's `context.cookies()` output: `{name, value,
+        domain, path, expires, httpOnly, secure, sameSite}`.
+        Each adapter (`EnvLinkedInAuthCookieAdapter`,
+        `MultiEnvLinkedInAuthCookiesAdapter`,
+        `JsonLinkedInAuthCookiesAdapter`) implements this
+        method with its own write strategy (side-channel JSON
+        vs. atomic rewrite vs. JSON + `.bak`). REQ-AC-102 —
+        after `set_cookies()` returns, `cookies()` /
+        `cookie_dicts()` MUST return the freshly-set values
+        (the read-after-write invariant).
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
+# LinkedIn cookie refresher (REQ-LCR-001, `linkedin-cookie-refresh` cycle 4)
+#
+# `LinkedInCookieRefresherPort` is the application layer's seam for
+# "any LinkedIn cookie re-acquisition strategy". The production
+# implementation `PlaywrightLinkedInCookieRefresher` lives in
+# `infrastructure/linkedin/cookie_refresher.py` and logs in with the
+# operator's `LINKEDIN_EMAIL` / `LINKEDIN_PASSWORD` env vars via a
+# headless Chromium browser (REQUIRES Xvfb in CI — see README). The
+# `DisabledLinkedInCookieRefresher` is the kill-switch target for
+# `LINKEDIN_COOKIE_REFRESH_ENABLED=false`.
+#
+# The Protocol is NOT `@runtime_checkable` (mirrors the existing
+# `JobSearchPort`, `LLMClientPort`, and `LinkedInAuthCookiesPort`
+# patterns). Structural conformance is enforced at mypy --strict
+# time. The `FakeLinkedInCookieRefresherPort` in `tests/conftest.py`
+# is structurally compatible — its `async def refresh(self) ->
+# list[dict[str, Any]] | None` method matches the Protocol's
+# signature exactly.
+#
+# The return type is `list[dict[str, Any]] | None`:
+#   - `list[dict[str, Any]]`: a list of cookie dicts matching
+#     Playwright's `context.cookies()` output shape (name, value,
+#     domain, path, expires, httpOnly, secure, sameSite). The
+#     scraper forwards the list verbatim to
+#     `LinkedInAuthCookiesPort.set_cookies()`.
+#   - `None`: any failure (missing credentials, timeout, browser
+#     launch error, login failure). The scraper's
+#     `_maybe_refresh_cookies` returns `False` on `None` and
+#     falls through to the existing soft-WARNING path (no
+#     exception, no retry within the backoff window).
+#
+# `refresh()` MUST NEVER raise — the production impl catches all
+# exceptions internally and returns `None` (REQ-LCR-002). The
+# scraper relies on this contract (no `try` / `except` around
+# the call site).
+# ---------------------------------------------------------------------------
+
+
+class LinkedInCookieRefresherPort(Protocol):
+    """A LinkedIn cookie re-acquisition strategy. Implementations live in
+    `infrastructure/linkedin/cookie_refresher.py`.
+
+    Spec: REQ-LCR-001 — the production `LinkedInPlaywrightScraper`
+    consults this Port when its soft-WARNING paths fire
+    (auth-wall / Cloudflare challenge). On a non-`None` return,
+    the scraper writes the new cookies back via
+    `LinkedInAuthCookiesPort.set_cookies()` (REQ-AC-101) and
+    invalidates the per-source cache. On `None`, the scraper
+    records `_last_refresh_attempt_at` for backoff
+    (REQ-LCR-004) and returns `[]` (soft path).
+    """
+
+    async def refresh(self) -> list[dict[str, Any]] | None:
+        """Re-acquire LinkedIn session cookies. NEVER raises.
+
+        Returns:
+            A list of cookie dicts (Playwright `context.cookies()`
+            shape) on successful re-login, OR `None` on any
+            failure (missing credentials, browser launch
+            failure, post-login timeout, network error, etc.).
+            The scraper treats `None` as a soft-failure signal
+            (WARNING + backoff + return `[]`).
+
+        Raises:
+            Nothing. The production impl catches ALL
+            exceptions and converts to `None` (the soft
+            contract — a hard raise would bubble up to the
+            route and become an HTTP 502).
+        """
+        ...

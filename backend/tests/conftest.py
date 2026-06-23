@@ -117,18 +117,112 @@ class FakeLinkedInAuthCookiesPort:
     (plural) — the test in
     `test_linkedin_stealth.py::TestFakeLinkedInAuthCookiesPort::test_fake_conforms_to_protocol_typecheck`
     pins the structural conformance of the new fake only.
+
+    REQ-AC-101 (`linkedin-cookie-refresh` cycle 4): the fake
+    ALSO satisfies the new `set_cookies()` method. It records
+    every call in `set_cookies_calls` and overwrites
+    `self._cookies` with the new pairs derived from the input
+    dicts (preserving REQ-AC-102 read-after-write).
     """
 
-    __slots__ = ("_cookies",)
+    __slots__ = ("_cookies", "set_cookies_calls")
 
     def __init__(
         self,
         cookies: list[tuple[str, SecretStr]] | None = None,
     ) -> None:
         self._cookies = cookies
+        self.set_cookies_calls: list[list[dict[str, object]]] = []
 
     def cookies(self) -> list[tuple[str, SecretStr]] | None:
         return self._cookies
+
+    async def set_cookies(self, cookies: list[dict[str, object]]) -> None:
+        """REQ-AC-101 — record the call + overwrite internal state.
+
+        The fake normalizes each cookie dict to a
+        `(name, SecretStr(value))` pair in canonical order
+        (REVERSED of `cookies()`'s filter rule — `set_cookies`
+        stores ALL entries, even unknown names; the
+        `MultiEnvLinkedInAuthCookiesAdapter.set_cookies()`
+        ignores unknown names per REQ-AC-101).
+        """
+        self.set_cookies_calls.append(list(cookies))
+        pairs: list[tuple[str, SecretStr]] = []
+        for c in cookies:
+            name = str(c.get("name", ""))
+            value = str(c.get("value", ""))
+            if name and value:
+                pairs.append((name, SecretStr(value)))
+        self._cookies = pairs if pairs else None
+
+
+class FakeLinkedInCookieRefresherPort:
+    """In-memory fake of `LinkedInCookieRefresherPort` for tests
+    (T-012 of `linkedin-cookie-refresh` cycle 4).
+
+    Mirrors the `LinkedInCookieRefresherPort` Protocol: a
+    single async `refresh()` method that returns the configured
+    `canned` list of dicts OR `None` on failure. The fake
+    supports 3 scenarios per C-3 (spec constraint):
+
+    1. **Success** — `canned=[{...}, ...]` returns the list.
+    2. **Failure** — `canned=None` returns `None`.
+    3. **Slow refresh** — `delay_seconds=2.0` awaits that
+       many seconds before returning (the backoff test
+       asserts that the scraper's `_last_refresh_attempt_at`
+       is recorded before the await completes — needed to
+       verify backoff state semantics).
+
+    The ctor ALSO accepts an `error: Exception | None` (not
+    used in spec scenarios but exposed for completeness —
+    the production `PlaywrightLinkedInCookieRefresher` swallows
+    ALL exceptions internally, so the scraper never sees a
+    raise; this kwarg exists for future test scaffolding).
+
+    Records every call in `calls: int` so the scraper
+    integration tests can assert the refresh was invoked
+    exactly once (or exactly zero times in the backoff path).
+
+    The class is structurally compatible with
+    `LinkedInCookieRefresherPort` — `async def refresh(self) ->
+    list[dict[str, Any]] | None` matches the Protocol's
+    signature exactly (mypy --strict enforces this at
+    type-check time).
+    """
+
+    __slots__ = ("_canned", "_delay_seconds", "_error", "calls")
+
+    def __init__(
+        self,
+        canned: list[dict[str, object]] | None = None,
+        *,
+        delay_seconds: float = 0.0,
+        error: Exception | None = None,
+    ) -> None:
+        # `canned=None` is the failure sentinel; `canned=[]`
+        # is "success but zero cookies" (a degenerate case the
+        # spec does NOT pin — tests should use `canned=[{...}]`
+        # for success scenarios).
+        self._canned = canned
+        self._delay_seconds = delay_seconds
+        self._error = error
+        self.calls: int = 0
+
+    async def refresh(self) -> list[dict[str, object]] | None:
+        """Return `canned` (or raise `error` / sleep then return)."""
+        self.calls += 1
+        if self._error is not None:
+            raise self._error
+        if self._delay_seconds > 0:
+            import asyncio
+
+            await asyncio.sleep(self._delay_seconds)
+        if self._canned is None:
+            return None
+        # Return a copy so the caller cannot mutate the fake's
+        # canned state via the returned list.
+        return [dict(c) for c in self._canned]  # type: ignore[return-value]  # noqa: E501
 
 
 def _build_cached_linkedin_use_case(
