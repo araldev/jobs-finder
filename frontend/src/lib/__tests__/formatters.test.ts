@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import {
   formatRelativeDate,
   formatNumber,
@@ -6,13 +6,29 @@ import {
 } from "../formatters";
 
 describe("formatRelativeDate — bilingual", () => {
+  // Pin the system clock to a known mid-afternoon timestamp so the
+  // "1 hour ago" / "24 hours ago" tests are deterministic regardless
+  // of when the test suite runs. Without this, the suite fails when
+  // it runs between 00:00 and 01:00 local time (because "1 hour ago"
+  // crosses the day boundary and the formatter returns "Yesterday"
+  // instead of "1 hour ago"). The pinned time `2026-06-23T14:30:00Z`
+  // is mid-afternoon UTC — 1h ago is well within the same day, 24h
+  // ago is unambiguously yesterday.
+  beforeAll(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-23T14:30:00Z"));
+  });
+  afterAll(() => {
+    vi.useRealTimers();
+  });
+
   it("returns empty string for null", () => {
     expect(formatRelativeDate(null)).toBe("");
     expect(formatRelativeDate(null, "en")).toBe("");
   });
 
   it("Spanish: recent (same-day) dates use 'hace' suffix", () => {
-    // 1 hour ago — definitely today, not yesterday
+    // 1 hour ago — pinned time is 14:30Z, so this is 13:30Z (same day).
     const oneHourAgo = new Date(Date.now() - 1 * 3600000).toISOString();
     expect(formatRelativeDate(oneHourAgo, "es")).toContain("hace");
   });
