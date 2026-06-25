@@ -1,0 +1,57 @@
+# =============================================================================
+# jobs-finder — Production Docker Compose
+# =============================================================================
+#
+# Deploy the backend API behind a Caddy reverse proxy with automatic TLS.
+#
+# Usage:
+#   cp .env.production.example .env.production
+#   # Edit .env.production with your domain, secrets, and Supabase URL.
+#   docker compose up -d
+#
+# Frontend is deployed separately on Vercel.
+# =============================================================================
+
+services:
+  # ── Backend API ────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8000"
+    env_file:
+      - path: .env.production
+        required: true
+    environment:
+      - ENVIRONMENT=production
+      - SCHEDULER_ENABLED=true
+    networks:
+      - internal
+
+  # ── Caddy reverse proxy (auto TLS) ─────────────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - internal
+    depends_on:
+      - backend
+    # Graceful shutdown so in-flight requests complete.
+    stop_grace_period: 30s
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  internal:
+    driver: bridge

@@ -70,6 +70,8 @@ package-lock.json.bak
 !.env.example
 .env.*
 .env.**
+# Exception: deploy/.env.production.example IS committed (template)
+!deploy/.env.production.example
 # Operator TOML overrides — create this file manually if you need to
 # tweak a non-secret operational default locally without editing
 # `config/default.toml` (which is versioned). Same TOML format as

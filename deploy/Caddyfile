@@ -1,0 +1,37 @@
+# =============================================================================
+# jobs-finder — Caddy reverse proxy config
+# =============================================================================
+#
+# Replace API_DOMAIN with your actual domain before deploying.
+# Caddy auto-provisions TLS via Let's Encrypt — no certbot needed.
+#
+# Example:
+#   api.jobsfinder.com {
+#       reverse_proxy backend:8000
+#   }
+# =============================================================================
+
+API_DOMAIN {
+    # Proxy all requests to the backend container.
+    reverse_proxy backend:8000
+
+    # Security headers (defense-in-depth beyond the backend's own CORS).
+    header {
+        # Prevent clickjacking.
+        X-Frame-Options "DENY"
+        # Enable XSS filter in older browsers.
+        X-XSS-Protection "1; mode=block"
+        # MIME-sniffing protection.
+        X-Content-Type-Options "nosniff"
+        # Referrer policy.
+        Referrer-Policy "no-referrer"
+        # HSTS — force HTTPS for 1 year (preload-ready).
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    }
+
+    # Log format compatible with the backend's JSON logging.
+    log {
+        output file /data/access.log
+        format json
+    }
+}
