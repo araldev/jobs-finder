@@ -327,9 +327,10 @@ class Settings(BaseSettings):
     request_timeout_ms: int = 10_000
 
     # REQ-006 — CORS allowlist. Defaults to a sentinel `["*"]` that the
-    # model_validator replaces with a safe localhost list in development
-    # (auto-discovery). In production, a ValueError is raised if CORS is
-    # not explicitly overridden via LINKEDIN_CORS_ALLOW_ORIGINS.
+    # In development mode (the default), the sentinel `["*"]` is kept as-is
+    # so the API works from any origin (localhost, LAN, Docker). In
+    # production, a ValueError is raised if CORS is not explicitly
+    # overridden via LINKEDIN_CORS_ALLOW_ORIGINS.
     cors_allow_origins: list[str] = Field(
         default_factory=lambda: ["*"],
         validation_alias=AliasChoices("LINKEDIN_CORS_ALLOW_ORIGINS", "cors_allow_origins"),
@@ -1699,11 +1700,12 @@ class Settings(BaseSettings):
           raise ValueError if still at the sentinel default ["*"].
         """
         if self.deployment_environment == "development":
-            # Override the bare "*" sentinel with a safe localhost list.
-            self.cors_allow_origins = [
-                "http://localhost:3000",
-                "http://127.0.0.1:3000",
-            ]
+            # Keep the sentinel "*" in development so the API works
+            # from ANY origin — localhost, LAN IP, or Docker
+            # without manual config. The API auth (API key / JWT)
+            # still protects endpoints.
+            # Override via LINKEDIN_CORS_ALLOW_ORIGINS if needed.
+            pass
         elif self.cors_allow_origins == ["*"]:
             # production but CORS was not explicitly set
             raise ValueError(

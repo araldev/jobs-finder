@@ -397,6 +397,44 @@ wrapper script. The current canonical entry point is the `uv run`
 command above. No `scripts/` wrapper exists because the `setsid`
 built-in is available on every Linux distribution (coreutils).
 
+### Accessing from other devices on the local network
+
+Both services bind to `0.0.0.0` by default (all network interfaces),
+so they are accessible from any device on the same LAN.
+
+```bash
+# 1. Find your machine's LAN IP
+hostname -I | awk '{print $1}'
+# e.g. 192.168.1.42
+
+# 2. Start the backend (port 8000)
+cd backend
+setsid uv run python -m jobs_finder.main > backend.log 2>&1 &
+
+# 3. Start the frontend dev server (port 3000, binds to 0.0.0.0)
+cd frontend
+pnpm dev
+
+# 4. Access from another device on the LAN:
+#    http://192.168.1.42:3000
+#
+#    The backend CORS allows any origin in development mode
+#    (ENVIRONMENT=development, the default). The frontend
+#    Route Handlers proxy API calls server-side, so the
+#    browser never calls the backend directly.
+```
+
+If you need CORS for a specific origin (e.g. a deployed staging
+site), set `LINKEDIN_CORS_ALLOW_ORIGINS` in `backend/.env`:
+
+```bash
+# backend/.env — comma-separated list of allowed origins
+LINKEDIN_CORS_ALLOW_ORIGINS=["https://app.mydomain.com","https://staging.mydomain.com"]
+```
+
+When `ENVIRONMENT=production`, CORS MUST be explicitly configured
+(the app will refuse to start otherwise).
+
 ## Pre-commit
 
 Run the workspace's check commands before every commit.
