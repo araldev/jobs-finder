@@ -2307,11 +2307,19 @@ against the `CLOUDFLARE_CHALLENGE_HTML` fixture in
 on healthy SERPs that happen to render Cloudflare-style
 markup.
 
-### Running under Xvfb
+### Running under Xvfb (legacy / optional)
 
 > **Linux only.** `xvfb` is a Linux binary. On macOS / Windows,
 > use a real display (omit `LINKEDIN_XVFB_DISPLAY` and Playwright
 > auto-detects `:0`).
+
+> **Update (June 2026):** The default operating mode is now
+> `headless=True` — no Xvfb required. LinkedIn's login flow works
+> in headless Chromium with the `--no-sandbox` and
+> `--disable-blink-features=AutomationControlled` flags. The Xvfb
+> path below is preserved as a legacy option for environments
+> where headless Chromium is not viable (e.g. certain CI runners
+> or container runtimes without `/dev/shm`).
 
 The `LINKEDIN_XVFB_DISPLAY` opt-in switch runs the same Chromium
 non-headless under a sidecar `Xvfb` server. The browser gets a
@@ -2415,17 +2423,27 @@ timestamp BEFORE the await — the backoff window is measured
 from the attempt, not the result. While the backoff is active,
 subsequent auth-wall events are silent skips (no WARNING flood).
 
-#### Xvfb requirement
+#### Headless mode (no Xvfb needed)
 
 `PlaywrightLinkedInCookieRefresher.refresh()` launches Chromium
-non-headless (mirrors the v1 script's behavior). The browser
-needs a real display context to avoid Cloudflare 2026's
-headless-Chromium fingerprint detection. **Xvfb is the standard
-way to provide a virtual display** — see the [Running under
-Xvfb](#running-under-xvfb) section above for the install /
-launch procedure. The `headless=False` default in the production
-refresher matches `extract_linkedin_cookies.py` byte-for-byte
-(same launch args, same anti-detection flags).
+in **headless mode** (`headless=True`). The browser runs without
+a windowing system — no X server, no Xvfb, no display required.
+This works in any environment: CI, Docker, headless servers, and
+local dev machines alike.
+
+LinkedIn's login flow does NOT detect headless Chromium when the
+`--no-sandbox` and `--disable-blink-features=AutomationControlled`
+launch flags are set (both are added automatically by the
+refresher). The `headless=True` default applies to BOTH the
+auto-refresh path AND the manual `extract_linkedin_cookies.py`
+script.
+
+If your environment requires headed mode (e.g. for debugging,
+or if LinkedIn's bot detection becomes stricter in the future),
+you can override by editing the `headless=` kwarg in the
+composition root (`app_factory.py`) or in `extract_linkedin_cookies.py`.
+The legacy [Running under Xvfb](#running-under-xvfb) section
+documents the headed-mode setup for Linux.
 
 #### 2FA / SMS checkpoints — manual fallback
 
@@ -2442,20 +2460,25 @@ WARNING jobs_finder.infrastructure.linkedin.cookie_refresher
 ```
 
 When 2FA is required, the operator MUST run the script
-manually (it accepts the checkpoint interactively because the
-browser window is visible — either real desktop or Xvfb):
+manually (the script runs in headless mode and will fail
+when it detects the `checkpoint` URL in the post-login poll):
 
 ```bash
-# 1. Start Xvfb (if running headless on a server).
-export DISPLAY=:99
-bash scripts/start_xvfb.sh &
-
-# 2. Run the script. The browser window opens, you fill the
-#    2FA code, and the script writes a fresh linkedin_cookies.json.
-DISPLAY=:99 uv run --env-file .env python scripts/extract_linkedin_cookies.py \
-    --output /tmp/jobs-finder-linkedin-cookies.json \
+# Run the script. It launches Chromium headless, fills
+# credentials, and polls for /feed. If LinkedIn shows a
+# checkpoint, the script exits with a WARNING.
+uv run --env-file .env python scripts/extract_linkedin_cookies.py \
+    --output linkedin_cookies.json \
     --wait-seconds 600
 ```
+
+> **Note:** Headless mode cannot resolve 2FA interactively
+> because there is no visible browser window. If your account
+> has 2FA enabled, either:
+> 1. Disable 2FA temporarily, run the script, then re-enable it
+> 2. Or override to headed mode by setting `headless=False` in
+>    the script (`_extract_cookies()`) and run under an X server
+>    (real display or [Xvfb](#running-under-xvfb-legacy--optional))
 
 The script's CLI surface is unchanged from the v1 spec
 (`--output` + `--wait-seconds`; `argparse`, not `click` /
@@ -2833,10 +2856,10 @@ ONCE on success.
   all 5 on success).
 - `LINKEDIN_EMAIL` and `LINKEDIN_PASSWORD` exported in the
   shell (or in `backend/.env`, gitignored).
-- Either a real desktop (Linux + X server, macOS, or Windows)
-  OR a running Xvfb server on `:99` (see [Running under
-  Xvfb](#running-under-xvfb)).
 - Chromium binary installed via `uv run playwright install chromium`.
+  The refresher runs in headless mode — no X server or Xvfb
+  required. If you need headed mode for debugging, see [Running
+  under Xvfb (legacy / optional)](#running-under-xvfb-legacy--optional).
 
 ### Procedure
 
@@ -2850,9 +2873,10 @@ export LINKEDIN_PASSWORD='your_password'
 export LINKEDIN_COOKIE_REFRESH_BACKOFF_SECONDS=10.0
 export LINKEDIN_COOKIE_REFRESH_TIMEOUT_SECONDS=60.0
 
-# 3. Start Xvfb if running headless on a server.
-export DISPLAY=:99
-bash scripts/start_xvfb.sh &
+# 3. (Optional, only if you overrode to headed mode) Start Xvfb.
+#    The default headless mode does NOT need this step.
+# export DISPLAY=:99
+# bash scripts/start_xvfb.sh &
 
 # 4. Start the FastAPI service. The composition root builds a
 #    `PlaywrightLinkedInCookieRefresher` and wires it into the

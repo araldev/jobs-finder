@@ -279,32 +279,32 @@ def build_app(  # noqa: PLR0915, PLR0912
 
     # T-005 of `backend-linkedin-stealth` — REQ-LST-COOKIE-001 + REQ-LST-SCR-001
     # startup WARNING. Emitted ONCE per `build_app()` call (process
-    # start) when the operator has not configured ANY of the 4
-    # `LINKEDIN_*` cookies (`li_at` + `JSESSIONID` + `bcookie` +
-    # `li_gc`). The WARNING runs OUTSIDE the `if use_case is None:`
-    # block so it fires even when a test injects a use case (the
-    # integration test asserts the warning contract end-to-end).
-    # The adapter construction stays inside the `if use_case is
-    # None:` block because it only matters when we're actually
-    # building the scraper.
+    # start) when the operator has not configured ANY of the 5
+    # `LINKEDIN_*` cookies AND the JSON cookie file is absent.
+    # The JSON adapter is constructed early so the WARNING can check
+    # BOTH sources (env vars + JSON file on disk). The adapter is
+    # reused inside the `if use_case is None:` block below to avoid
+    # reading the file twice.
     #
     # The v1 message was the shorter
     # `"LinkedIn scraper running without auth cookie"` prefix; the
     # T-005 message is a strict superset that covers all 4 cookies
     # (the operator may have set any of the 4 in practice; the
     # WARNING is only suppressed when AT LEAST 1 is set).
+    _json_adapter_for_warning = JsonLinkedInAuthCookiesAdapter()
     if (
         effective_settings.linkedin_li_at is None
         and effective_settings.linkedin_jsessionid is None
         and effective_settings.linkedin_bcookie is None
         and effective_settings.linkedin_bscookie is None
         and effective_settings.linkedin_li_gc is None
+        and _json_adapter_for_warning.cookies() is None
     ):
         _logger.warning(
             "LinkedIn scraper running without any auth cookies; "
             "SERP will hit the Cloudflare / auth wall and return a "
             "reduced list. Set at least LINKEDIN_LI_AT (or all 5) "
-            "in .env to bypass the wall."
+            "in .env, or create a linkedin_cookies.json file."
         )
 
     if use_case is None:
@@ -322,7 +322,7 @@ def build_app(  # noqa: PLR0915, PLR0912
         # wire (the v1 adapter is preserved for backward
         # compat with the 35 v1 tests that construct
         # `EnvLinkedInAuthCookieAdapter` directly).
-        json_adapter = JsonLinkedInAuthCookiesAdapter()
+        json_adapter = _json_adapter_for_warning
         if json_adapter.cookies() is not None:
             auth_cookies_port: (
                 MultiEnvLinkedInAuthCookiesAdapter | JsonLinkedInAuthCookiesAdapter
@@ -379,13 +379,20 @@ def build_app(  # noqa: PLR0915, PLR0912
                     timeout_seconds=effective_settings.linkedin_cookie_refresh_timeout_seconds,
                     email=SecretStr(_email_env),
                     password=SecretStr(_password_env),
-                    # `headless=False` because the production
-                    # refresher launches Chromium non-headless
-                    # (mirrors `extract_linkedin_cookies.py`).
-                    # Xvfb is the standard way to provide a
-                    # virtual display in CI / Docker; see
-                    # README "Cookie refresh (auto)".
-                    headless=False,
+                    # `headless=True` — the refresher launches
+                    # Chromium in headless mode. The original
+                    # design used `headless=False` with Xvfb to
+                    # let the operator see the login, but Xvfb
+                    # requires `/tmp/.X11-unix` with 1777 perms
+                    # and a running X server. Headless mode
+                    # works in any environment (CI, Docker,
+                    # dev machines without a display) and
+                    # LinkedIn's login flow does NOT detect
+                    # headless Chromium with `--no-sandbox` +
+                    # `--disable-blink-features=AutomationControlled`.
+                    # See `scripts/extract_linkedin_cookies.py`
+                    # and README "Cookie refresh (auto)".
+                    headless=True,
                 )
             )
         else:

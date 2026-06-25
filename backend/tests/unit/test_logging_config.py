@@ -46,10 +46,13 @@ def restore_root_logger() -> Generator[None, None, None]:
 def test_configure_logging_json_format_emits_valid_json(
     restore_root_logger: None,
 ) -> None:
-    """A log line under `log_format='json'` is valid JSON with the locked field set.
+    """A log line under `log_format='json'` is valid JSON with the base field set.
 
-    Spec: REQ-006. The field set is locked to:
+    Spec: REQ-006. The base field set is always present:
         {timestamp, level, name, message, request_id}
+
+    When the caller passes `extra={...}`, those fields appear in an
+    `"extra"` sub-object.
     """
     stream = StringIO()
     settings = Settings(log_format="json", log_level="INFO")
@@ -69,6 +72,35 @@ def test_configure_logging_json_format_emits_valid_json(
     # The request_id is injected by RequestIdLogFilter; in this unit test
     # the ContextVar is unset so the filter inserts the "-" placeholder.
     assert "request_id" in record
+    # Without extra={...}, there is no "extra" key.
+    assert "extra" not in record
+
+
+def test_configure_logging_json_format_includes_extra_fields(
+    restore_root_logger: None,
+) -> None:
+    """`extra={...}` fields from logger calls appear in the JSON `"extra"` sub-object.
+
+    The aggregator emits structured fields like ``source`` and
+    ``error_type`` via ``extra={...}``. Those fields MUST be
+    serialised so ops tooling can group by source without parsing
+    the message string.
+    """
+    stream = StringIO()
+    settings = Settings(log_format="json", log_level="INFO")
+
+    configure_logging(settings, stream=stream)
+    logging.getLogger("jobs_finder.test").warning(
+        "aggregator source failed",
+        extra={"source": "linkedin", "error_type": "LinkedInTimeoutError"},
+    )
+
+    output = stream.getvalue().strip()
+    assert output, "configure_logging should have produced a log line"
+
+    record = json.loads(output)
+    assert record["extra"]["source"] == "linkedin"
+    assert record["extra"]["error_type"] == "LinkedInTimeoutError"
 
 
 def test_configure_logging_plain_format_emits_non_json(

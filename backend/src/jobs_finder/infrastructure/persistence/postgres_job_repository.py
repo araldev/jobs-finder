@@ -85,6 +85,11 @@ class PostgresJobRepository:
             self._database_url,
             min_size=self._min_size,
             max_size=self._max_size,
+            # Compatibility with Supabase connection pooler (supavisor).
+            # Transaction-mode poolers do not support prepared statements;
+            # disabling the cache ensures every query works regardless
+            # of pooler mode.
+            statement_cache_size=0,
         )
         async with self.pool.acquire() as conn:
             await conn.execute(_CREATE_UNACCENT_SQL)

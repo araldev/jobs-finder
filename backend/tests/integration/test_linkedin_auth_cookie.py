@@ -54,12 +54,17 @@ def test_startup_warning_when_cookie_absent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """REQ-LA-SCR-003 — `build_app()` with no `LINKEDIN_LI_AT` env var
-    emits exactly one WARNING log line with the message
-    \"LinkedIn scraper running without any auth cookies; SERP will
-    hit the Cloudflare / auth wall and return a reduced list\".
-    The message was UPDATED in T-005 of `backend-linkedin-stealth`
-    (from the v1 "without auth cookie" prefix to the new
-    "without any auth cookies" prefix that covers all 4 cookies)."""
+    AND no JSON cookie file emits exactly one WARNING log line.
+
+    The message: \"LinkedIn scraper running without any auth cookies;
+    SERP will hit the Cloudflare / auth wall and return a reduced
+    list\". The WARNING is suppressed when either an env var is set
+    OR the `linkedin_cookies.json` file exists. The test
+    monkeypatches the JSON adapter to simulate file-absent state."""
+    monkeypatch.setattr(
+        "jobs_finder.presentation.app_factory.JsonLinkedInAuthCookiesAdapter",
+        lambda *a, **kw: type("FakeEmpty", (), {"cookies": lambda self: None, "cookie_dicts": lambda self: None, "set_cookies": lambda self, c: None})(),
+    )
     monkeypatch.delenv("LINKEDIN_LI_AT", raising=False)
     with caplog.at_level(logging.WARNING):
         _build_app_with_linkedin_fake()

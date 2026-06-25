@@ -360,6 +360,43 @@ pnpm run build          # build de producción (next build)
 pnpm run start          # servidor de producción (next start, requiere build previo)
 ```
 
+### Running the backend as a daemon (surviving shell exit)
+
+The backend is a long-running FastAPI + uvicorn + BackgroundScheduler
+process that scrapes job sites every ~15 minutes. Launching it from
+a terminal or an AI tool session requires special care so the process
+survives when the launching shell exits.
+
+**DO NOT** use `nohup` — it only ignores SIGHUP but does NOT prevent
+the process from being killed when its parent shell terminates.
+Instead, use `setsid` to create a new session that is fully independent
+of the launching shell:
+
+```bash
+cd backend
+
+# Start (survives shell exit)
+setsid uv run python -m jobs_finder.main > backend.log 2>&1 &
+
+# Verify
+curl http://localhost:8000/health
+
+# Stop
+kill $(lsof -ti :8000) 2>/dev/null
+```
+
+**How it works**: `setsid` creates a new process session with no
+controlling terminal. Unlike `nohup` (which only masks SIGHUP), the
+new session receives NO signals from the parent shell — even if the
+launching shell is killed, the backend continues running. This is
+required when launching from AI tool sessions (OpenCode, Copilot,
+etc.) where the shell environment has unpredictable lifecycle.
+
+**Legacy note**: The original deployment used `nohup` and a `setsid`
+wrapper script. The current canonical entry point is the `uv run`
+command above. No `scripts/` wrapper exists because the `setsid`
+built-in is available on every Linux distribution (coreutils).
+
 ## Pre-commit
 
 Run the workspace's check commands before every commit.

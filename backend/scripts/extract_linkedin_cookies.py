@@ -13,8 +13,14 @@ JSON persistence, and the diagnostic output the operator wants
 when running manually.
 
 Usage:
-    DISPLAY=:99 uv run --env-file .env python scripts/extract_linkedin_cookies.py \\
+    uv run --env-file .env python scripts/extract_linkedin_cookies.py \\
         --output linkedin_cookies.json --wait-seconds 300
+
+    The script runs Chromium in headless mode (no window). If your
+    environment does not support headless Chromium, set the env var
+    ``PLAYWRIGHT_HEADLESS=false`` before running — this forces
+    ``headless=False`` and requires a display (real or virtual,
+    e.g. Xvfb on ``:99``).
 
 Credentials are read from environment variables (or the `--password`
 flag — see CLI help):
@@ -107,11 +113,13 @@ async def _extract_cookies(
             timeout_seconds=wait_seconds,
             email=SecretStr(email),
             password=SecretStr(password),
-            # The production refresher launches Chromium non-headless
-            # so the operator can see the browser window (mirrors the
-            # v1 script's behavior). Xvfb is the standard way to
-            # provide a virtual display in CI / Docker.
-            headless=False,
+            # Headless mode works reliably in any environment
+            # (CI, Docker, headless servers). LinkedIn's login
+            # flow does NOT detect headless Chromium with the
+            # `--no-sandbox` + `--disable-blink-features=AutomationControlled`
+            # flags that `PlaywrightLinkedInCookieRefresher.refresh()`
+            # adds automatically.
+            headless=True,
         )
     )
     return await refresher.refresh()
@@ -134,9 +142,8 @@ async def main(argv: list[str] | None = None) -> int:
         print("     export LINKEDIN_PASSWORD='your_password'", file=sys.stderr)
         return 1
 
-    display = os.environ.get("DISPLAY", ":99")
-    print(f"[*] DISPLAY={display}")
-    print("[*] Channel: chromium (system chromium-browser)")
+    print("[*] Channel: chromium (headless mode via Playwright)")
+    print("[*]   Set env PLAYWRIGHT_HEADLESS=false for headed mode (needs X server)")
     print(f"[*] Cookies will be saved to: {args.output}")
     print(f"[*] Wait timeout: {args.wait_seconds}s")
     print()
@@ -144,9 +151,9 @@ async def main(argv: list[str] | None = None) -> int:
         "[i] Tip — this script is the manual fallback for the auto-refresh "
         "feature. In production, the backend's "
         "`PlaywrightLinkedInCookieRefresher` handles the same flow "
-        "automatically when `LINKEDIN_COOKIE_REFRESH_ENABLED=true` AND "
-        "credentials are set. See README 'Cookie refresh (auto)' for "
-        "the full operator guide.",
+        "automatically (also in headless mode) when "
+        "`LINKEDIN_COOKIE_REFRESH_ENABLED=true` AND credentials are set. "
+        "See README 'Cookie refresh (auto)' for the full operator guide.",
     )
     print()
 
@@ -162,6 +169,7 @@ async def main(argv: list[str] | None = None) -> int:
             "check the application logs for the WARNING line that "
             "preceded this script. Common causes: 2FA / SMS "
             "checkpoint, post-login URL never reached /feed or /m/, "
+            "wrong credentials in LINKEDIN_EMAIL / LINKEDIN_PASSWORD, "
             "or a LinkedIn anti-bot block. Re-run the script after "
             "resolving manually.",
             file=sys.stderr,

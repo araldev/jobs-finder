@@ -142,7 +142,8 @@ class TestBuildAppMultiCookieWire:
     def test_build_app_emits_startup_warning_when_all_cookies_unset(
         self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """`build_app()` with ALL 4 `LINKEDIN_*` env vars unset emits 1 WARNING.
+        """`build_app()` with ALL 4 `LINKEDIN_*` env vars unset AND no
+        JSON cookie file emits 1 WARNING.
 
         The T-005 startup WARNING has the prefix
         `"LinkedIn scraper running without any auth cookies; SERP
@@ -152,8 +153,15 @@ class TestBuildAppMultiCookieWire:
         the new message is a strict superset that covers all 4
         cookies (the operator may have set any of the 4 in
         practice; the WARNING is only suppressed when AT LEAST 1
-        is set).
+        is set, OR when the JSON cookie file `linkedin_cookies.json`
+        is present — the test monkeypatches the JSON adapter to
+        simulate that the file is absent).
         """
+        # Simulate no JSON cookie file: make the adapter return None.
+        monkeypatch.setattr(
+            "jobs_finder.presentation.app_factory.JsonLinkedInAuthCookiesAdapter",
+            lambda *a, **kw: type("FakeEmpty", (), {"cookies": lambda self: None, "cookie_dicts": lambda self: None, "set_cookies": lambda self, c: None})(),
+        )
         monkeypatch.delenv("LINKEDIN_LI_AT", raising=False)
         monkeypatch.delenv("LINKEDIN_JSESSIONID", raising=False)
         monkeypatch.delenv("LINKEDIN_BCOOKIE", raising=False)

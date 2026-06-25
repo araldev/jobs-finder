@@ -51,15 +51,31 @@ from jobs_finder.presentation.middleware import (
 _HANDLER_OWNER_KEY = "_jobs_finder_owned_by_configure_logging"
 
 
+# Standard `LogRecord` attributes managed by the stdlib. Everything
+# else on the record was injected via `extra={...}` at the call site.
+_LOG_RECORD_STANDARD_ATTRS: frozenset[str] = frozenset({
+    "args", "asctime", "created", "exc_info", "exc_text", "filename",
+    "funcName", "levelname", "levelno", "lineno", "message", "module",
+    "msecs", "msg", "name", "pathname", "process", "processName",
+    "relativeCreated", "stack_info", "taskName", "thread", "threadName",
+})
+
+
 class JsonLogFormatter(logging.Formatter):
     """Render a `LogRecord` as a single-line JSON object.
 
-    The field set is INTENTIONALLY locked to:
+    Standard output fields:
         {timestamp, level, name, message, request_id}
 
-    Adding fields here is a public API change because downstream
-    log consumers (and the REQ-006 log correlation test) depend on
-    the exact field names.
+    When the caller passes ``extra={...}`` to a logger call (e.g.
+    ``_logger.warning("aggregator source failed", extra={"source": src})``),
+    those extra fields are serialised inside an ``"extra"`` sub-object so
+    structured log consumers can group by source or error_type without
+    parsing the message string.
+
+    The base field set is stable (REQ-006); the ``extra`` sub-object is
+    additive — it appears only when the record carries non-standard
+    attributes.
     """
 
     def format(self, record: logging.LogRecord) -> str:
@@ -68,13 +84,44 @@ class JsonLogFormatter(logging.Formatter):
         # effect (e.g. a one-off script), fall back to the
         # ContextVar default set in `middleware.py`.
         request_id = getattr(record, "request_id", "-")
-        payload = {
+        payload: dict[str, object] = {
             "timestamp": self.formatTime(record, self.datefmt),
             "level": record.levelname,
             "name": record.name,
             "message": record.getMessage(),
             "request_id": request_id,
         }
+
+        # Collect any `extra={...}` fields the caller injected.
+        # We iterate ``record.__dict__`` (instance attributes only,
+        # not inherited methods) and filter out the standard fields
+        # that ``LogRecord.__init__`` always sets. Everything that
+        # remains was injected via ``extra={...}``.
+        extra: dict[str, object] = {}
+        for key, value in record.__dict__.items():
+            if key in _LOG_RECORD_STANDARD_ATTRS:
+                continue
+            if key == "request_id":  # already serialised above
+                continue
+            # Skip callables (methods, lambdas) — they're never
+            # from ``extra={...}`` and not JSON-serialisable.
+            if callable(value):
+                continue
+            extra[key] = value
+        if extra:
+            payload["extra"] = extra
+
+        # Serialise `exc_info` when present (e.g. from
+        # `_logger.exception(...)`) so tracebacks are visible in
+        # structured logs instead of silently dropped.
+        if record.exc_info and record.exc_info[1] is not None:
+            payload["exception"] = {
+                "type": type(record.exc_info[1]).__name__,
+                "message": str(record.exc_info[1]),
+            }
+            if record.exc_text:
+                payload["traceback"] = record.exc_text
+
         # `ensure_ascii=False` keeps non-ASCII log lines readable.
         return json.dumps(payload, ensure_ascii=False)
 
