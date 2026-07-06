@@ -1,0 +1,63 @@
+-- =============================================================================
+-- jobs-finder — Migration 008: Grant INSERT on jobs to authenticated users
+-- =============================================================================
+--
+-- Symptom: The frontend favorite flow hits `POST /api/users/me/favorites`,
+-- which now does a two-step upsert before inserting into `user_favorites`:
+--   1. Upsert the job row into `jobs` keyed on (source, source_id).
+--   2. Insert (user_id, jobs.id) into `user_favorites`.
+-- The favorite INSERT requires a SERIAL surrogate `jobs.id` returned by the
+-- upsert (the FK is `job_id INTEGER REFERENCES jobs(id)`), and the frontend
+-- only knows the source-native id from the `Job.id` field. See obs id 768
+-- in engram (topic_key: favorites/fk-mapping-mismatch) for the discovery
+-- that drove this design.
+--
+-- Migration 004 already granted `SELECT` on `jobs` to `authenticated`, but
+-- not `INSERT` or `UPDATE`. Without `INSERT`, step 1 fails with
+--   "new row violates row-level security policy for table jobs"
+-- and the favorite flow is broken.
+--
+-- Why no RLS policy is needed: `jobs` is public scraped data — every row is
+-- visible to every user, and RLS is intentionally disabled on this table
+-- (see Migration 004's header comment: "La tabla jobs NO tiene políticas
+-- RLS porque es data pública scrapeada"). An INSERT grant is sufficient —
+-- no `WITH CHECK` policy required.
+--
+-- Why `UPDATE`: the upsert path uses `ON CONFLICT (source, source_id) DO
+-- UPDATE SET last_seen_at = NOW()` to refresh the row's `last_seen_at`
+-- when re-favoriting. Without `UPDATE`, the conflict branch errors out.
+--
+-- Why not `DELETE`: the frontend never deletes from `jobs` (only the
+-- backend scheduler does, via service_role). Leave that grant alone.
+--
+-- Risk: low. The frontend can only INSERT or UPDATE rows it has already
+-- seen via SELECT, and the upsert is keyed on (source, source_id) which
+-- matches the Python backend's `_UPSERT_SQL` (postgres_job_repository.py
+-- :49-61). Two writers (frontend + Python scraper) will converge because
+-- both use `ON CONFLICT (source, source_id) DO UPDATE`.
+--
+-- Compatibility: This is additive — existing grants from Migration 004
+-- are untouched. Safe to run alongside a live application.
+-- =============================================================================
+
+-- ── grants para la tabla jobs ────────────────────────────────────────────────
+-- El frontend ahora pre-puebla `jobs` antes de insertar en `user_favorites`,
+-- porque `user_favorites.job_id` referencia `jobs.id` (SERIAL surrogate) y
+-- la FK debe resolver a un id SERIAL, no al id nativo de la fuente.
+
+GRANT INSERT, UPDATE ON public.jobs TO authenticated;
+
+-- ── nota ─────────────────────────────────────────────────────────────────────
+-- No añadimos política RLS porque la tabla jobs es data pública scrapeada
+-- (ver Migration 004). El service_role conserva acceso total para el
+-- scheduler, y `authenticated` ahora puede leer + upsertar (insertar nuevas
+-- filas o actualizar `last_seen_at` en re-favoritos).
+--
+-- ── verificación ─────────────────────────────────────────────────────────────
+-- Tras ejecutar, confirmar con:
+--   SELECT grantee, privilege_type, table_name
+--   FROM information_schema.table_privileges
+--   WHERE table_schema = 'public' AND table_name = 'jobs'
+--   ORDER BY grantee, privilege_type;
+-- Esperado: authenticated muestra SELECT (de Migration 004) + INSERT + UPDATE.
+-- =============================================================================

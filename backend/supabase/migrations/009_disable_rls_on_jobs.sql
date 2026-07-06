@@ -1,0 +1,54 @@
+-- =============================================================================
+-- jobs-finder — Migration 009: disable RLS on `jobs` table
+-- =============================================================================
+--
+-- Symptom: `POST /api/users/me/favorites` returns 500 with body
+--   {"error":"new row violates row-level security policy for table \"jobs\""}
+-- AFTER Migrations 005 (bigint), 007 (WITH CHECK on user-table policies),
+-- and 008 (INSERT/UPDATE grants to authenticated) all passed.
+--
+-- Root cause: The `jobs` table has Row Level Security ENABLED but has ZERO
+-- policies defined (verified via pg_policies — only user_favorites,
+-- user_engagement, and user_csv have policies; jobs is not listed).
+--
+-- Postgres RLS semantics: when RLS is enabled on a table, the default
+-- policy is "deny all" unless a permissive policy explicitly grants access.
+-- The migration 004 header comment says "La tabla jobs NO tiene políticas
+-- RLS porque es data pública scrapeada" — this is correct as a design
+-- intent, but RLS was actually enabled (likely via the Supabase dashboard
+-- or an out-of-band migration) without any policy. The combination
+-- "RLS enabled + zero policies" silently denies everything for non-service
+-- roles.
+--
+-- Why this only surfaces NOW:
+--   - The Python backend's scheduler uses `service_role` for upserts,
+--     which bypasses RLS — so the gap never showed up in the scraper logs.
+--   - Before Migration 008, `authenticated` had no INSERT/UPDATE grant on
+--     jobs, so the route handler never tried to write — the missing grant
+--     short-circuited the request before RLS was even evaluated.
+--   - After Migration 008 grants INSERT/UPDATE, the upsert path reaches the
+--     RLS check, which denies the row.
+--
+-- Fix: disable RLS on `jobs` to match the design intent. `jobs` is
+-- public-scraped data (LinkedIn/Indeed/InfoJobs job listings) — every
+-- authenticated user needs to see all jobs, and the frontend now needs to
+-- upsert jobs when favoriting (Migration 008). RLS adds no security value
+-- here; it just blocks legitimate writes.
+--
+-- Risk: low. The `jobs` table is intentionally public. RLS was already
+-- not adding any protection (because no policies existed — it was just
+-- silently breaking writes). The previous migration 004 GRANTs (SELECT
+-- to authenticated + anon) work normally without RLS.
+--
+-- This is the LAST RLS-related migration needed for the favorites flow.
+-- =============================================================================
+
+ALTER TABLE public.jobs DISABLE ROW LEVEL SECURITY;
+
+-- =============================================================================
+-- Verification query (run after to confirm):
+--   SELECT relname, relrowsecurity, relforcerowsecurity
+--   FROM pg_class
+--   WHERE relname = 'jobs';
+-- Expect: relrowsecurity = f (false), relforcerowsecurity = f (false).
+-- =============================================================================
