@@ -202,6 +202,150 @@ async def test_upsert_multiple_jobs(repo: SqliteJobRepository) -> None:
     assert row[0] == 2
 
 
+# ── REQ-DB-DESC-001: description field roundtrip ────────────────────────────
+#
+# Pinned by `decouple-nextjs-from-backend` Phase 1. The scheduler writes
+# `Job.description` (populated by the LinkedIn detail-page visit) and the
+# REST API reads it back via `search_jobs` / `get_job_by_source_id`. A
+# future refactor that drops the field on either side would silently
+# regress the favorites-with-descriptions UX. This section pins the
+# end-to-end roundtrip on the SQLite dev repo. The Postgres repo shares
+# the same SQL column shape (`description TEXT`) and the same
+# `_row_to_job` mapping contract, so this test serves as a regression
+# guard for BOTH backends — the same column survives on Postgres because
+# the migration at `supabase/migrations/20260620_*.sql` matches this
+# schema exactly.
+
+
+_DESCRIPTION_TEXT = (
+    "We are looking for a Senior Python developer with 5+ years of "
+    "experience in FastAPI, asyncpg, and PostgreSQL. Strong knowledge "
+    "of SOLID principles and clean architecture is a must."
+)
+
+
+@pytest.mark.asyncio
+async def test_description_roundtrip_via_search_jobs(
+    repo: SqliteJobRepository,
+) -> None:
+    """A job with a non-None `description` upserted and read back via
+    `search_jobs` returns the exact same string.
+
+    Covers the REST API path (`GET /jobs/history` → repo.search_jobs).
+    """
+    job_with_desc = Job(
+        id="9001",
+        title="Senior Python Developer",
+        company="Acme",
+        location="Madrid, Spain",
+        url="https://ex.com/9001",
+        posted_at=datetime(2026, 6, 15, 9, 0, 0, tzinfo=UTC),
+        source="linkedin",
+        description=_DESCRIPTION_TEXT,
+    )
+    await repo.upsert_jobs([job_with_desc], query_snapshot=_SAMPLE_QUERY)
+
+    results = await repo.search_jobs(sources=["linkedin"])
+    assert len(results) == 1
+    assert results[0].description == _DESCRIPTION_TEXT
+    # And the read-back Job is fully equal (frozen dataclass equality).
+    assert results[0] == job_with_desc
+
+
+@pytest.mark.asyncio
+async def test_description_roundtrip_via_get_job_by_source_id(
+    repo: SqliteJobRepository,
+) -> None:
+    """`get_job_by_source_id` returns the exact `description` that was
+    upserted.
+
+    Covers the single-job lookup path (REST API detail route).
+    """
+    job_with_desc = Job(
+        id="9002",
+        title="Staff Backend Engineer",
+        company="Globex",
+        location="Barcelona, Spain",
+        url="https://ex.com/9002",
+        posted_at=datetime(2026, 6, 16, 9, 0, 0, tzinfo=UTC),
+        source="linkedin",
+        description="Build the future of payments.",
+    )
+    await repo.upsert_jobs([job_with_desc], query_snapshot=_SAMPLE_QUERY)
+
+    fetched = await repo.get_job_by_source_id("9002")
+    assert fetched is not None
+    assert fetched.description == "Build the future of payments."
+    assert fetched == job_with_desc
+
+
+@pytest.mark.asyncio
+async def test_description_none_roundtrip(repo: SqliteJobRepository) -> None:
+    """A job with `description=None` upserted and read back stays `None`.
+
+    The v1 contract: `None` is the canonical "absent" sentinel (per
+    `Job` domain + LLM prompt no-assumption rule). A future refactor
+    that coerces `None` → `""` would silently change the LLM prompt's
+    JSON output (`null` vs `""`) and break the no-assumption rule.
+    """
+    job_no_desc = Job(
+        id="9003",
+        title="Junior Dev",
+        company="Initrode",
+        location="Valencia, Spain",
+        url="https://ex.com/9003",
+        posted_at=datetime(2026, 6, 17, 9, 0, 0, tzinfo=UTC),
+        source="infojobs",
+        description=None,
+    )
+    await repo.upsert_jobs([job_no_desc], query_snapshot=_SAMPLE_QUERY)
+
+    fetched = await repo.get_job_by_source_id("9003")
+    assert fetched is not None
+    assert fetched.description is None
+
+
+@pytest.mark.asyncio
+async def test_description_roundtrip_preserves_text_on_upsert_update(
+    repo: SqliteJobRepository,
+) -> None:
+    """Upserting the same (source, source_id) with a new description
+    REPLACES the prior description.
+
+    This is the contract the scheduler relies on: a job that gained a
+    description between two cycles (e.g. detail-page visit succeeded
+    the second time) is updated in place — the `ON CONFLICT DO UPDATE`
+    SET clause must include `description=EXCLUDED.description`.
+    """
+    initial = Job(
+        id="9004",
+        title="DevOps",
+        company="Initech",
+        location="Remote",
+        url="https://ex.com/9004",
+        posted_at=datetime(2026, 6, 18, 9, 0, 0, tzinfo=UTC),
+        source="linkedin",
+        description=None,
+    )
+    await repo.upsert_jobs([initial], query_snapshot=_SAMPLE_QUERY)
+
+    updated = Job(
+        id="9004",
+        title="DevOps",
+        company="Initech",
+        location="Remote",
+        url="https://ex.com/9004",
+        posted_at=datetime(2026, 6, 18, 9, 0, 0, tzinfo=UTC),
+        source="linkedin",
+        description="Now we have a description!",
+    )
+    await repo.upsert_jobs([updated], query_snapshot=_SAMPLE_QUERY)
+
+    fetched = await repo.get_job_by_source_id("9004")
+    assert fetched is not None
+    assert fetched.description == "Now we have a description!"
+
+
 # ── delete_older_than ───────────────────────────────────────────────────────
 
 
