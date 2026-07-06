@@ -79,12 +79,22 @@ export function clearChatStorage(): void {
  * React hook to subscribe to opened job IDs.
  * Returns the set of job IDs that have been marked as opened.
  * Components can use this to show a "Abierta" badge on job cards.
+ *
+ * SSR-safety: the initial render returns an empty Set on both
+ * server and client (avoiding the hydration mismatch that would
+ * occur if we read localStorage during the lazy initializer).
+ * localStorage is hydrated AFTER mount via useEffect.
  */
 export function useOpenedJobs(): Set<string> {
-  const [openedJobIds, setOpenedJobIds] = useState<Set<string>>(() => new Set(getOpenedJobIds()));
+  // Start with an empty Set — identical on server and client for
+  // the first render. `getOpenedJobIds()` is NOT called here
+  // because in SSR it returns `[]` (window undefined) while on the
+  // client it returns the persisted list, causing a mismatch.
+  const [openedJobIds, setOpenedJobIds] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
-    // Sync with storage on mount (handles updates from other tabs/pages)
+    // Hydrate from localStorage AFTER mount (post-first-render).
+    // This avoids the SSR/CSR hydration mismatch.
     const storage = _loadStorage();
     setOpenedJobIds(new Set(storage.openedJobIds));
 

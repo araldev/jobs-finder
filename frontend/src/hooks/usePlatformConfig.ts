@@ -27,8 +27,26 @@ function readStored(): Source[] {
 }
 
 export function usePlatformConfig() {
-  const [enabledSources, setEnabledSources] = useState<Source[]>(readStored);
+  // Start with the default — identical on server and client for
+  // the first render. `readStored()` is NOT called here because in
+  // SSR it returns the default while on the client it could return
+  // a custom list from localStorage, causing a hydration mismatch.
+  const [enabledSources, setEnabledSources] = useState<Source[]>(DEFAULT_ENABLED);
 
+  useEffect(() => {
+    // Hydrate from localStorage AFTER mount (post-first-render).
+    const stored = readStored();
+    setEnabledSources(stored);
+
+    // Listen for storage changes (cross-tab sync).
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEY) setEnabledSources(readStored());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  // Persist to localStorage whenever enabledSources changes.
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(enabledSources));
   }, [enabledSources]);

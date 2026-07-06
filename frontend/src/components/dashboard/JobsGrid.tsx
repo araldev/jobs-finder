@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { SearchBar } from "@/components/search/SearchBar";
 import { LocationBar } from "@/components/search/LocationBar";
@@ -10,6 +11,7 @@ import { useJobsInfinite } from "@/hooks/useJobsInfinite";
 import { usePlatformConfig } from "@/hooks/usePlatformConfig";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useOpenedJobs } from "@/lib/chat-storage";
+import { FAVORITES_QUERY_KEY } from "@/hooks/useFavorites";
 
 /**
  * JobsGrid — REQ-PDPRSC-002.
@@ -33,6 +35,21 @@ export function JobsGrid() {
   const debouncedLocation = useDebounce(locationQuery, 400);
   const { enabledSources, allEnabled } = usePlatformConfig();
   const openedJobIds = useOpenedJobs();
+  const queryClient = useQueryClient();
+
+  // Sync the client cache with the server on every mount of this
+  // page-level component. The server always renders an empty
+  // favorites list (it has no localStorage), but the client's
+  // React Query cache PERSISTS across navigations, so any
+  // favorites the user toggled before navigating here would be in
+  // the cache by the time this component first renders — causing
+  // a hydration mismatch on the FavoriteButton's aria-label.
+  // Clearing the cache here once per navigation guarantees the
+  // first render on both sides matches. The queryFn re-fetches
+  // and refills the cache before the user can interact.
+  useEffect(() => {
+    queryClient.removeQueries({ queryKey: FAVORITES_QUERY_KEY });
+  }, [queryClient]);
 
   const sourcesParam = allEnabled ? undefined : enabledSources.join(",");
 

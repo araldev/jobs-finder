@@ -1,11 +1,13 @@
 "use client";
 
+import { useEffect } from "react";
 import { Eye, FileText, Heart } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { StatCard } from "./StatCard";
 import { useOpenedJobs } from "@/lib/chat-storage";
-import { useFavorites } from "@/hooks/useFavorites";
+import { useFavorites, FAVORITES_QUERY_KEY } from "@/hooks/useFavorites";
 import { useCVAdapted } from "@/hooks/useCVAdapted";
 
 /**
@@ -36,6 +38,16 @@ export function EngagementStatsRow() {
   const { favoriteCount } = useFavorites();
   const { cvAdaptedCount } = useCVAdapted();
   const t = useTranslations("Dashboard");
+  const queryClient = useQueryClient();
+
+  // See JobsGrid for the rationale: clear the favorites cache on
+  // mount so the server-rendered HTML matches the client's first
+  // render. Without this, the client's React Query cache (which
+  // persists across navigations) would cause a hydration mismatch
+  // on `favoriteCount > 0 ? ... : "—"`.
+  useEffect(() => {
+    queryClient.removeQueries({ queryKey: FAVORITES_QUERY_KEY });
+  }, [queryClient]);
 
   return (
     <div className="grid gap-4 sm:grid-cols-3">
