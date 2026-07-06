@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useTranslations } from "next-intl";
 import { createClient } from "@/lib/supabase/client";
+import founderPhoto from "@/assets/perfil_2_sin_fondo.webp";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Footer } from "@/components/layout/Footer";
@@ -262,16 +263,17 @@ export default function CVLandingPage() {
             </div>
 
             <h1 className="font-display text-4xl font-bold tracking-tight md:text-6xl lg:text-7xl">
-              Tu CV destaca en{" "}
-              <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
-                cada oferta
-              </span>
+              {t.rich("hero.title", {
+                highlight: (chunks) => (
+                  <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+                    {chunks}
+                  </span>
+                ),
+              })}
             </h1>
 
             <p className="mx-auto mt-6 max-w-2xl text-lg text-muted-foreground md:text-xl">
-              Sube tu CV una vez y genera versiones adaptadas
-              automáticamente para cada empleo. Aumenta tus chances de
-              pasar el filtro ATS.
+              {t("hero.subtitle")}
             </p>
 
             <div className="mt-10 flex flex-col items-center gap-4">
@@ -293,55 +295,35 @@ export default function CVLandingPage() {
                   </p>
                 </div>
               ) : (
-                <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-3 w-full max-w-md">
+                  <label className="cursor-not-allowed">
+                    <input
+                      type="file"
+                      accept="application/pdf"
+                      className="hidden"
+                      disabled
+                    />
+                    <div className="rounded-xl border-2 border-dashed border-border p-8 text-center opacity-60">
+                      <Upload className="mx-auto h-8 w-8 text-muted-foreground" />
+                      <p className="font-medium text-sm mt-3">
+                        {t("hero.guestUploadTitle")}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {t("hero.guestUploadHint")}
+                      </p>
+                    </div>
+                  </label>
                   <Link href="/login">
-                    <Button size="lg" className="gap-2 text-base">
-                      Genera tu CV ahora
+                    <Button size="lg" className="w-full gap-2">
+                      {t("hero.guestCta")}
                       <ArrowRight className="h-4 w-4" />
                     </Button>
                   </Link>
-                  <p className="text-sm text-muted-foreground">
-                    Inicia sesión para guardar tu CV y comenzar
-                  </p>
                 </div>
               )}
             </div>
 
-            {/* Stats */}
-            <div className="mt-16 grid grid-cols-2 gap-8 md:grid-cols-4">
-              <div>
-                <p className="font-mono text-3xl font-bold text-primary">
-                  +10k
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  CVs generados
-                </p>
-              </div>
-              <div>
-                <p className="font-mono text-3xl font-bold text-primary">
-                  85%
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Mejoran su CV
-                </p>
-              </div>
-              <div>
-                <p className="font-mono text-3xl font-bold text-primary">
-                  3 min
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Tiempo promedio
-                </p>
-              </div>
-              <div>
-                <p className="font-mono text-3xl font-bold text-primary">
-                  100%
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Gratuito
-                </p>
-              </div>
-            </div>
+            {/* Stats removed — see landing refactor 2026-07 for rationale (no real users yet) */}
           </div>
         </div>
       </section>
@@ -489,111 +471,88 @@ export default function CVLandingPage() {
             <div className="relative">
               <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-secondary/10 blur-3xl" />
               <Card className="relative overflow-hidden">
-                <CardContent className="p-6">
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-lg bg-primary/10" />
-                      <div className="space-y-1">
-                        <div className="h-4 w-32 rounded bg-muted" />
-                        <div className="h-3 w-48 rounded bg-muted/50" />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="h-3 w-full rounded bg-muted" />
-                      <div className="h-3 w-5/6 rounded bg-muted" />
-                      <div className="h-3 w-4/6 rounded bg-muted" />
-                    </div>
-                    <div className="rounded-lg bg-primary/5 p-3">
-                      <p className="text-xs font-medium text-primary">
-                        ✓ Keywords de la oferta resaltadas
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        ✓ Formato optimizado para ATS
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        ✓ Experiencia relevante priorizada
-                      </p>
-                    </div>
-                  </div>
-                </CardContent>
+                <div className="aspect-video bg-muted/30 flex items-center justify-center">
+                  <p className="text-sm text-muted-foreground">
+                    Demo del flujo: CV → oferta → CV adaptado (próximamente)
+                  </p>
+                </div>
               </Card>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Testimonials / Social Proof */}
-      <section className="bg-muted/30 py-20">
-        <div className="container mx-auto px-4">
-          <div className="mb-12 text-center">
-            <h2 className="font-display text-3xl font-bold tracking-tight md:text-4xl">
-              Lo que dicen nuestros usuarios
-            </h2>
-          </div>
+      {/* Testimonials section removed — see landing refactor 2026-07 (no real users yet, no real quotes) */}
 
-          <div className="mx-auto grid max-w-4xl gap-6 md:grid-cols-2">
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex gap-1 text-primary">
-                  {[...Array(5)].map((_, i) => (
-                    <Sparkles key={i} className="h-4 w-4 fill-current" />
-                  ))}
+      {/* Founder story */}
+      <section className="py-16">
+        <div className="container mx-auto px-4 max-w-3xl">
+          <Card>
+            <CardContent className="p-8">
+              <div className="flex flex-col md:flex-row gap-6 items-start">
+                <Image
+                  src={founderPhoto}
+                  alt="Arturo — fundador de Jobs Finder"
+                  width={80}
+                  height={80}
+                  className="h-20 w-20 rounded-full object-cover shrink-0"
+                />
+                <div>
+                  <p className="text-sm uppercase tracking-wide text-muted-foreground mb-2">
+                    {t("founder.kicker")}
+                  </p>
+                  <h3 className="font-display text-xl font-bold mb-3">
+                    {t("founder.title")}
+                  </h3>
+                  <p className="text-muted-foreground leading-relaxed">
+                    {t("founder.body")}
+                  </p>
                 </div>
-                <p className="mt-3 text-sm text-muted-foreground">
-                  &ldquo;Pasé de enviar 20 CVs sin respuesta a conseguir 3
-                  entrevistas en la primera semana usando CVs
-                  adaptados.&rdquo;
-                </p>
-                <p className="mt-3 font-medium text-sm">— María G.</p>
-              </CardContent>
-            </Card>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
 
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex gap-1 text-primary">
-                  {[...Array(5)].map((_, i) => (
-                    <Sparkles key={i} className="h-4 w-4 fill-current" />
-                  ))}
-                </div>
-                <p className="mt-3 text-sm text-muted-foreground">
-                  &ldquo;El proceso es súper rápido. Subo mi CV base y en
-                  segundos tengo un CV perfectamente adaptado a cada
-                  oferta.&rdquo;
-                </p>
-                <p className="mt-3 font-medium text-sm">— Carlos R.</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex gap-1 text-primary">
-                  {[...Array(5)].map((_, i) => (
-                    <Sparkles key={i} className="h-4 w-4 fill-current" />
-                  ))}
-                </div>
-                <p className="mt-3 text-sm text-muted-foreground">
-                  &ldquo;Finalmente una herramienta que entiende cómo
-                  funcionan los filtros ATS. Me ha ahorrado horas de
-                  trabajo.&rdquo;
-                </p>
-                <p className="mt-3 font-medium text-sm">— Laura M.</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex gap-1 text-primary">
-                  {[...Array(5)].map((_, i) => (
-                    <Sparkles key={i} className="h-4 w-4 fill-current" />
-                  ))}
-                </div>
-                <p className="mt-3 text-sm text-muted-foreground">
-                  &ldquo;Lo uso para cada postulación. La diferencia en la
-                  respuesta de las empresas es notable.&rdquo;
-                </p>
-                <p className="mt-3 font-medium text-sm">— David S.</p>
-              </CardContent>
-            </Card>
+      {/* FAQ */}
+      <section className="bg-muted/30 py-16">
+        <div className="container mx-auto px-4 max-w-2xl">
+          <h2 className="font-display text-2xl font-bold mb-8 text-center">
+            {t("faq.title")}
+          </h2>
+          <div className="space-y-4">
+            <details className="rounded-lg border bg-card p-4">
+              <summary className="font-medium cursor-pointer">
+                {t("faq.q1.question")}
+              </summary>
+              <p className="mt-3 text-sm text-muted-foreground">
+                {t("faq.q1.answer")}
+              </p>
+            </details>
+            <details className="rounded-lg border bg-card p-4">
+              <summary className="font-medium cursor-pointer">
+                {t("faq.q2.question")}
+              </summary>
+              <p className="mt-3 text-sm text-muted-foreground">
+                {t("faq.q2.answer")}
+              </p>
+            </details>
+            <details className="rounded-lg border bg-card p-4">
+              <summary className="font-medium cursor-pointer">
+                {t("faq.q3.question")}
+              </summary>
+              <p className="mt-3 text-sm text-muted-foreground">
+                {t("faq.q3.answer")}
+              </p>
+            </details>
+            <details className="rounded-lg border bg-card p-4">
+              <summary className="font-medium cursor-pointer">
+                {t("faq.q4.question")}
+              </summary>
+              <p className="mt-3 text-sm text-muted-foreground">
+                {t("faq.q4.answer")}
+              </p>
+            </details>
           </div>
         </div>
       </section>

@@ -300,7 +300,7 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
                     />
                     <span className="text-xs text-muted-foreground">
                       Entiendo y acepto que mi CV sea procesado por{" "}
-                      <strong className="text-foreground">Groq (EE.UU.)</strong>{" "}
+                      <strong className="text-foreground">nuestro proveedor de IA</strong>{" "}
                       para generar el CV adaptado.{" "}
                       <Link
                         href="/privacidad"
@@ -336,7 +336,7 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
                 )}
 
                 <p className="text-center text-xs text-muted-foreground">
-                  Tu CV será procesado por Groq (EE.UU.).{" "}
+                  Tu CV será procesado por nuestro proveedor de IA.{" "}
                   <Link
                     href="/privacidad"
                     target="_blank"

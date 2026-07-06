@@ -257,6 +257,7 @@
     },
     "favorite": {
       "add": "Guardar en favoritos",
+      "errorToggle": "No se pudo actualizar el favorito. Intentá de nuevo.",
       "remove": "Quitar de favoritos"
     },
     "noJobs": "No se encontraron trabajos",
@@ -368,10 +369,13 @@
     },
     "hero": {
       "badge": "Búsqueda de empleo con IA",
-      "title": "Encontrá tu próximo trabajo en minutos, no en semanas",
-      "subtitle": "Jobs Finder busca en LinkedIn, Indeed e InfoJobs en paralelo para que veas cada oportunidad en el momento en que aparece.",
+      "title": "Adapta tu CV a cada oferta en <highlight>30 segundos</highlight>.",
+      "subtitle": "Deja de enviar CVs iguales. Genera versiones a medida para LinkedIn, InfoJobs y Tecnoempleo. Optimizado para ATS españoles. Gratis para empezar.",
       "ctaPrimary": "Empezar — es gratis",
-      "ctaSecondary": "Ver cómo funciona"
+      "ctaSecondary": "Ver cómo funciona",
+      "guestUploadTitle": "Sube tu CV (PDF)",
+      "guestUploadHint": "Para adaptar tu CV, primero inicia sesión",
+      "guestCta": "Iniciar sesión y probar gratis"
     },
     "features": {
       "title": "Todo lo que necesitás para conseguir tu próximo empleo",
@@ -435,6 +439,30 @@
       "pdfOnly": "Solo se aceptan archivos PDF",
       "tooBig": "El archivo debe ser menor a 5MB",
       "mustSignIn": "Inicia sesión para subir tu CV"
+    },
+    "founder": {
+      "kicker": "Hecho por una persona, no por una empresa",
+      "title": "Soy Arturo, desarrollador en España.",
+      "body": "Envié más de 200 CVs sin entender por qué el ATS me rechazaba. Construí esta herramienta para mí mismo porque ChatGPT no entendía las ofertas en español ni el formato de los CVs que piden las empresas en España. Ahora la comparto para que no pierdas semanas en algo que puedes resolver en 30 segundos."
+    },
+    "faq": {
+      "title": "Preguntas frecuentes",
+      "q1": {
+        "question": "¿Es realmente gratis?",
+        "answer": "Sí. Puedes generar hasta 5 versiones adaptadas de tu CV sin pagar nada. Si necesitas más, hay un plan Pro."
+      },
+      "q2": {
+        "question": "¿Qué pasa con mis datos?",
+        "answer": "Tu CV se guarda cifrado en Supabase Storage como cv.pdf. Cuando generas una versión adaptada, el documento se envía temporalmente a MiniMax (nuestro proveedor de IA) para hacer el análisis. No vendemos ni compartimos tu información. Puedes eliminar tu cuenta y tu CV cuando quieras desde tu perfil."
+      },
+      "q3": {
+        "question": "¿Funciona con CVs en inglés?",
+        "answer": "Sí. La IA procesa CVs en español e inglés. Las ofertas que agregamos son de plataformas españolas, así que están en español."
+      },
+      "q4": {
+        "question": "¿En qué se diferencia de ChatGPT?",
+        "answer": "ChatGPT adapta texto pero no sabe qué palabras clave busca el ATS de InfoJobs o LinkedIn. Esta herramienta cruza tu CV con la oferta real y resalta lo que el sistema automático está buscando."
+      }
     }
   },
   "Footer": {

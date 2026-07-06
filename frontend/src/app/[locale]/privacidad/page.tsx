@@ -7,7 +7,7 @@ import { Footer } from "@/components/layout/Footer";
 export const metadata: Metadata = {
   title: "Política de Privacidad — Jobs Finder",
   description:
-    "Política de privacidad de Jobs Finder. Cómo recopilamos, usamos y protegemos tus datos personales, incluyendo la transferencia internacional a Groq (EE.UU.).",
+    "Política de privacidad de Jobs Finder. Cómo recopilamos, usamos y protegemos tus datos personales, incluyendo la transferencia internacional a MiniMax (nuestro proveedor de IA).",
 };
 
 export default function PrivacyPage() {
@@ -28,7 +28,7 @@ export default function PrivacyPage() {
           Política de Privacidad
         </h1>
         <p className="text-sm text-muted-foreground mb-8">
-          Última actualización: 15 de junio de 2026
+          Última actualización: 6 de julio de 2026
         </p>
 
         <div className="space-y-8">
@@ -43,7 +43,7 @@ export default function PrivacyPage() {
                 <li><a href="#datos" className="hover:text-foreground">Datos que recopilamos</a></li>
                 <li><a href="#finalidad" className="hover:text-foreground">Finalidad del tratamiento</a></li>
                 <li><a href="#base-legal" className="hover:text-foreground">Base legal</a></li>
-                <li><a href="#transferencia" className="hover:text-foreground">Transferencia internacional (EE.UU.)</a></li>
+                <li><a href="#transferencia" className="hover:text-foreground">Transferencia internacional (proveedor de IA)</a></li>
                 <li><a href="#retencion" className="hover:text-foreground">Retención de datos</a></li>
                 <li><a href="#tus-derechos" className="hover:text-foreground">Tus derechos</a></li>
                 <li><a href="#seguridad" className="hover:text-foreground">Seguridad</a></li>
@@ -129,7 +129,7 @@ export default function PrivacyPage() {
                   <strong className="text-foreground">Generación de CV adaptado:</strong>{" "}
                   procesar tu CV (PDF) junto con la descripción de una oferta de
                   empleo para generar una versión adaptada usando inteligencia
-                  artificial (Groq, EE.UU.).
+                  artificial (nuestro proveedor de IA, MiniMax).
                 </li>
                 <li>
                   <strong className="text-foreground">Búsqueda de empleo:</strong>{" "}
@@ -169,11 +169,11 @@ export default function PrivacyPage() {
                 <li>
                   <strong className="text-foreground">Consentimiento (Art. 6(1)(a)
                   RGPD / Art. 7 LGPD):</strong> es la base legal principal. Al
-                  subir tu CV y solicitar la generación de un CV adaptado,
-                  das tu consentimiento explícito para que procesemos tu CV a
-                  través de nuestro proveedor de IA (Groq) en Estados Unidos.
-                  Este consentimiento es freely given, specific, informed y
-                  unambiguous.
+                  subir tu CV y solicitar la generación de un CV adaptado, das
+                  tu consentimiento explícito para que procesemos tu CV a través
+                  de nuestro proveedor de IA (actualmente MiniMax) en sus
+                  servidores. Este consentimiento es freely given, specific,
+                  informed y unambiguous.
                 </li>
                 <li>
                   <strong className="text-foreground">Ejecución de un contrato
@@ -188,11 +188,11 @@ export default function PrivacyPage() {
               </ul>
               <p>
                 <strong className="text-foreground">Consentimiento explícito
-                para Groq:</strong> antes de generar un CV adaptado, debes
-                marcar una casilla de consentimiento explícito confirmando que
-                comprendes y aceptas que tu CV será procesado por Groq en
-                Estados Unidos. Este consentimiento es revocable en cualquier
-                momento contactándonos.
+                para el proveedor de IA:</strong> antes de generar un CV
+                adaptado, debes marcar una casilla de consentimiento explícito
+                confirmando que comprendes y aceptas que tu CV será procesado
+                por nuestro proveedor de IA (actualmente MiniMax). Este
+                consentimiento es revocable en cualquier momento contactándonos.
               </p>
             </div>
           </section>
@@ -200,66 +200,49 @@ export default function PrivacyPage() {
           {/* 5. Transferencia internacional */}
           <section id="transferencia">
             <h2 className="font-display text-2xl font-bold mb-3">
-              5. Transferencia internacional de datos (EEE → EE.UU.)
+              5. Transferencia internacional de datos
             </h2>
             <div className="space-y-3 text-sm text-muted-foreground">
               <p>
-                <strong className="text-foreground">Esta es la transferencia
-                más sensible bajo el RGPD y la LGPD.</strong>
+                <strong className="text-foreground">Esta sección explica cuándo y cómo tus datos salen del Espacio Económico Europeo.</strong>
               </p>
               <p>
-                Cuando generas un CV adaptado, el contenido de tu CV (nombre,
-                experiencia laboral, formación, habilidades, etc.) es enviado a
-                <strong className="text-foreground"> Groq, Inc.</strong>, una
-                empresa ubicada en{" "}
-                <strong className="text-foreground">Estados Unidos de América</strong>,
-                a través de su API REST compatible con OpenAI.
+                Cuando generas un CV adaptado, el contenido de tu CV (nombre, experiencia laboral, formación, habilidades, etc.) es enviado a nuestro proveedor de inteligencia artificial (<strong className="text-foreground">actualmente MiniMax</strong>) para producir la versión adaptada. Dependiendo de la región desde la que MiniMax preste el servicio en cada momento, este procesamiento puede tener lugar fuera del EEE.
               </p>
-              <p>Esto implica:</p>
+              <p>
+                <strong className="text-foreground">Garantías jurídicas aplicables (Art. 46 RGPD):</strong> para cualquier transferencia internacional, nos basamos en:
+              </p>
               <ul className="list-disc list-inside space-y-1 ml-4">
                 <li>
-                  <strong className="text-foreground">Transferencia fuera del
-                  EEE:</strong> tus datos personales salen del Espacio Económico
-                  Europeo y son procesados en Estados Unidos.
+                  <strong className="text-foreground">Cláusulas Contractuales Tipo (CCT/SCCs)</strong> aprobadas por la Comisión Europea, junto con medidas técnicas y organizativas complementarias (cifrado en tránsito y en reposo, minimización de datos, cláusulas de subprocesamiento).
                 </li>
                 <li>
-                  <strong className="text-foreground">Riesgos asociados:</strong>{" "}
-                  Estados Unidos no tiene, en principio, un nivel de protección
-                  de datos equivalente al del EEE. Sin embargo, Groq opera bajo
-                  el <em>EU-U.S. Data Privacy Framework</em> (desde julio de 2023)
-                  y el <em>Data Privacy Framework</em> UE-EE.UU., lo que establece
-                  un mecanismo de transferencia considerado adecuado por la Comisión
-                  Europea.
+                  <strong className="text-foreground">Consentimiento explícito (Art. 49(1)(a) RGPD)</strong> como base adicional cuando la transferencia es necesaria para ejecutar la solicitud del usuario.
                 </li>
                 <li>
-                  <strong className="text-foreground">Procesamiento por Groq:</strong>{" "}
-                  Groq procesa tus datos únicamente para generar la respuesta de
-                  adaptación del CV. Según sus políticas, los datos enviados a la
-                  API no se almacenan permanentemente para entrenamiento de
-                  modelos. Te recomendamos revisar la{" "}
-                  <a
-                    href="https://console.groq.com/privacy"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary hover:underline"
-                  >
-                    política de privacidad de Groq
-                  </a>{" "}
-                  para conocer sus prácticas actuales.
-                </li>
-                <li>
-                  <strong className="text-foreground">Tus derechos:</strong> al
-                  transferir datos a Groq, podrías ejercer tus derechos de
-                  protección de datos frente a Groq directamente, además de
-                  frente a nosotros.
+                  <strong className="text-foreground">Revisión periódica del proveedor</strong>: verificamos que nuestros proveedores ofrezcan garantías suficientes y actualizamos la lista si cambian las circunstancias.
                 </li>
               </ul>
               <p>
+                <strong className="text-foreground">Procesamiento por el proveedor de IA:</strong> el proveedor de IA procesa los datos enviados únicamente para generar la respuesta de adaptación del CV. Te recomendamos revisar la{" "}
+                {/* TODO: replace with the official MiniMax data processing URL once the founder confirms it */}
+                <a
+                  href="https://platform.minimax.io/docs/agreements/data-processing"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  política de protección de datos de nuestro proveedor
+                </a>{" "}
+                para conocer sus prácticas actuales.
+              </p>
+              <p>
+                <strong className="text-foreground">Tus derechos:</strong> al transferir datos a un procesador fuera del EEE, puedes ejercer tus derechos de protección de datos frente a ese procesador directamente, además de frente a nosotros.
+              </p>
+              <p>
                 Al utilizar el servicio de generación de CV adaptado,{" "}
                 <strong className="text-foreground">consientes expresamente</strong>{" "}
-                esta transferencia internacional a Estados Unidos conforme al
-                Art. 49(1)(a) RGPD (consentimiento explícito) y Art. 49(1)
-                LGPD.
+                esta transferencia internacional conforme al Art. 49(1)(a) RGPD (consentimiento explícito) y a las garantías del Art. 46 RGPD.
               </p>
             </div>
           </section>
@@ -279,10 +262,11 @@ export default function PrivacyPage() {
                 </li>
                 <li>
                   <strong className="text-foreground">Procesamiento LLM:</strong>{" "}
-                  el contenido de tu CV enviado a Groq es procesado de forma
-                  transitoria. Groq no debería retener tus datos más allá de lo
-                  necesario para completar la solicitud. No tenemos control
-                  sobre los servidores de Groq.
+                  el contenido de tu CV enviado a nuestro proveedor de IA es
+                  procesado de forma transitoria. El proveedor no debería retener
+                  tus datos más allá de lo necesario para completar la solicitud.
+                  No tenemos control sobre los servidores del proveedor, aunque
+                  exigimos contractualmente que aplique minimización de datos.
                 </li>
                 <li>
                   <strong className="text-foreground">Datos de sesión:</strong>{" "}
@@ -417,10 +401,9 @@ export default function PrivacyPage() {
             </h2>
             <div className="space-y-2 text-sm text-muted-foreground">
               <p>
-                Podemos actualizar esta política de privacidad periódicamente,
-                especialmente si hay cambios en los servicios de Groq, en la
-                legislación aplicable o en la arquitectura técnica de la
-                plataforma.
+                Podemos actualizar esta política periódicamente, especialmente
+                si hay cambios en nuestro proveedor de IA, en la legislación
+                aplicable o en la arquitectura técnica de la plataforma.
               </p>
               <p>
                 Los cambios se publicarán en esta misma página. Para cambios
