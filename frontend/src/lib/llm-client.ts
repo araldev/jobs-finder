@@ -23,7 +23,15 @@ const DEFAULT_MODEL = "MiniMax-M3";
 // (chat) keep the higher temperature.
 const DEFAULT_TEMPERATURE = 0.0;
 const DEFAULT_MAX_TOKENS = 4096;
-const DEFAULT_TIMEOUT_MS = 30_000;
+// cv/generate emits a 5-7KB JSON blob with 5+ experience entries,
+// education, skills, languages, and now projects. MiniMax-M3 has
+// been observed taking 25-40s for this prompt size. 30s was too
+// tight. 90s leaves headroom while still failing fast enough to
+// surface a real outage (vs. a 5-minute timeout that hangs the
+// route handler). The chat endpoint stays on the original 30s
+// since its prompts are smaller and MiniMax returns streaming
+// chunks quickly.
+const DEFAULT_TIMEOUT_MS = 90_000;
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
