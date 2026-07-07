@@ -11,7 +11,7 @@
 // Thinking-block stripping (the M2.x model family emits
 // `<think>...</think>` tags) is also mirrored here.
 
-import type { AdaptedCV } from "./prompts";
+import type { AdaptedCV, AdaptedCVProject } from "./prompts";
 
 export class AdaptedCVParseError extends Error {
   constructor(message: string) {
@@ -77,6 +77,20 @@ function listOr(value: unknown): string[] {
     return value.map((v) => String(v));
   }
   return [];
+}
+
+function projectsOr(value: unknown): AdaptedCVProject[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((p) => {
+      const proj = (p ?? {}) as Record<string, unknown>;
+      return {
+        name: strOr(proj.name),
+        description: strOr(proj.description, ""),
+        technologies: listOr(proj.technologies),
+      };
+    })
+    .filter((p) => p.name.length > 0);
 }
 
 export function parseAdaptedCVResponse(raw: string): AdaptedCV {
@@ -161,6 +175,8 @@ export function parseAdaptedCVResponse(raw: string): AdaptedCV {
       })
     : [];
 
+  const projects = projectsOr(obj.projects);
+
   return {
     name: strOr(obj.name, "Sin nombre"),
     email: strOr(obj.email, ""),
@@ -169,6 +185,7 @@ export function parseAdaptedCVResponse(raw: string): AdaptedCV {
     summary: strOr(obj.summary, ""),
     experience,
     education,
+    projects,
     skills: listOr(obj.skills),
     languages: listOr(obj.languages),
   };

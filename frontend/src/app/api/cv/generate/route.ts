@@ -45,6 +45,18 @@ import { renderAdaptedCvAsPdf } from "@/lib/pdf/render-cv";
  * The static `"LLM provider unavailable"` message is what reaches
  * the client on any LLM failure; the underlying cause is logged
  * server-side with `console.error`.
+ *
+ * Photo support (intentionally NOT implemented here):
+ *   The Python backend's `extract_cv_image` (PyMuPDF) can extract
+ *   an embedded photo from a PDF and pass it as a base64 data URL
+ *   into `renderAdaptedCvAsPdf`. `pdf-lib` + `unpdf` (the stack
+ *   this route uses) do NOT expose the photo bytes from a parsed
+ *   document — extracting images via `pdf-lib` requires walking
+ *   the content stream and decoding XObjects manually.
+ *   If photo support is needed, prefer a separate upload endpoint
+ *   that stores the photo in Supabase Storage; the renderer then
+ *   fetches it and embeds it as the first page element. See the
+ *   `decouple-nextjs-from-backend` change for the prior discussion.
  */
 export async function POST(request: NextRequest) {
   // 1. Authenticate.

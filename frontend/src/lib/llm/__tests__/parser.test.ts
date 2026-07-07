@@ -41,6 +41,18 @@ describe("parseAdaptedCVResponse", () => {
           grade: "9.0",
         },
       ],
+      projects: [
+        {
+          name: "V12-UI",
+          description: "React UI library",
+          technologies: ["React", "TypeScript"],
+        },
+        {
+          name: "PORTFOLIO",
+          description: "",
+          technologies: [],
+        },
+      ],
       skills: ["TypeScript", "React", "Node.js"],
       languages: ["Spanish", "English"],
     });
@@ -51,7 +63,53 @@ describe("parseAdaptedCVResponse", () => {
     expect(cv.experience).toHaveLength(1);
     expect(cv.experience[0]?.company).toBe("Acme");
     expect(cv.education[0]?.grade).toBe("9.0");
+    expect(cv.projects).toHaveLength(2);
+    expect(cv.projects[0]?.name).toBe("V12-UI");
+    expect(cv.projects[0]?.technologies).toEqual(["React", "TypeScript"]);
+    expect(cv.projects[1]?.name).toBe("PORTFOLIO");
+    expect(cv.projects[1]?.technologies).toEqual([]);
     expect(cv.skills).toEqual(["TypeScript", "React", "Node.js"]);
+  });
+
+  it("extracts projects with name, description, technologies", () => {
+    const raw = JSON.stringify({
+      name: "John",
+      projects: [
+        { name: "V12-UI", description: "Personal project", technologies: ["React"] },
+        { name: "Portfolio", description: "Static site", technologies: [] },
+      ],
+    });
+    const result = parseAdaptedCVResponse(raw);
+    expect(result.projects).toHaveLength(2);
+    expect(result.projects[0]?.name).toBe("V12-UI");
+    expect(result.projects[0]?.description).toBe("Personal project");
+    expect(result.projects[0]?.technologies).toEqual(["React"]);
+    expect(result.projects[1]?.name).toBe("Portfolio");
+    expect(result.projects[1]?.technologies).toEqual([]);
+  });
+
+  it("defaults projects to [] when missing or not an array", () => {
+    const missing = parseAdaptedCVResponse(JSON.stringify({ name: "Ada" }));
+    expect(missing.projects).toEqual([]);
+
+    const wrongType = parseAdaptedCVResponse(
+      JSON.stringify({ name: "Ada", projects: "not-an-array" }),
+    );
+    expect(wrongType.projects).toEqual([]);
+  });
+
+  it("drops project entries with empty names (defensive parsing)", () => {
+    const raw = JSON.stringify({
+      name: "Ada",
+      projects: [
+        { name: "V12-UI", description: "ok", technologies: ["React"] },
+        { name: "", description: "should be dropped", technologies: [] },
+        { name: null, description: "should also be dropped", technologies: [] },
+      ],
+    });
+    const cv = parseAdaptedCVResponse(raw);
+    expect(cv.projects).toHaveLength(1);
+    expect(cv.projects[0]?.name).toBe("V12-UI");
   });
 
   it("extracts JSON from a markdown ```json``` block (strategy 2)", () => {
@@ -168,10 +226,11 @@ describe("parseAdaptedCVResponse", () => {
     expect(cv.education[0]?.grade).toBeNull();
   });
 
-  it("handles missing arrays (experience / education / skills / languages)", () => {
+  it("handles missing arrays (experience / education / projects / skills / languages)", () => {
     const cv = parseAdaptedCVResponse(JSON.stringify({ name: "Ada" }));
     expect(cv.experience).toEqual([]);
     expect(cv.education).toEqual([]);
+    expect(cv.projects).toEqual([]);
     expect(cv.skills).toEqual([]);
     expect(cv.languages).toEqual([]);
   });

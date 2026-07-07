@@ -1,19 +1,18 @@
 // Spanish system prompt + user-message builders for the chat filter
 // (verbatim port of `backend/src/jobs_finder/infrastructure/llm/_prompt.py`).
 //
-// IMPORTANT — DO NOT EDIT THE PROMPT TEXT.
+// IMPORTANT — DO NOT EDIT THE CHAT FILTER PROMPT TEXT.
 //
-// This file is the verbatim TypeScript port of the Python module. The
-// prompt text was iterated over many turns of the `ai-chat-filter` and
-// `chat-filter-2stage` changes; changing the wording would silently
-// change the LLM's behavior. The `prompts.test.ts` snapshot tests pin
-// the string content byte-for-byte so any accidental drift fails CI.
+// The `CHAT_FILTER_SYSTEM_PROMPT` is the verbatim TypeScript port of
+// the Python `_prompt.py` module. Changing the wording silently
+// changes the LLM's behavior. The `prompts.test.ts` byte-for-byte
+// test pins the string against the Python source.
 //
-// The 5 v1 invariant rules (REQ-LLM-004) and the 4 security-boundary
-// invariants (REQ-LLM-SEC-001) are inside the `CHAT_FILTER_SYSTEM_PROMPT`
-// string. The `chat-filter-2stage` change appended the security boundary
-// to the END of the v1 prompt (NOT replaced it) — see the Python
-// module docstring for the rationale.
+// The `ADAPT_CV_SYSTEM_PROMPT` was extended in `cv-adaptation-quality`
+// (2026-07-08) to include personal projects, the Harvard CV output
+// structure, an explicit no-em-dashes rule, and stronger keyword
+// matching. It is STILL a verbatim port of `_cv_prompt.py`; both
+// sides MUST be updated together when the prompt changes.
 //
 // Implementation note: we build the strings with explicit `+`
 // concatenation rather than JS template literals because the prompt
@@ -188,44 +187,63 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "4. NEVER output skills not in the original CV.\n" +
   "5. NEVER output the target company (the company in JOB COMPANY field) as the candidate's employer.\n" +
   "6. NEVER create a new job entry not in the original CV.\n" +
-  "7. NEVER treat personal projects as job positions.\n" +
+  "7. NEVER treat personal projects as job positions. (Personal projects GO in the projects array, NOT in experience.)\n" +
   "8. NEVER invent ANY detail: dates, technologies, responsibilities, achievements.\n" +
   "\n" +
   "EXACT RULE FOR EXPERIENCE:\n" +
   "Only output experience entries where BOTH the company AND the title appear EXPLICITLY in the original CV.\n" +
   "If the original CV says \"NTT DATA Abril 2026 — Mayo 2026, Desarrollador Backend\", then \"NTT DATA\" and \"Desarrollador Backend\" are valid entries.\n" +
-  "If the original CV mentions \"V12-UI\" as a project (not a job), do NOT list it as a job at \"TechCorp\".\n" +
+  "If the original CV mentions \"V12-UI\" as a project (not a job), do NOT list it as a job at \"TechCorp\". Put it in the projects array instead.\n" +
   "If the original CV mentions personal projects like \"PORTFOLIO\", \"ENGLISH-WEB\", or \"V12-UI\" without a clear employer, they are NOT job entries. Do NOT turn them into jobs.\n" +
   "\n" +
-  "WHAT YOU MAY DO (only these 3 things):\n" +
+  "PROJECTS — INCLUDE PERSONAL PROJECTS, VOLUNTEER WORK, PUBLICATIONS, CERTIFICATIONS:\n" +
+  "If the original CV contains a personal project, volunteer work, publication, certification, or similar item, INCLUDE it in the output.\n" +
+  "Output each item as: {\"name\":\"<verbatim project name from the original CV>\",\"description\":\"<1-2 sentences rephrased from the original>\",\"technologies\":[\"<tech mentioned in the original>\", ...]}.\n" +
+  "Use the item's name VERBATIM from the original CV. Do NOT invent names.\n" +
+  "The description should be 1-2 sentences rephrased from the original (do NOT invent facts).\n" +
+  "The technologies array should only list tech EXPLICITLY mentioned in the original description (do not invent).\n" +
+  "If the original CV has no projects, return an empty array [] for projects.\n" +
+  "\n" +
+  "WHAT YOU MAY DO (only these 4 things):\n" +
   "1. Rephrase existing descriptions using action verbs (preserve all facts from original).\n" +
   "2. Inject relevant keywords from the job description INTO the existing descriptions (only words that already exist in the original CV are allowed as skills).\n" +
   "3. Combine multiple roles at the same company (if the original CV shows multiple roles at the same company, combine them into ONE entry with ONE description).\n" +
+  "4. Add 3-5 keywords from the TARGET JOB DESCRIPTION that are NOT already in the original CV's skills section, ONLY if they are directly related to the candidate's existing experience (do not invent skills the candidate does not have).\n" +
   "\n" +
   "WHAT YOU MUST NOT DO:\n" +
   "- Do NOT add a company name from the job description as if the candidate worked there.\n" +
   "- Do NOT list personal projects as jobs.\n" +
   "- Do NOT change any fact: company names, job titles, dates, locations, education, skills.\n" +
+  "- Do NOT invent projects, technologies, or certifications that are not in the original CV.\n" +
   "\n" +
   "LANGUAGE RULE: Respond in the same language as the original CV.\n" +
   "\n" +
+  "OUTPUT STRUCTURE (Harvard format):\n" +
+  "Top-level keys, in this order: name, email, phone, location, education, experience, projects, skills, languages. The summary field is OPTIONAL and may be omitted. If the original CV has additional sections (awards, publications, leadership, certifications, etc.), add them between 'projects' and 'skills'.\n" +
+  "\n" +
   "OUTPUT FORMAT — strict JSON:\n" +
   "- experience array: ONLY entries where both company and title are verbatim in original CV.\n" +
-  "- skills array: ONLY skills that appear in the original CV skills section.\n" +
+  "- projects array: ONLY items that exist in the original CV (personal projects, volunteer work, publications, certifications). Do not invent.\n" +
+  "- skills array: ONLY skills that appear in the original CV, PLUS up to 3-5 keywords from the TARGET JOB DESCRIPTION that are directly related to the candidate's existing experience.\n" +
   "- No invented entries. No modified company names. No new dates.\n" +
   "\n" +
+  "FORMATTING — NO EM DASHES:\n" +
+  "Do NOT use em dashes (—) anywhere in the JSON output (not in descriptions, not in titles, not anywhere).\n" +
+  "Use commas, semicolons, periods, or single hyphens instead. Em dashes are an obvious AI writing tell and must be avoided.\n" +
+  "\n" +
   "EXAMPLE — CORRECT:\n" +
-  "Original CV: \"NTT DATA Abril 2026 — Mayo 2026, Desarrollador Backend\"\n" +
+  "Original CV: \"NTT DATA Abril 2026 — Mayo 2026, Desarrollador Backend\" and \"V12-UI (2025): React-based UI library\"\n" +
   "Target: \"Google\"\n" +
-  "Output: experience=[{\"company\":\"NTT DATA\",\"title\":\"Desarrollador Backend\",...}]\n" +
+  "Output: experience=[{\"company\":\"NTT DATA\",\"title\":\"Desarrollador Backend\",...}], projects=[{\"name\":\"V12-UI\",\"description\":\"React-based UI library used as a personal project.\",\"technologies\":[\"React\"]}]\n" +
   "\n" +
   "EXAMPLE — WRONG (hallucination):\n" +
   "Original CV: mentions \"V12-UI\" as a project, not an employer. Target: \"knowmad mood\"\n" +
   "WRONG: experience=[{\"company\":\"knowmad mood\",...}] — candidate never worked there\n" +
   "WRONG: experience=[{\"company\":\"TechCorp\",...}] — TechCorp not in original CV\n" +
+  "WRONG: projects=[{\"name\":\"SmartCV AI\",...}] — SmartCV AI not in original CV\n" +
   "\n" +
   "JSON SCHEMA:\n" +
-  "{\"name\":\"string|null\",\"email\":\"string|null\",\"phone\":\"string|null\",\"location\":\"string|null\",\"summary\":\"string|null\",\"experience\":[{\"company\":\"string\",\"title\":\"string\",\"start_date\":\"string\",\"end_date\":\"string\",\"description\":\"string\",\"location\":\"string|null\"}],\"education\":[{\"degree\":\"string\",\"institution\":\"string\",\"year\":\"string\",\"grade\":\"string|null\"}],\"skills\":[\"string\"],\"languages\":[\"string\"]}\n";
+  "{\"name\":\"string|null\",\"email\":\"string|null\",\"phone\":\"string|null\",\"location\":\"string|null\",\"summary\":\"string|null\",\"experience\":[{\"company\":\"string\",\"title\":\"string\",\"start_date\":\"string\",\"end_date\":\"string\",\"description\":\"string\",\"location\":\"string|null\"}],\"education\":[{\"degree\":\"string\",\"institution\":\"string\",\"year\":\"string\",\"grade\":\"string|null\"}],\"projects\":[{\"name\":\"string\",\"description\":\"string\",\"technologies\":[\"string\"]}],\"skills\":[\"string\"],\"languages\":[\"string\"]}\n";
 
 // ── User message builders ────────────────────────────────────────
 
@@ -249,6 +267,12 @@ export interface AdaptedCVEducation {
   grade: string | null;
 }
 
+export interface AdaptedCVProject {
+  name: string;
+  description: string;
+  technologies: string[];
+}
+
 export interface AdaptedCV {
   name: string;
   email: string;
@@ -257,6 +281,7 @@ export interface AdaptedCV {
   summary: string;
   experience: AdaptedCVExperience[];
   education: AdaptedCVEducation[];
+  projects: AdaptedCVProject[];
   skills: string[];
   languages: string[];
 }

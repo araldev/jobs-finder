@@ -99,13 +99,15 @@ function drawLine(
 /**
  * Render the LLM's `AdaptedCV` as a downloadable PDF (Uint8Array).
  *
- * Layout:
+ * Layout (Harvard CV template order):
  *   - Header (centered): name (18pt bold) + email/phone/location (10pt)
  *   - Summary (if present): "Summary" heading + body
- *   - Experience: "Experience" heading + per-entry title — company
- *     (bold), date range (9pt), description (10pt)
- *   - Education: "Education" heading + per-entry degree — institution
+ *   - Education: "Education" heading + per-entry degree, institution
  *     + year (9pt)
+ *   - Experience: "Experience" heading + per-entry title, company
+ *     (bold), date range (9pt), description (10pt)
+ *   - Projects (if any): "Projects" heading + per-entry name, optional
+ *     description, optional "Technologies:" line
  *   - Skills: "Skills" heading + comma-separated list
  *   - Languages: "Languages" heading + comma-separated list
  *
@@ -113,6 +115,10 @@ function drawLine(
  * current page, a new page is added. The output is a "good enough"
  * CV — not Canva-quality, but a real, valid PDF that opens in any
  * PDF viewer.
+ *
+ * No em dashes are emitted anywhere; section separators use commas or
+ * the en dash (typographically correct for date ranges only). Matches
+ * the "no AI writing tells" rule from `ADAPT_CV_SYSTEM_PROMPT`.
  *
  * No text is ever logged (the route logs the file size only, and
  * `LLM_API_KEY` is read upstream — this module never touches it).
@@ -147,12 +153,23 @@ export async function renderAdaptedCvAsPdf(
     drawLine(state, cv.summary, { size: 10 });
   }
 
+  // Education (Harvard order: before Experience).
+  if (cv.education && cv.education.length > 0) {
+    drawSpacer(state, lineHeight(10));
+    drawLine(state, "Education", { bold: true, size: 12 });
+    for (const ed of cv.education) {
+      const line = [ed.degree, ed.institution].filter(Boolean).join(", ");
+      if (line) drawLine(state, line, { size: 10 });
+      if (ed.year) drawLine(state, ed.year, { size: 9 });
+    }
+  }
+
   // Experience.
   if (cv.experience && cv.experience.length > 0) {
     drawSpacer(state, lineHeight(10));
     drawLine(state, "Experience", { bold: true, size: 12 });
     for (const exp of cv.experience) {
-      const heading = [exp.title, exp.company].filter(Boolean).join(" — ");
+      const heading = [exp.title, exp.company].filter(Boolean).join(", ");
       if (heading) {
         drawLine(state, heading, { bold: true, size: 10 });
       }
@@ -169,14 +186,24 @@ export async function renderAdaptedCvAsPdf(
     }
   }
 
-  // Education.
-  if (cv.education && cv.education.length > 0) {
+  // Projects (personal projects / volunteer work / certifications).
+  // Sourced from the original CV via `ADAPT_CV_SYSTEM_PROMPT`; the
+  // LLM rephrases the description and lists the technologies.
+  if (cv.projects && cv.projects.length > 0) {
     drawSpacer(state, lineHeight(10));
-    drawLine(state, "Education", { bold: true, size: 12 });
-    for (const ed of cv.education) {
-      const line = [ed.degree, ed.institution].filter(Boolean).join(" — ");
-      if (line) drawLine(state, line, { size: 10 });
-      if (ed.year) drawLine(state, ed.year, { size: 9 });
+    drawLine(state, "Projects", { bold: true, size: 12 });
+    for (const proj of cv.projects) {
+      if (proj.name) {
+        drawLine(state, proj.name, { bold: true, size: 10 });
+      }
+      if (proj.description) {
+        drawLine(state, proj.description, { size: 10 });
+      }
+      if (proj.technologies && proj.technologies.length > 0) {
+        drawLine(state, `Technologies: ${proj.technologies.join(", ")}`, {
+          size: 9,
+        });
+      }
     }
   }
 

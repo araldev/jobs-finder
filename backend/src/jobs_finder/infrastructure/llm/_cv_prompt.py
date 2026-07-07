@@ -16,7 +16,7 @@ import json
 import re
 from typing import Any
 
-from ..cv._template import AdaptedCV, EducationEntry, ExperienceEntry
+from ..cv._template import AdaptedCV, EducationEntry, ExperienceEntry, ProjectEntry
 
 ADAPT_CV_SYSTEM_PROMPT = """\
 You are a professional CV writer. Output valid JSON only. No explanations, no markdown.
@@ -33,44 +33,63 @@ STRICT FORBIDDEN (immediate rejection of output if violated):
 4. NEVER output skills not in the original CV.
 5. NEVER output the target company (the company in JOB COMPANY field) as the candidate's employer.
 6. NEVER create a new job entry not in the original CV.
-7. NEVER treat personal projects as job positions.
+7. NEVER treat personal projects as job positions. (Personal projects GO in the projects array, NOT in experience.)
 8. NEVER invent ANY detail: dates, technologies, responsibilities, achievements.
 
 EXACT RULE FOR EXPERIENCE:
 Only output experience entries where BOTH the company AND the title appear EXPLICITLY in the original CV.
 If the original CV says "NTT DATA Abril 2026 — Mayo 2026, Desarrollador Backend", then "NTT DATA" and "Desarrollador Backend" are valid entries.
-If the original CV mentions "V12-UI" as a project (not a job), do NOT list it as a job at "TechCorp".
+If the original CV mentions "V12-UI" as a project (not a job), do NOT list it as a job at "TechCorp". Put it in the projects array instead.
 If the original CV mentions personal projects like "PORTFOLIO", "ENGLISH-WEB", or "V12-UI" without a clear employer, they are NOT job entries. Do NOT turn them into jobs.
 
-WHAT YOU MAY DO (only these 3 things):
+PROJECTS — INCLUDE PERSONAL PROJECTS, VOLUNTEER WORK, PUBLICATIONS, CERTIFICATIONS:
+If the original CV contains a personal project, volunteer work, publication, certification, or similar item, INCLUDE it in the output.
+Output each item as: {"name":"<verbatim project name from the original CV>","description":"<1-2 sentences rephrased from the original>","technologies":["<tech mentioned in the original>", ...]}.
+Use the item's name VERBATIM from the original CV. Do NOT invent names.
+The description should be 1-2 sentences rephrased from the original (do NOT invent facts).
+The technologies array should only list tech EXPLICITLY mentioned in the original description (do not invent).
+If the original CV has no projects, return an empty array [] for projects.
+
+WHAT YOU MAY DO (only these 4 things):
 1. Rephrase existing descriptions using action verbs (preserve all facts from original).
 2. Inject relevant keywords from the job description INTO the existing descriptions (only words that already exist in the original CV are allowed as skills).
 3. Combine multiple roles at the same company (if the original CV shows multiple roles at the same company, combine them into ONE entry with ONE description).
+4. Add 3-5 keywords from the TARGET JOB DESCRIPTION that are NOT already in the original CV's skills section, ONLY if they are directly related to the candidate's existing experience (do not invent skills the candidate does not have).
 
 WHAT YOU MUST NOT DO:
 - Do NOT add a company name from the job description as if the candidate worked there.
 - Do NOT list personal projects as jobs.
 - Do NOT change any fact: company names, job titles, dates, locations, education, skills.
+- Do NOT invent projects, technologies, or certifications that are not in the original CV.
 
 LANGUAGE RULE: Respond in the same language as the original CV.
 
+OUTPUT STRUCTURE (Harvard format):
+Top-level keys, in this order: name, email, phone, location, education, experience, projects, skills, languages. The summary field is OPTIONAL and may be omitted. If the original CV has additional sections (awards, publications, leadership, certifications, etc.), add them between 'projects' and 'skills'.
+
 OUTPUT FORMAT — strict JSON:
 - experience array: ONLY entries where both company and title are verbatim in original CV.
-- skills array: ONLY skills that appear in the original CV skills section.
+- projects array: ONLY items that exist in the original CV (personal projects, volunteer work, publications, certifications). Do not invent.
+- skills array: ONLY skills that appear in the original CV, PLUS up to 3-5 keywords from the TARGET JOB DESCRIPTION that are directly related to the candidate's existing experience.
 - No invented entries. No modified company names. No new dates.
 
+FORMATTING — NO EM DASHES:
+Do NOT use em dashes (—) anywhere in the JSON output (not in descriptions, not in titles, not anywhere).
+Use commas, semicolons, periods, or single hyphens instead. Em dashes are an obvious AI writing tell and must be avoided.
+
 EXAMPLE — CORRECT:
-Original CV: "NTT DATA Abril 2026 — Mayo 2026, Desarrollador Backend"
+Original CV: "NTT DATA Abril 2026 — Mayo 2026, Desarrollador Backend" and "V12-UI (2025): React-based UI library"
 Target: "Google"
-Output: experience=[{"company":"NTT DATA","title":"Desarrollador Backend",...}]
+Output: experience=[{"company":"NTT DATA","title":"Desarrollador Backend",...}], projects=[{"name":"V12-UI","description":"React-based UI library used as a personal project.","technologies":["React"]}]
 
 EXAMPLE — WRONG (hallucination):
 Original CV: mentions "V12-UI" as a project, not an employer. Target: "knowmad mood"
 WRONG: experience=[{"company":"knowmad mood",...}] — candidate never worked there
 WRONG: experience=[{"company":"TechCorp",...}] — TechCorp not in original CV
+WRONG: projects=[{"name":"SmartCV AI",...}] — SmartCV AI not in original CV
 
 JSON SCHEMA:
-{"name":"string|null","email":"string|null","phone":"string|null","location":"string|null","summary":"string|null","experience":[{"company":"string","title":"string","start_date":"string","end_date":"string","description":"string","location":"string|null"}],"education":[{"degree":"string","institution":"string","year":"string","grade":"string|null"}],"skills":["string"],"languages":["string"]}
+{"name":"string|null","email":"string|null","phone":"string|null","location":"string|null","summary":"string|null","experience":[{"company":"string","title":"string","start_date":"string","end_date":"string","description":"string","location":"string|null"}],"education":[{"degree":"string","institution":"string","year":"string","grade":"string|null"}],"projects":[{"name":"string","description":"string","technologies":["string"]}],"skills":["string"],"languages":["string"]}
 """  # noqa: S703,E501 (long lines intentional for prompt)
 
 
@@ -92,7 +111,7 @@ def build_adapt_cv_user_message(
     )
 
 
-def parse_adapted_cv_response(raw: str) -> AdaptedCV:
+def parse_adapted_cv_response(raw: str) -> AdaptedCV:  # noqa: PLR0912 (defensive parser branches per strategy)
     """Parse the LLM JSON response into an AdaptedCV dataclass.
 
     Args:
@@ -190,6 +209,21 @@ def parse_adapted_cv_response(raw: str) -> AdaptedCV:
             )
         )
 
+    projects: list[ProjectEntry] = []
+    for proj in data.get("projects") or []:
+        if not isinstance(proj, dict):
+            continue
+        name = str_or(proj.get("name"))
+        if not name:
+            continue
+        projects.append(
+            ProjectEntry(
+                name=name,
+                description=str_or(proj.get("description", "")),
+                technologies=list_or(proj.get("technologies")),
+            )
+        )
+
     return AdaptedCV(
         name=str_or(data.get("name"), "Sin nombre"),
         email=str_or(data.get("email"), ""),
@@ -198,6 +232,7 @@ def parse_adapted_cv_response(raw: str) -> AdaptedCV:
         summary=str_or(data.get("summary"), ""),
         experience=experience,
         education=education,
+        projects=projects,
         skills=list_or(data.get("skills")),
         languages=list_or(data.get("languages")),
     )

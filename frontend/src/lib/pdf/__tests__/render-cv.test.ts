@@ -60,6 +60,19 @@ const SAMPLE_CV: AdaptedCV = {
       grade: "9.0",
     },
   ],
+  projects: [
+    {
+      name: "V12-UI",
+      description:
+        "React-based component library used in side projects.",
+      technologies: ["React", "TypeScript"],
+    },
+    {
+      name: "PORTFOLIO",
+      description: "Personal website with blog and project showcase.",
+      technologies: ["Next.js"],
+    },
+  ],
   skills: ["TypeScript", "React", "Node.js", "PostgreSQL", "Kubernetes"],
   languages: ["Spanish", "English"],
 };
@@ -119,6 +132,7 @@ describe("renderAdaptedCvAsPdf", () => {
       summary: "",
       experience: [],
       education: [],
+      projects: [],
       skills: [],
       languages: [],
     };
@@ -136,12 +150,76 @@ describe("renderAdaptedCvAsPdf", () => {
       summary: "",
       experience: [],
       education: [],
+      projects: [],
       skills: [],
       languages: [],
     });
     const pdf = await getDocumentProxy(bytes);
     const { text } = await extractText(pdf, { mergePages: true });
     expect(text).toContain("Ada Lovelace");
+  });
+
+  it("renders a Projects section between Experience and Skills (Harvard order)", async () => {
+    const bytes = await renderAdaptedCvAsPdf(SAMPLE_CV);
+    const pdf = await getDocumentProxy(bytes);
+    const { text } = await extractText(pdf, { mergePages: true });
+
+    expect(text).toContain("Projects");
+    expect(text).toContain("V12-UI");
+    expect(text).toContain("PORTFOLIO");
+    expect(text).toContain("Technologies:");
+    expect(text).toContain("React");
+    expect(text).toContain("Next.js");
+    // Harvard ordering: Education appears before Experience in the PDF.
+    const eduIdx = text.indexOf("Education");
+    const expIdx = text.indexOf("Experience");
+    const projIdx = text.indexOf("Projects");
+    expect(eduIdx).toBeGreaterThan(-1);
+    expect(expIdx).toBeGreaterThan(eduIdx);
+    expect(projIdx).toBeGreaterThan(expIdx);
+  });
+
+  it("skips the Projects section entirely when no projects are present", async () => {
+    const bytes = await renderAdaptedCvAsPdf({
+      ...SAMPLE_CV,
+      projects: [],
+    });
+    const pdf = await getDocumentProxy(bytes);
+    const { text } = await extractText(pdf, { mergePages: true });
+    expect(text).not.toContain("Projects");
+    // V12-UI is also a project, so it shouldn't appear.
+    expect(text).not.toContain("V12-UI");
+  });
+
+  it("renders a project with no technologies without a Technologies: line", async () => {
+    const bytes = await renderAdaptedCvAsPdf({
+      ...SAMPLE_CV,
+      projects: [
+        {
+          name: "MyNakedProject",
+          description: "Description only.",
+          technologies: [],
+        },
+      ],
+    });
+    const pdf = await getDocumentProxy(bytes);
+    const { text } = await extractText(pdf, { mergePages: true });
+    expect(text).toContain("MyNakedProject");
+    expect(text).toContain("Description only.");
+    expect(text).not.toContain("Technologies:");
+  });
+
+  it("does not emit em dashes in section dividers (replaced by commas)", async () => {
+    const bytes = await renderAdaptedCvAsPdf(SAMPLE_CV);
+    const pdf = await getDocumentProxy(bytes);
+    const { text } = await extractText(pdf, { mergePages: true });
+    // The renderer uses commas for company/title/education headers;
+    // em dashes only appear inside the user's text content (e.g. the
+    // SAMPLE_CV description doesn't have any, but a future LLM might
+    // — what we GUARANTEE here is that the renderer never introduces
+    // em dashes itself).
+    expect(text).not.toContain("Globex \u2014");
+    expect(text).not.toContain("Globex —");
   });
 
   it("paginates long descriptions across multiple pages", async () => {

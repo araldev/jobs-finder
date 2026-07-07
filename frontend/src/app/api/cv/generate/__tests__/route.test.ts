@@ -91,6 +91,13 @@ vi.mock("@/lib/llm/parser", async () => {
           },
         ],
         education: [],
+        projects: [
+          {
+            name: "V12-UI",
+            description: "React-based component library.",
+            technologies: ["React", "TypeScript"],
+          },
+        ],
         skills: ["TypeScript", "React"],
         languages: ["Spanish", "English"],
       };

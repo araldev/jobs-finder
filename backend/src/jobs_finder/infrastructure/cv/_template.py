@@ -37,6 +37,21 @@ class EducationEntry:
 
 
 @dataclass
+class ProjectEntry:
+    """A single personal project / volunteer / publication / certification entry.
+
+    Mirrors `frontend/src/lib/llm/prompts.ts` `AdaptedCVProject`. The LLM
+    uses this to surface items from the original CV that don't fit the
+    `ExperienceEntry` shape (personal projects, open-source contributions,
+    certifications, etc.).
+    """
+
+    name: str
+    description: str = ""
+    technologies: list[str] = field(default_factory=list)
+
+
+@dataclass
 class AdaptedCV:
     """Structured adapted CV ready for rendering."""
 
@@ -47,6 +62,7 @@ class AdaptedCV:
     summary: str  # Professional summary, 2-3 sentences
     experience: list[ExperienceEntry] = field(default_factory=list)
     education: list[EducationEntry] = field(default_factory=list)
+    projects: list[ProjectEntry] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
     languages: list[str] = field(default_factory=list)
     photo_base64: str | None = None
@@ -56,6 +72,7 @@ class AdaptedCV:
         skills_section = self._render_skills()
         experience_section = self._render_experience()
         education_section = self._render_education()
+        projects_section = self._render_projects()
 
         photo_html = ""
         if self.photo_base64:
@@ -190,6 +207,29 @@ class AdaptedCV:
     margin-top: 2pt;
   }}
 
+  .project-item {{
+    margin-bottom: 6pt;
+    page-break-inside: avoid;
+  }}
+
+  .project-name {{
+    font-weight: bold;
+    font-size: 10pt;
+  }}
+
+  .project-description {{
+    font-size: 9pt;
+    color: #222;
+    line-height: 1.4;
+    margin-top: 1pt;
+  }}
+
+  .project-tech {{
+    font-size: 9pt;
+    color: #555;
+    margin-top: 1pt;
+  }}
+
   .edu-item {{
     margin-bottom: 5pt;
     page-break-inside: avoid;
@@ -256,12 +296,14 @@ class AdaptedCV:
   <p class="summary">{self.summary}</p>
 </div>
 
-{experience_section}
-
 <div class="section">
   <div class="section-title">Educación</div>
   {education_section}
 </div>
+
+{experience_section}
+
+{projects_section}
 
 {skills_section}
 
@@ -274,13 +316,13 @@ class AdaptedCV:
         items = ""
         for exp in self.experience:
             location_html = (
-                f' — <span class="exp-location">{exp.location}</span>' if exp.location else ""
+                f', <span class="exp-location">{exp.location}</span>' if exp.location else ""
             )
             items += f"""
 <div class="experience-item">
   <div class="exp-header">
     <span class="exp-company">{exp.company}</span>
-    <span class="exp-date">{exp.start_date} — {exp.end_date}</span>
+    <span class="exp-date">{exp.start_date} – {exp.end_date}</span>
   </div>
   <div class="exp-title">{exp.title}{location_html}</div>
   <div class="exp-description">{exp.description}</div>
@@ -296,7 +338,7 @@ class AdaptedCV:
             return ""
         items = ""
         for edu in self.education:
-            grade_html = f" — {edu.grade}" if edu.grade else ""
+            grade_html = f", {edu.grade}" if edu.grade else ""
             items += f"""
 <div class="edu-item">
   <div class="edu-header">
@@ -306,6 +348,33 @@ class AdaptedCV:
   <div class="edu-institution">{edu.institution}</div>
 </div>"""
         return items
+
+    def _render_projects(self) -> str:
+        if not self.projects:
+            return ""
+        items = ""
+        for proj in self.projects:
+            tech_html = (
+                f"<div class='project-tech'>Tecnologías: {', '.join(proj.technologies)}</div>"
+                if proj.technologies
+                else ""
+            )
+            desc_html = (
+                f"<div class='project-description'>{proj.description}</div>"
+                if proj.description
+                else ""
+            )
+            items += f"""
+<div class="project-item">
+  <div class="project-name">{proj.name}</div>
+  {desc_html}
+  {tech_html}
+</div>"""
+        return (
+            f'<div class="section">'
+            f'<div class="section-title">Proyectos Personales</div>'
+            f"{items}</div>"
+        )
 
     def _render_skills(self) -> str:
         if not self.skills and not self.languages:

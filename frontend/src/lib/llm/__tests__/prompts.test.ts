@@ -137,6 +137,37 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain("ABSOLUTE RULE");
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain("ORIGINAL CV IS THE ONLY SOURCE OF TRUTH");
   });
+
+  it("includes the 4 explicit quality rules added in cv-adaptation-quality", () => {
+    // Projects: pull personal projects / volunteer / publications
+    // / certifications from the original CV.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "PROJECTS — INCLUDE PERSONAL PROJECTS, VOLUNTEER WORK, PUBLICATIONS, CERTIFICATIONS:",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain("the projects array instead");
+
+    // Harvard output structure: keys in this order, summary optional.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain("OUTPUT STRUCTURE (Harvard format):");
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "name, email, phone, location, education, experience, projects, skills, languages",
+    );
+
+    // Keyword matching: 3-5 new keywords from the job description.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "Add 3-5 keywords from the TARGET JOB DESCRIPTION",
+    );
+
+    // No em dashes in the JSON output.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain("FORMATTING — NO EM DASHES:");
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "Do NOT use em dashes (\u2014) anywhere in the JSON output",
+    );
+
+    // JSON SCHEMA includes the projects array shape.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      '"projects":[{"name":"string","description":"string","technologies":["string"]}]',
+    );
+  });
 });
 
 describe("buildChatFilterUserMessage", () => {
