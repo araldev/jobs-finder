@@ -15,6 +15,15 @@ const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
 const nextConfig: NextConfig = {
   // No experimental features needed for v1
+
+  // Phase 3 PDF dependencies are CJS-only with internal module-wrapping
+  // that Webpack chokes on when treated as ESM ("Cannot read properties
+  // of undefined (reading 'call')" at module init). Listing them here
+  // tells Next.js to load them via `require()` from the server bundle
+  // instead of running them through the ESM transform pipeline.
+  // The runtime code is unchanged — they still work the same once
+  // loaded via the CJS path.
+  serverExternalPackages: ["pdf-lib", "unpdf"],
 };
 
 export default withNextIntl(nextConfig);
