@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Activity, BarChart3, ArrowRight } from "lucide-react";
 
-import { fetchDashboardStats, fetchJobsHistory } from "@/lib/api-client";
+import { fetchDashboardStats, fetchJobsHistory } from "@/lib/supabase-queries";
 import { PlatformBadge } from "@/components/jobs/PlatformBadge";
 import { formatRelativeDate } from "@/lib/formatters";
 import type { Locale } from "@/i18n/routing";

@@ -1,6 +1,6 @@
 import { Briefcase, Clock, TrendingUp } from "lucide-react";
 
-import { fetchDashboardStats } from "@/lib/api-client";
+import { fetchDashboardStats } from "@/lib/supabase-queries";
 import { StatCard } from "./StatCard";
 import { EngagementStatsRow } from "./EngagementStatsRow";
 import { formatRelativeDate } from "@/lib/formatters";
@@ -10,7 +10,7 @@ import { ErrorState } from "@/components/shared/ErrorState";
  * StatsCardsRow — REQ-PDPRSC-002.
  *
  * Async React Server Component. Awaits `fetchDashboardStats()`
- * from the server-only `api-client` so the LCP element (the
+ * from the server-only `supabase-queries` so the LCP element (the
  * "15 de Jun de 2026" date inside the lastSync StatCard) arrives
  * in the initial server HTML payload — no client JS required for
  * first paint.

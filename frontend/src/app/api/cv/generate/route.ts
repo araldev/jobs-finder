@@ -1,10 +1,27 @@
 import "server-only";
 
 import { type NextRequest, NextResponse } from "next/server";
-import { getUserHeaders } from "@/lib/api-client";
 
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8000";
 const BACKEND_API_KEY = process.env.BACKEND_API_KEY;
+
+/**
+ * Build request headers for outbound calls to the Python backend.
+ *
+ * Inlined here (post-Phase-2) because the legacy `getUserHeaders`
+ * helper in `api-client.ts` was removed when `api-client.ts` was
+ * deleted. The Phase 3 migration (LLM in Next.js) will eliminate
+ * the last `BACKEND_URL` consumer in this file and this helper
+ * goes with it.
+ */
+function buildBackendHeaders(
+  authHeader: string | null,
+): Record<string, string> {
+  const h: Record<string, string> = { Accept: "application/json" };
+  if (BACKEND_API_KEY) h["X-API-Key"] = BACKEND_API_KEY;
+  if (authHeader) h["Authorization"] = authHeader;
+  return h;
+}
 
 /**
  * POST /api/cv/generate
@@ -36,8 +53,7 @@ export async function POST(request: NextRequest) {
   // Forward the multipart form to FastAPI, including the user's
   // JWT so the backend can authenticate and enforce per-user quota.
   const authHeader = request.headers.get("authorization");
-  const backendHeaders = getUserHeaders(authHeader);
-  backendHeaders["X-API-Key"] = BACKEND_API_KEY;
+  const backendHeaders = buildBackendHeaders(authHeader);
 
   const backendResponse = await fetch(`${BACKEND_URL}/cv/generate`, {
     method: "POST",

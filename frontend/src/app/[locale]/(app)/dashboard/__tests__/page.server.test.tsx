@@ -17,7 +17,8 @@
  *     directive (the page is an async RSC).
  *   - SCN-PDPRSC-002-C: `StatsCardsRow` + `RightSidebar` are
  *     async RSC (no `"use client"`) AND they import from the
- *     server-only `api-client` (which carries `import "server-only"`).
+ *     server-only `supabase-queries` module (which carries
+ *     `import "server-only"`).
  *   - EngagementStatsRow is the lone client island — it MUST
  *     keep `"use client"` so `useOpenedJobs()` + `useFavorites()` +
  *     `useCVAdapted()` (localStorage-backed hooks) can run.
@@ -97,7 +98,7 @@ describe("dashboard/page.tsx — SCN-PDPRSC-002-B (no 'use client')", () => {
   });
 });
 
-describe("StatsCardsRow — SCN-PDPRSC-002-C (RSC + server-only api-client)", () => {
+describe("StatsCardsRow — SCN-PDPRSC-002-C (RSC + server-only supabase-queries)", () => {
   const source = fs.readFileSync(STATS_CARDS_ROW_PATH, "utf8");
 
   it("first non-comment, non-blank line is NOT 'use client'", () => {
@@ -111,18 +112,19 @@ describe("StatsCardsRow — SCN-PDPRSC-002-C (RSC + server-only api-client)", ()
     expect(first).not.toBe(`'use client';`);
   });
 
-  it("imports from @/lib/api-client (which carries 'import \"server-only\"')", () => {
-    // The server fetcher lives in @/lib/api-client.ts:1 with
-    // `import "server-only"` — that import acts as a build-time
-    // gate that fails any client import. Pinning this here proves
-    // StatsCardsRow reads the server fetcher (NOT a client hook).
+  it("imports from @/lib/supabase-queries (which carries 'import \"server-only\"')", () => {
+    // The server fetcher lives in @/lib/supabase-queries.ts:1
+    // with `import "server-only"` — that import acts as a
+    // build-time gate that fails any client import. Pinning
+    // this here proves StatsCardsRow reads the server fetcher
+    // (NOT a client hook).
     expect(source).toMatch(
-      /from\s*["']@\/lib\/api-client["']/,
+      /from\s*["']@\/lib\/supabase-queries["']/,
     );
   });
 });
 
-describe("RightSidebar — SCN-PDPRSC-002-C (RSC + server-only api-client)", () => {
+describe("RightSidebar — SCN-PDPRSC-002-C (RSC + server-only supabase-queries)", () => {
   const source = fs.readFileSync(RIGHT_SIDEBAR_PATH, "utf8");
 
   it("first non-comment, non-blank line is NOT 'use client'", () => {
@@ -132,8 +134,8 @@ describe("RightSidebar — SCN-PDPRSC-002-C (RSC + server-only api-client)", () 
     expect(first).not.toBe(`'use client';`);
   });
 
-  it("imports from @/lib/api-client", () => {
-    expect(source).toMatch(/from\s*["']@\/lib\/api-client["']/);
+  it("imports from @/lib/supabase-queries", () => {
+    expect(source).toMatch(/from\s*["']@\/lib\/supabase-queries["']/);
   });
 });
 

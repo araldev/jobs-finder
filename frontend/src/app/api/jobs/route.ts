@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchJobsHistory } from "@/lib/api-client";
+import { fetchJobsHistory } from "@/lib/supabase-queries";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);

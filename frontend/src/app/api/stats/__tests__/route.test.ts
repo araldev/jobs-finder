@@ -1,37 +1,32 @@
 /**
- * Tests for REQ-PDPRSC-003 (frontend half) — `GET /api/stats`
- * proxies the new backend `/jobs/stats` endpoint in ONE outbound
- * fetch (down from 6 fetches via the legacy 3-waterfall handler).
+ * Tests for the `/api/stats` route handler after Phase 2
+ * sub-task 2 — the handler reads dashboard stats directly
+ * from Supabase via `fetchDashboardStats()` (no backend
+ * proxy needed).
  *
- * The route handler MUST:
- *   1. Call `fetchDashboardStats()` exactly once (no waterfall).
- *   2. Return the response as a `DashboardStats` JSON shape
- *      (SCN-PDPRSC-003-E backward compat — the existing
- *      `useStats` client hook + `StatsCardsRow` component keep
- *      working without changes).
+ * Contract preserved from REQ-PDPRSC-003:
+ *   1. The route handler calls `fetchDashboardStats()` exactly
+ *      once (no waterfall).
+ *   2. The response body is a `DashboardStats` JSON shape
+ *      (the existing `useStats` hook + `StatsCardsRow` component
+ *      keep working without changes).
  *
- * The 2 tests:
- *   - `test_calls_fetchDashboardStats_once` — mocks the
- *     `fetchDashboardStats` import and asserts the spy was
- *     invoked exactly once with no args.
- *   - `test_response_matches_DashboardStats_shape` — asserts
- *     the response body is structurally a `DashboardStats`
- *     (TypeScript compiles + all 5 fields present).
- *
- * The test mocks `@/lib/api-client` at the module level via
- * `vi.mock` so the route handler uses the mock instead of the
- * real `fetch`. The mock is hoisted above the dynamic `import()`
- * of the route so vitest rewires the module references.
+ * The test mocks `@/lib/supabase-queries` at the module level
+ * via `vi.mock` so the route handler uses the mock instead of
+ * the real Supabase client. The mock is hoisted above the
+ * dynamic `import()` of the route so vitest rewires the
+ * module references.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock `@/lib/api-client` BEFORE importing the route so the
-// route handler's `import { fetchDashboardStats } from "@/lib/api-client"`
+// Mock `@/lib/supabase-queries` BEFORE importing the route so
+// the route handler's
+// `import { fetchDashboardStats } from "@/lib/supabase-queries"`
 // resolves to the mocked export. The mock factory returns a
 // resolved promise with a known shape so the test can assert
 // the route handler forwards it byte-for-byte.
-vi.mock("@/lib/api-client", () => ({
+vi.mock("@/lib/supabase-queries", () => ({
   fetchDashboardStats: vi.fn(async () => ({
     total_jobs: 42,
     jobs_today: 5,
@@ -45,19 +40,21 @@ vi.mock("@/lib/api-client", () => ({
   })),
 }));
 
-import { fetchDashboardStats } from "@/lib/api-client";
+import { fetchDashboardStats } from "@/lib/supabase-queries";
 
 beforeEach(() => {
   vi.mocked(fetchDashboardStats).mockClear();
 });
 
-describe("GET /api/stats — REQ-PDPRSC-003 (proxy backend /jobs/stats)", () => {
+describe("GET /api/stats — Supabase-direct read (post-Phase-2)", () => {
   it("calls fetchDashboardStats exactly once", async () => {
     // Dynamic import so the mock is applied.
     const { GET } = await import("../route");
     const response = await GET();
 
-    // Exactly one outbound call (the new contract: 1 fetch, not 6).
+    // Exactly one logical call (the new contract: 5 parallel
+    // count queries inside the fetcher, but ONE call from the
+    // route handler's perspective).
     expect(fetchDashboardStats).toHaveBeenCalledTimes(1);
     expect(fetchDashboardStats).toHaveBeenCalledWith();
 
@@ -76,7 +73,7 @@ describe("GET /api/stats — REQ-PDPRSC-003 (proxy backend /jobs/stats)", () => 
     });
   });
 
-  it("response body matches the DashboardStats type (SCN-PDPRSC-003-E)", async () => {
+  it("response body matches the DashboardStats type", async () => {
     const { GET } = await import("../route");
     const response = await GET();
 

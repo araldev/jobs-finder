@@ -6,7 +6,7 @@ import { StatsCardsRow } from "@/components/dashboard/StatsCardsRow";
 import { RightSidebar } from "@/components/dashboard/RightSidebar";
 import { JobsGrid } from "@/components/dashboard/JobsGrid";
 import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
-import { fetchJobsHistory } from "@/lib/api-client";
+import { fetchJobsHistory } from "@/lib/supabase-queries";
 import type { Locale } from "@/i18n/routing";
 
 /**
@@ -63,9 +63,9 @@ export default async function DashboardPage({
   const queryClient = new QueryClient();
 
   // Pre-fetch page 0 so useJobsInfinite starts with cache populated.
-  // The Next.js Data Cache (revalidate:60 in api-client.ts) absorbs
-  // repeat hits at the L2 layer; the React.cache() wrapper in
-  // api-client.ts dedupes within this single request scope.
+  // The React.cache() wrapper in supabase-queries.ts dedupes within
+  // this single request scope — multiple RSC instances of
+  // <JobsGrid /> + <RightSidebar /> share one underlying fetch.
   const firstPage = await fetchJobsHistory({ limit: 20, offset: 0 });
   queryClient.setQueryData(
     [

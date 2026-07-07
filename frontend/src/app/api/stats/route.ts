@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { fetchDashboardStats } from "@/lib/api-client";
+import { fetchDashboardStats } from "@/lib/supabase-queries";
 
 /**
  * `GET /api/stats` — proxies the backend's consolidated
