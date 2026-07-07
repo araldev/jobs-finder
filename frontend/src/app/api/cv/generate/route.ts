@@ -196,9 +196,17 @@ export async function POST(request: NextRequest) {
   // 8. Record the engagement event (best-effort — the user still
   //    gets their CV even if the event recording fails, matching
   //    the backend's ENG-002 contract).
+  //
+  // CRITICAL: `user_engagement.user_id` has a NOT NULL constraint
+  // AND an RLS policy `WITH CHECK (auth.uid() = user_id)` (migration
+  // 007). Omitting `user_id` makes the INSERT fail with code 42501
+  // ("row-level security policy"). We get the user id from the
+  // session retrieved at the top of the handler.
+  const userId = session.user.id;
   const { error: engagementError } = await supabase
     .from("user_engagement")
     .insert({
+      user_id: userId,
       event_type: "cv_adapted",
       job_id: null,
       metadata: {
