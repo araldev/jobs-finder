@@ -16,8 +16,13 @@ import { cache } from "react";
 
 const DEFAULT_BASE_URL = "https://api.minimax.io";
 const DEFAULT_MODEL = "MiniMax-M3";
-const DEFAULT_TEMPERATURE = 0.3;
-const DEFAULT_MAX_TOKENS = 2048;
+// JSON-mode calls (e.g. cv/generate) need temperature 0 — MiniMax-M3
+// drifts away from the strict-JSON output at higher temperatures and
+// the `response_format: { type: "json_object" }` flag is best-effort
+// (not enforced server-side for every model). Creative calls
+// (chat) keep the higher temperature.
+const DEFAULT_TEMPERATURE = 0.0;
+const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 export interface ChatMessage {

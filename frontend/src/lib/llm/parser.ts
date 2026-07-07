@@ -112,6 +112,18 @@ export function parseAdaptedCVResponse(raw: string): AdaptedCV {
   }
 
   if (data === undefined || data === null || typeof data !== "object" || Array.isArray(data)) {
+    // Server-side debug log: a truncated preview of the raw LLM
+    // response so we can see what the model is actually emitting
+    // (the user-facing error message below intentionally does NOT
+    // echo this — AGENTS.md rule #24). Help debug future MiniMax
+    // JSON-formatting quirks without leaking the payload to the
+    // client.
+    console.error(
+      "parser: LLM returned non-JSON. Tried strategies:",
+      errors.join("; "),
+      "Raw preview:",
+      raw.slice(0, 500),
+    );
     // AGENTS.md rule #24 — the error message MUST NOT echo the raw
     // LLM response. The "Tried: ..." line names the strategies that
     // failed (helps debugging) but does NOT include the response
