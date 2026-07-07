@@ -9,6 +9,8 @@ import {
   type AdaptedCV,
 } from "@/lib/llm/prompts";
 import { parseAdaptedCVResponse, AdaptedCVParseError } from "@/lib/llm/parser";
+import { extractPdfText } from "@/lib/pdf/extract-text";
+import { renderAdaptedCvAsPdf } from "@/lib/pdf/render-cv";
 
 /**
  * POST /api/cv/generate
@@ -21,36 +23,23 @@ import { parseAdaptedCVResponse, AdaptedCVParseError } from "@/lib/llm/parser";
  *   - job_url: string (unused server-side, kept for parity with
  *     the backend's contract)
  *
- * Phase 3 LLM migration: this route replaces the previous Python
- * backend proxy. The flow now is:
+ * The flow:
  *   1. Authenticate (Supabase session required — the engagement
  *      event recording relies on `auth.uid()`).
  *   2. Validate the upload (content-type whitelist + 10 MB cap
  *      per AGENTS.md rule #28).
- *   3. Read the file as text. NOTE: the modal uploads a PDF;
- *      reading a PDF as UTF-8 yields binary garbage that the LLM
- *      can't parse meaningfully. Proper PDF text extraction (e.g.
- *      `pdf-parse`) is a documented follow-up — see the deliverable
- *      "Risks surfaced" section. The route still completes end-to-
- *      end so the engagement-event recording + downstream flow are
- *      testable; the LLM response will just be an essentially
- *      empty CV (`name: "Sin nombre"`, no experience, no skills).
- *   4. Send CV text + job description to MiniMax via the LLM
- *      client (`chatCompletion({ jsonMode: true })`).
+ *   3. Extract the CV's text content with `unpdf`
+ *      (`@/lib/pdf/extract-text`). Image-only / malformed PDFs
+ *      yield an empty string — the LLM handles that gracefully.
+ *   4. Send CV text + job description to the LLM
+ *      (`chatCompletion({ jsonMode: true })`).
  *   5. Parse the response with the defensive JSON parser.
  *   6. Record a `cv_adapted` engagement event in Supabase so
  *      `useCVAdapted`'s dashboard widget keeps counting.
- *   7. Return the structured CV JSON.
- *
- * Response shape (Phase 3 transition):
- *   The `GenerateCVModal` consumer does `await res.blob()` and saves
- *   the file as `CV-adaptado.pdf`. Without a PDF renderer in Node
- *   (the backend used `weasyprint`, not portable to Next.js), the
- *   response is a JSON blob with the `AdaptedCV` shape. The modal
- *   will download a `.pdf` file that contains JSON — degraded UX
- *   but the engagement event recording still works. Adding a
- *   Node-compatible PDF renderer (e.g. `pdf-lib`) is the same
- *   follow-up as PDF text extraction above.
+ *   7. Render the structured CV as a real PDF
+ *      (`@/lib/pdf/render-cv`) and return it as
+ *      `application/pdf` with a `Content-Disposition` attachment
+ *      header so the browser saves it as `CV-adaptado.pdf`.
  *
  * No `LLM_API_KEY` is ever logged or surfaced (AGENTS.md rule #24).
  * The static `"LLM provider unavailable"` message is what reaches
@@ -133,11 +122,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 4. Read the CV as text. See module docstring — this is the
-  //    Phase 3 limitation: PDFs yield binary garbage, the LLM
-  //    produces an essentially empty CV. Proper PDF text extraction
-  //    is documented as follow-up work.
-  const cvText = new TextDecoder("utf-8", { fatal: false }).decode(pdfBytes);
+  // 4. Extract the CV text with `unpdf` (returns "" on failure —
+  //    the LLM's system prompt already handles empty input).
+  const cvText = await extractPdfText(pdfBytes);
 
   // 5. Build the messages array and call the LLM.
   const userMessage = buildAdaptCVUserMessage(
@@ -191,7 +178,22 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 7. Record the engagement event (best-effort — the user still
+  // 7. Render the structured CV as a real PDF and return it. The
+  //    `GenerateCVModal` consumer does `await res.blob()` and saves
+  //    it as `CV-adaptado.pdf` — we set the Content-Disposition
+  //    header so the browser does the same thing.
+  let renderedPdf: Uint8Array<ArrayBuffer>;
+  try {
+    renderedPdf = await renderAdaptedCvAsPdf(adaptedCv);
+  } catch (err) {
+    console.error("cv/generate: PDF rendering failed", err);
+    return NextResponse.json(
+      { error: "No se pudo generar el PDF del CV adaptado." },
+      { status: 500 },
+    );
+  }
+
+  // 8. Record the engagement event (best-effort — the user still
   //    gets their CV even if the event recording fails, matching
   //    the backend's ENG-002 contract).
   const { error: engagementError } = await supabase
@@ -210,7 +212,16 @@ export async function POST(request: NextRequest) {
     console.error("cv/generate: failed to record engagement", engagementError);
   }
 
-  // 8. Return the structured CV JSON. See module docstring for the
-  //    Phase 3 PDF-rendering caveat.
-  return NextResponse.json(adaptedCv, { status: 200 });
+  // 9. Return the rendered PDF. `Uint8Array<ArrayBuffer>` is a
+  //    valid `BodyInit` directly — no Blob wrapper needed (the
+  //    `Blob` route we tried first caused the runtime to stringify
+  //    the Blob instead of streaming its bytes in some Node
+  //    versions; the raw Uint8Array round-trips correctly).
+  return new NextResponse(renderedPdf, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": 'attachment; filename="CV-adaptado.pdf"',
+    },
+  });
 }

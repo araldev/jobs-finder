@@ -1,11 +1,13 @@
 // Tests for POST /api/cv/generate.
 //
-// The route replaces the previous Python backend proxy with:
+// The route now returns a real PDF (was JSON in Phase 3). The flow:
 //   1. Auth check via Supabase session.
 //   2. Multipart form validation (content-type whitelist + 10 MB cap).
-//   3. LLM call via `chatCompletion` from `@/lib/llm-client`.
-//   4. Response parsing via `parseAdaptedCVResponse`.
-//   5. Engagement event recording in `user_engagement`.
+//   3. PDF text extraction via `extractPdfText` (`unpdf`).
+//   4. LLM call via `chatCompletion` from `@/lib/llm-client`.
+//   5. Response parsing via `parseAdaptedCVResponse`.
+//   6. PDF rendering via `renderAdaptedCvAsPdf` (`pdf-lib`).
+//   7. Engagement event recording in `user_engagement`.
 //
 // Coverage focus:
 //   - 401 when no session.
@@ -13,7 +15,8 @@
 //   - 502 when the LLM is unavailable (NO leak of the underlying
 //     message per AGENTS.md rule #24).
 //   - 422 when the LLM response can't be parsed.
-//   - 200 returns the parsed `AdaptedCV` shape.
+//   - 200 returns a valid PDF (application/pdf, valid bytes,
+//     attachment Content-Disposition).
 //   - The `user_engagement` insert is called with `event_type =
 //     'cv_adapted'` and the job_title / job_company metadata.
 
@@ -26,6 +29,20 @@ const mockLLMCompletion = vi.fn();
 vi.mock("@/lib/llm-client", () => ({
   chatCompletion: (...args: unknown[]) => mockLLMCompletion(...args),
   LLMUnavailableError: class LLMUnavailableError extends Error {},
+}));
+
+// Mock the PDF modules so we exercise the route's plumbing rather
+// than re-testing the PDF code (covered in `__tests__/extract-text.test.ts`
+// and `__tests__/render-cv.test.ts`).
+vi.mock("@/lib/pdf/extract-text", () => ({
+  extractPdfText: vi.fn(async (_bytes: ArrayBuffer) => "stub extracted cv text"),
+}));
+
+vi.mock("@/lib/pdf/render-cv", () => ({
+  renderAdaptedCvAsPdf: vi.fn(
+    async (_cv: unknown) =>
+      new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]), // "%PDF-1.4"
+  ),
 }));
 
 // Mock the LLM prompts/parser so we exercise the route's plumbing
@@ -295,7 +312,7 @@ describe("POST /api/cv/generate — auth + form validation", () => {
 });
 
 describe("POST /api/cv/generate — LLM + engagement flow", () => {
-  it("returns 200 with the parsed AdaptedCV and records the cv_adapted event", async () => {
+  it("returns 200 with a valid PDF and records the cv_adapted event", async () => {
     mockLLMCompletion.mockResolvedValueOnce(
       JSON.stringify({
         name: "Ada Lovelace",
@@ -316,13 +333,21 @@ describe("POST /api/cv/generate — LLM + engagement flow", () => {
     );
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { name: string; skills: string[] };
-    expect(body.name).toBe("Ada Lovelace");
-    expect(body.skills).toEqual(["TypeScript", "React"]);
+    expect(res.headers.get("content-type")).toMatch(/^application\/pdf/);
+    expect(res.headers.get("content-disposition")).toBe(
+      'attachment; filename="CV-adaptado.pdf"',
+    );
+
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    expect(bytes.byteLength).toBeGreaterThan(0);
+    // The mocked renderer returns "%PDF-1.4" — confirm the body
+    // round-trips as binary (no JSON wrapper, no double-encoding).
+    expect(String.fromCharCode(bytes[0]!, bytes[1]!, bytes[2]!, bytes[3]!))
+      .toBe("%PDF");
 
     // LLM was called with the system prompt + a user message that
-    // includes the job fields (the CV text is the file bytes read
-    // as UTF-8 — for "fake-pdf-bytes" that's the literal string).
+    // includes the job fields (the CV text is what the mocked
+    // extractPdfText returned: "stub extracted cv text").
     expect(mockLLMCompletion).toHaveBeenCalledTimes(1);
     const messages = mockLLMCompletion.mock.calls[0]![0] as Array<{
       role: string;
@@ -424,6 +449,7 @@ describe("POST /api/cv/generate — LLM + engagement flow", () => {
     // The CV was generated — don't fail the user because the
     // engagement event couldn't be recorded.
     expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/^application\/pdf/);
     expect(mockInsert).toHaveBeenCalledTimes(1);
   });
 });

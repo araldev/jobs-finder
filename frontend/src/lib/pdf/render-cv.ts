@@ -1,0 +1,207 @@
+import "server-only";
+
+import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from "pdf-lib";
+import type { AdaptedCV } from "@/lib/llm/prompts";
+
+// A4 dimensions in points (1 point = 1/72 inch).
+const PAGE_WIDTH = 595;
+const PAGE_HEIGHT = 842;
+const MARGIN = 50;
+const CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN;
+
+// Body 10pt → line height 14. Section headings 12pt → 16. Name 18pt → 22.
+// Using a single `LINE_HEIGHT_RATIO` keeps the layout table easy to read.
+const LINE_HEIGHT_RATIO = 1.4;
+
+interface DrawState {
+  doc: PDFDocument;
+  page: PDFPage;
+  font: PDFFont;
+  bold: PDFFont;
+  y: number;
+}
+
+function lineHeight(size: number): number {
+  return Math.round(size * LINE_HEIGHT_RATIO);
+}
+
+function wrapLine(
+  text: string,
+  font: PDFFont,
+  size: number,
+  maxWidth: number,
+): string[] {
+  const words = text.split(/\s+/).filter((w) => w.length > 0);
+  if (words.length === 0) return [];
+
+  const lines: string[] = [];
+  let current = "";
+
+  for (const word of words) {
+    const candidate = current.length === 0 ? word : `${current} ${word}`;
+    const width = font.widthOfTextAtSize(candidate, size);
+    if (width <= maxWidth || current.length === 0) {
+      current = candidate;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  if (current.length > 0) lines.push(current);
+  return lines;
+}
+
+function ensureSpace(state: DrawState, neededHeight: number): void {
+  if (state.y - neededHeight < MARGIN) {
+    state.page = state.doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+    state.y = PAGE_HEIGHT - MARGIN;
+  }
+}
+
+function drawSpacer(state: DrawState, height: number): void {
+  ensureSpace(state, height);
+  state.y -= height;
+}
+
+function drawLine(
+  state: DrawState,
+  text: string,
+  opts: { bold?: boolean; size?: number; center?: boolean } = {},
+): void {
+  const size = opts.size ?? 10;
+  const font = opts.bold ? state.bold : state.font;
+  const height = lineHeight(size);
+
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    drawSpacer(state, height);
+    return;
+  }
+
+  const lines = wrapLine(trimmed, font, size, CONTENT_WIDTH);
+  for (const line of lines) {
+    ensureSpace(state, height);
+    const width = font.widthOfTextAtSize(line, size);
+    const x = opts.center
+      ? MARGIN + (CONTENT_WIDTH - width) / 2
+      : MARGIN;
+    state.page.drawText(line, {
+      x,
+      y: state.y - size,
+      font,
+      size,
+      color: rgb(0, 0, 0),
+    });
+    state.y -= height;
+  }
+}
+
+/**
+ * Render the LLM's `AdaptedCV` as a downloadable PDF (Uint8Array).
+ *
+ * Layout:
+ *   - Header (centered): name (18pt bold) + email/phone/location (10pt)
+ *   - Summary (if present): "Summary" heading + body
+ *   - Experience: "Experience" heading + per-entry title — company
+ *     (bold), date range (9pt), description (10pt)
+ *   - Education: "Education" heading + per-entry degree — institution
+ *     + year (9pt)
+ *   - Skills: "Skills" heading + comma-separated list
+ *   - Languages: "Languages" heading + comma-separated list
+ *
+ * Long lines wrap at `CONTENT_WIDTH`; if a line doesn't fit on the
+ * current page, a new page is added. The output is a "good enough"
+ * CV — not Canva-quality, but a real, valid PDF that opens in any
+ * PDF viewer.
+ *
+ * No text is ever logged (the route logs the file size only, and
+ * `LLM_API_KEY` is read upstream — this module never touches it).
+ */
+export async function renderAdaptedCvAsPdf(
+  cv: AdaptedCV,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+
+  const state: DrawState = {
+    doc,
+    page: doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]),
+    font,
+    bold,
+    y: PAGE_HEIGHT - MARGIN,
+  };
+
+  // Header — centered.
+  if (cv.name) {
+    drawLine(state, cv.name, { bold: true, size: 18, center: true });
+  }
+  if (cv.email) drawLine(state, cv.email, { size: 10, center: true });
+  if (cv.phone) drawLine(state, cv.phone, { size: 10, center: true });
+  if (cv.location) drawLine(state, cv.location, { size: 10, center: true });
+
+  // Summary.
+  if (cv.summary) {
+    drawSpacer(state, lineHeight(10));
+    drawLine(state, "Summary", { bold: true, size: 12 });
+    drawLine(state, cv.summary, { size: 10 });
+  }
+
+  // Experience.
+  if (cv.experience && cv.experience.length > 0) {
+    drawSpacer(state, lineHeight(10));
+    drawLine(state, "Experience", { bold: true, size: 12 });
+    for (const exp of cv.experience) {
+      const heading = [exp.title, exp.company].filter(Boolean).join(" — ");
+      if (heading) {
+        drawLine(state, heading, { bold: true, size: 10 });
+      }
+      if (exp.start_date || exp.end_date) {
+        drawLine(
+          state,
+          `${exp.start_date ?? ""} – ${exp.end_date ?? ""}`.trim(),
+          { size: 9 },
+        );
+      }
+      if (exp.description) {
+        drawLine(state, exp.description, { size: 10 });
+      }
+    }
+  }
+
+  // Education.
+  if (cv.education && cv.education.length > 0) {
+    drawSpacer(state, lineHeight(10));
+    drawLine(state, "Education", { bold: true, size: 12 });
+    for (const ed of cv.education) {
+      const line = [ed.degree, ed.institution].filter(Boolean).join(" — ");
+      if (line) drawLine(state, line, { size: 10 });
+      if (ed.year) drawLine(state, ed.year, { size: 9 });
+    }
+  }
+
+  // Skills.
+  if (cv.skills && cv.skills.length > 0) {
+    drawSpacer(state, lineHeight(10));
+    drawLine(state, "Skills", { bold: true, size: 12 });
+    drawLine(state, cv.skills.join(", "), { size: 10 });
+  }
+
+  // Languages.
+  if (cv.languages && cv.languages.length > 0) {
+    drawSpacer(state, lineHeight(10));
+    drawLine(state, "Languages", { bold: true, size: 12 });
+    drawLine(state, cv.languages.join(", "), { size: 10 });
+  }
+
+  const bytes = await doc.save();
+  // `pdf-lib`'s `doc.save()` returns `Uint8Array<ArrayBufferLike>` under
+  // TS 5.9 (the generic is widened because `ArrayBufferLike` covers
+  // `SharedArrayBuffer` too). The bytes always live on a plain
+  // `ArrayBuffer` in practice — we copy them into a fresh
+  // `ArrayBuffer`-backed `Uint8Array` so the strict `BlobPart` type is
+  // satisfied without an `unknown` cast leaking into callers.
+  const out = new Uint8Array(bytes.byteLength);
+  out.set(bytes);
+  return out;
+}
