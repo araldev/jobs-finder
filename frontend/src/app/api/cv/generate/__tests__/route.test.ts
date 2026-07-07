@@ -1,0 +1,429 @@
+// Tests for POST /api/cv/generate.
+//
+// The route replaces the previous Python backend proxy with:
+//   1. Auth check via Supabase session.
+//   2. Multipart form validation (content-type whitelist + 10 MB cap).
+//   3. LLM call via `chatCompletion` from `@/lib/llm-client`.
+//   4. Response parsing via `parseAdaptedCVResponse`.
+//   5. Engagement event recording in `user_engagement`.
+//
+// Coverage focus:
+//   - 401 when no session.
+//   - 400 on missing fields, wrong content-type, oversized file.
+//   - 502 when the LLM is unavailable (NO leak of the underlying
+//     message per AGENTS.md rule #24).
+//   - 422 when the LLM response can't be parsed.
+//   - 200 returns the parsed `AdaptedCV` shape.
+//   - The `user_engagement` insert is called with `event_type =
+//     'cv_adapted'` and the job_title / job_company metadata.
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+vi.mock("server-only", () => ({}));
+
+const mockLLMCompletion = vi.fn();
+
+vi.mock("@/lib/llm-client", () => ({
+  chatCompletion: (...args: unknown[]) => mockLLMCompletion(...args),
+  LLMUnavailableError: class LLMUnavailableError extends Error {},
+}));
+
+// Mock the LLM prompts/parser so we exercise the route's plumbing
+// rather than re-testing the prompt/parser (already covered in
+// `prompts.test.ts` + `parser.test.ts`).
+vi.mock("@/lib/llm/prompts", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/llm/prompts")>(
+      "@/lib/llm/prompts",
+    );
+  return {
+    ...actual,
+    ADAPT_CV_SYSTEM_PROMPT: "stub-system-prompt",
+    buildAdaptCVUserMessage: vi.fn(
+      (_cv: string, title: string, company: string, desc: string) =>
+        `STUB_USER(title=${title}, company=${company}, desc=${desc})`,
+    ),
+  };
+});
+
+vi.mock("@/lib/llm/parser", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/llm/parser")>(
+      "@/lib/llm/parser",
+    );
+  return {
+    ...actual,
+    parseAdaptedCVResponse: vi.fn((raw: string) => {
+      if (raw === "PARSE_FAIL") {
+        throw new actual.AdaptedCVParseError("garbage");
+      }
+      return {
+        name: "Ada Lovelace",
+        email: "ada@example.com",
+        phone: "+34 600 000 000",
+        location: "Madrid",
+        summary: "Senior engineer with 10 years experience.",
+        experience: [
+          {
+            company: "Acme",
+            title: "Senior Engineer",
+            start_date: "2020-01",
+            end_date: "2026-01",
+            description: "Built systems",
+            location: "Madrid",
+          },
+        ],
+        education: [],
+        skills: ["TypeScript", "React"],
+        languages: ["Spanish", "English"],
+      };
+    }),
+  };
+});
+
+// ── Supabase mock ──────────────────────────────────────────────────────────
+
+interface InsertCall {
+  table: string;
+  payload: Record<string, unknown>;
+}
+
+const mockInsert = vi.fn();
+const mockFrom = vi.fn();
+const mockAuth = {
+  getSession: vi.fn(),
+};
+
+const mockSupabase = {
+  from: mockFrom,
+  auth: mockAuth,
+};
+
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: async () => mockSupabase,
+}));
+
+// ── Helpers ──────────────────────────────────────────────────────────────
+
+function makePdfFile(name = "cv.pdf", content: string | Uint8Array = "fake-pdf-bytes"): File {
+  const blobPart: BlobPart[] =
+    typeof content === "string" ? [content] : [content as BlobPart];
+  const file = new File(blobPart, name, { type: "application/pdf" });
+  // jsdom's `File` polyfill does NOT expose `arrayBuffer()` /
+  // `text()` — only `name`, `lastModified`, and `constructor`.
+  // Real Next.js runs under Node 18+'s native Blob/File, where
+  // these methods exist. We polyfill them so the route's
+  // `await file.arrayBuffer()` works under vitest/jsdom.
+  const bytes: Uint8Array =
+    typeof content === "string"
+      ? new TextEncoder().encode(content)
+      : content;
+  (file as unknown as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer =
+    async () =>
+      bytes.byteLength === 0
+        ? new ArrayBuffer(0)
+        : bytes.buffer.slice(
+            bytes.byteOffset,
+            bytes.byteOffset + bytes.byteLength,
+          ) as ArrayBuffer;
+  return file;
+}
+
+/**
+ * Build a Request whose `formData()` works under vitest/jsdom.
+ *
+ * jsdom's `Request` polyfill does NOT round-trip multipart bodies
+ * correctly: `new Request(url, { body: formData })` constructs a
+ * Request whose `formData()` throws on read. Real Next.js runs
+ * under Node 18+'s native `Request`, where this round-trip works.
+ *
+ * To exercise the route under vitest without depending on the
+ * polyfill behavior, we build a plain Request with a stubbed
+ * `formData()` method that returns our FormData verbatim. The
+ * content-type header is set to `multipart/form-data` so the
+ * route's parser path runs exactly as in production.
+ */
+function makeFormRequest(fields: Record<string, FormDataEntryValue>): Request {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) {
+    form.append(key, value);
+  }
+  const req = new Request("http://localhost/api/cv/generate", {
+    method: "POST",
+    body: new Uint8Array(),
+    headers: { "Content-Type": "multipart/form-data; boundary=stub" },
+  });
+  // Override the broken polyfill `formData()` with a pass-through.
+  (req as unknown as { formData: () => Promise<FormData> }).formData =
+    async () => form;
+  return req;
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockAuth.getSession.mockResolvedValue({
+    data: { session: { user: { id: "user-1" } } },
+    error: null,
+  });
+  // Default: engagement insert succeeds.
+  mockInsert.mockResolvedValue({ error: null });
+  const insertBuilder = {
+    insert: mockInsert,
+  };
+  mockFrom.mockReturnValue(insertBuilder);
+});
+
+// ── Tests ─────────────────────────────────────────────────────────────────
+
+import { POST } from "../route";
+
+describe("POST /api/cv/generate — auth + form validation", () => {
+  it("returns 401 when the user is not authenticated", async () => {
+    mockAuth.getSession.mockResolvedValueOnce({
+      data: { session: null },
+      error: null,
+    });
+
+    const res = await POST(
+      makeFormRequest({
+        file: makePdfFile(),
+        job_title: "Senior Engineer",
+        job_company: "Acme",
+      }) as never,
+    );
+
+    expect(res.status).toBe(401);
+    expect(mockLLMCompletion).not.toHaveBeenCalled();
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when the form body is malformed", async () => {
+    const request = new Request("http://localhost/api/cv/generate", {
+      method: "POST",
+      body: "not-a-multipart-body",
+    });
+    const res = await POST(request as never);
+
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 when the file field is missing", async () => {
+    const res = await POST(
+      makeFormRequest({
+        job_title: "Senior Engineer",
+        job_company: "Acme",
+      }) as never,
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/file/i);
+  });
+
+  it("returns 400 when the file content-type is not application/pdf", async () => {
+    const txt = new File(["x"], "cv.txt", { type: "text/plain" });
+    (txt as unknown as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer =
+      async () => new TextEncoder().encode("x").buffer;
+    const res = await POST(
+      makeFormRequest({
+        file: txt,
+        job_title: "Senior Engineer",
+        job_company: "Acme",
+      }) as never,
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/PDF/i);
+  });
+
+  it("returns 400 when job_title is missing", async () => {
+    const res = await POST(
+      makeFormRequest({
+        file: makePdfFile(),
+        job_company: "Acme",
+      }) as never,
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/job_title/);
+  });
+
+  it("returns 400 when job_company is missing", async () => {
+    const res = await POST(
+      makeFormRequest({
+        file: makePdfFile(),
+        job_title: "Senior Engineer",
+      }) as never,
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/job_company/);
+  });
+
+  it("returns 400 when the file exceeds 10 MB", async () => {
+    const oversized = new Uint8Array(11 * 1024 * 1024); // 11 MB
+    const file = makePdfFile("big.pdf", oversized);
+    const res = await POST(
+      makeFormRequest({
+        file,
+        job_title: "Senior Engineer",
+        job_company: "Acme",
+      }) as never,
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/10 MB/);
+  });
+
+  it("returns 400 when the file is empty", async () => {
+    const res = await POST(
+      makeFormRequest({
+        file: makePdfFile("empty.pdf", ""),
+        job_title: "Senior Engineer",
+        job_company: "Acme",
+      }) as never,
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/vacío/i);
+  });
+});
+
+describe("POST /api/cv/generate — LLM + engagement flow", () => {
+  it("returns 200 with the parsed AdaptedCV and records the cv_adapted event", async () => {
+    mockLLMCompletion.mockResolvedValueOnce(
+      JSON.stringify({
+        name: "Ada Lovelace",
+        experience: [],
+        education: [],
+        skills: ["TypeScript"],
+        languages: ["Spanish"],
+      }),
+    );
+
+    const res = await POST(
+      makeFormRequest({
+        file: makePdfFile(),
+        job_title: "Senior Engineer",
+        job_company: "Acme",
+        job_description: "We need someone who loves TypeScript.",
+      }) as never,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { name: string; skills: string[] };
+    expect(body.name).toBe("Ada Lovelace");
+    expect(body.skills).toEqual(["TypeScript", "React"]);
+
+    // LLM was called with the system prompt + a user message that
+    // includes the job fields (the CV text is the file bytes read
+    // as UTF-8 — for "fake-pdf-bytes" that's the literal string).
+    expect(mockLLMCompletion).toHaveBeenCalledTimes(1);
+    const messages = mockLLMCompletion.mock.calls[0]![0] as Array<{
+      role: string;
+      content: string;
+    }>;
+    expect(messages[0]?.role).toBe("system");
+    expect(messages[0]?.content).toBe("stub-system-prompt");
+    expect(messages[1]?.content).toContain("Senior Engineer");
+    expect(messages[1]?.content).toContain("Acme");
+    // jsonMode was passed so the LLM client requested JSON output.
+    const opts = mockLLMCompletion.mock.calls[0]![1] as { jsonMode: boolean };
+    expect(opts.jsonMode).toBe(true);
+
+    // Engagement event was recorded with the right event_type and metadata.
+    expect(mockFrom).toHaveBeenCalledWith("user_engagement");
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+    const payload = mockInsert.mock.calls[0]![0] as Record<string, unknown>;
+    expect(payload.event_type).toBe("cv_adapted");
+    expect(payload.job_id).toBeNull();
+    expect(payload.metadata).toEqual({
+      job_title: "Senior Engineer",
+      job_company: "Acme",
+    });
+  });
+
+  it("returns 502 when the LLM is unavailable (no leak of underlying message)", async () => {
+    const { LLMUnavailableError } = await import("@/lib/llm-client");
+    mockLLMCompletion.mockRejectedValueOnce(
+      new LLMUnavailableError(
+        "fetch failed: getaddrinfo ENOTFOUND api.minimax.io super-secret-key",
+      ),
+    );
+
+    const res = await POST(
+      makeFormRequest({
+        file: makePdfFile(),
+        job_title: "Senior Engineer",
+        job_company: "Acme",
+      }) as never,
+    );
+
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("LLM provider unavailable");
+    // No hostnames / DNS errors / API keys may leak to the client.
+    expect(body.error).not.toContain("api.minimax.io");
+    expect(body.error).not.toContain("super-secret-key");
+    expect(body.error).not.toContain("getaddrinfo");
+
+    // The engagement event MUST NOT be recorded when the LLM call
+    // failed (no CV was generated).
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it("returns 422 when the LLM response can't be parsed", async () => {
+    mockLLMCompletion.mockResolvedValueOnce("PARSE_FAIL");
+
+    const res = await POST(
+      makeFormRequest({
+        file: makePdfFile(),
+        job_title: "Senior Engineer",
+        job_company: "Acme",
+      }) as never,
+    );
+
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/adaptar/i);
+    // The raw LLM response / parse error must not leak.
+    expect(body.error).not.toContain("PARSE_FAIL");
+    expect(body.error).not.toContain("garbage");
+
+    // The engagement event MUST NOT be recorded when parsing failed.
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it("returns 200 even when engagement-event recording fails (best-effort)", async () => {
+    mockLLMCompletion.mockResolvedValueOnce(
+      JSON.stringify({
+        name: "Ada",
+        experience: [],
+        education: [],
+        skills: [],
+        languages: [],
+      }),
+    );
+    mockInsert.mockResolvedValueOnce({
+      error: { message: "RLS violation" },
+    });
+
+    const res = await POST(
+      makeFormRequest({
+        file: makePdfFile(),
+        job_title: "Senior Engineer",
+        job_company: "Acme",
+      }) as never,
+    );
+
+    // The CV was generated — don't fail the user because the
+    // engagement event couldn't be recorded.
+    expect(res.status).toBe(200);
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+  });
+});

@@ -1,110 +1,194 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// Mock process.env before importing the handler
-const originalEnv = process.env;
+vi.mock("server-only", () => ({}));
+
+// Mock the LLM client BEFORE importing the route. The route now
+// uses `chatCompletionStream` from `@/lib/llm-client` directly —
+// the previous Python backend proxy is gone.
+const mockStream = vi.fn();
+
+vi.mock("@/lib/llm-client", () => ({
+  chatCompletionStream: (...args: unknown[]) => mockStream(...args),
+  // The route catches errors via the `LLMStreamError` and
+  // `LLMUnavailableError` instanceof checks, so we also need the
+  // class identities to match. The real classes extend `Error`.
+  LLMStreamError: class LLMStreamError extends Error {},
+  LLMUnavailableError: class LLMUnavailableError extends Error {},
+}));
 
 describe("POST /api/jobs/chat/stream", () => {
   beforeEach(() => {
-    vi.resetModules();
-    process.env = { ...originalEnv, BACKEND_URL: "http://test-backend:8000" };
-    vi.stubGlobal("fetch", vi.fn());
+    vi.resetAllMocks();
+    process.env = { ...process.env, LLM_API_KEY: "test-key" };
   });
 
   afterEach(() => {
-    process.env = originalEnv;
     vi.unstubAllGlobals();
   });
 
-  it("proxies POST request body to backend", async () => {
-    const requestBody = { query: "remote react jobs" };
-    const backendResponseBody = new ReadableStream({
+  it("builds the messages array with the chat system prompt and pipes the LLM stream through", async () => {
+    const upstreamStream = new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(new TextEncoder().encode("data: test\n\n"));
+        controller.enqueue(
+          new TextEncoder().encode('event: text\ndata: {"delta":"hi"}\n\n'),
+        );
+        controller.enqueue(
+          new TextEncoder().encode(
+            'event: done\ndata: {"jobs":[],"explanation":""}\n\n',
+          ),
+        );
         controller.close();
       },
     });
+    mockStream.mockResolvedValueOnce(upstreamStream);
 
-    const mockBackendResponse = new Response(backendResponseBody, {
-      status: 200,
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
-
-    const mockFetch = vi.fn().mockResolvedValue(mockBackendResponse);
-    vi.stubGlobal("fetch", mockFetch);
-
-    // Dynamic import so it uses the mocked process.env
     const { POST } = await import("../route");
 
-    // Create a minimal mock for NextRequest
-    const mockRequest = {
-      text: () => Promise.resolve(JSON.stringify(requestBody)),
-      headers: new Headers({ "Content-Type": "application/json" }),
-    };
+    const request = new Request("http://localhost:3000/api/jobs/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "react madrid" }),
+    });
 
-    const response = await POST(mockRequest as any);
+    const response = await POST(request as never);
 
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toBe("text/event-stream");
     expect(response.headers.get("Cache-Control")).toBe("no-cache");
     expect(response.headers.get("Connection")).toBe("keep-alive");
+    expect(response.headers.get("X-Accel-Buffering")).toBe("no");
 
-    // Verify the proxy called the correct backend URL
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    const fetchCall = mockFetch.mock.calls[0]!;
-    expect(fetchCall[0]).toBe("http://test-backend:8000/jobs/chat/stream");
-    expect(fetchCall[1]?.method).toBe("POST");
-    expect(fetchCall[1]?.headers).toEqual({
-      "Content-Type": "application/json",
+    // The LLM client was called with the chat system prompt and
+    // the user's message (built via `buildChatFilterUserMessage`).
+    expect(mockStream).toHaveBeenCalledTimes(1);
+    const messages = mockStream.mock.calls[0]![0] as Array<{
+      role: string;
+      content: string;
+    }>;
+    expect(messages[0]?.role).toBe("system");
+    expect(messages[1]?.role).toBe("user");
+    // The user message is JSON-serialized `{intent, jobs}` per
+    // `buildChatFilterUserMessage`. We assert the round-trip:
+    const parsed = JSON.parse(messages[1]!.content) as {
+      intent: string;
+      jobs: unknown[];
+    };
+    expect(parsed.intent).toBe("react madrid");
+    expect(parsed.jobs).toEqual([]);
+
+    // The upstream stream flows through unchanged.
+    const reader = response.body?.getReader();
+    expect(reader).toBeDefined();
+    const decoder = new TextDecoder();
+    let body = "";
+    while (reader) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      body += decoder.decode(value, { stream: true });
+    }
+    expect(body).toContain('event: text\ndata: {"delta":"hi"}');
+    expect(body).toContain("event: done");
+  });
+
+  it("returns an SSE error chunk when chatCompletionStream throws LLMStreamError", async () => {
+    // Use the real class via dynamic import so `instanceof` matches.
+    const { LLMStreamError } = await import("@/lib/llm-client");
+    mockStream.mockRejectedValueOnce(
+      new LLMStreamError("HTTP 502 from upstream: <internal trace abc123>"),
+    );
+
+    const { POST } = await import("../route");
+
+    const request = new Request("http://localhost:3000/api/jobs/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "test" }),
     });
-    expect(fetchCall[1]?.body).toBe(JSON.stringify(requestBody));
+
+    const response = await POST(request as never);
+    expect(response.status).toBe(200); // SSE: errors are in-band
+    expect(response.headers.get("Content-Type")).toBe("text/event-stream");
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    let body = "";
+    while (reader) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      body += decoder.decode(value, { stream: true });
+    }
+
+    expect(body).toContain("event: error");
+    expect(body).toContain('"code":"llm_stream"');
+    // The raw exception message MUST NOT leak (AGENTS.md #24) —
+    // pin a substring that ONLY appears in the original exception
+    // text, not in the static user-facing SSE message.
+    expect(body).not.toContain("HTTP 502 from upstream");
+    expect(body).not.toContain("internal trace abc123");
   });
 
-  it("forwards backend error status to client", async () => {
-    const mockFetch = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({ detail: "LLM not available" }),
-        { status: 503 },
-      ),
-    );
-    vi.stubGlobal("fetch", mockFetch);
-
-    const { POST } = await import("../route");
-
-    const mockRequest = {
-      text: () => Promise.resolve(JSON.stringify({ query: "test" })),
-      headers: new Headers({ "Content-Type": "application/json" }),
-    };
-
-    const response = await POST(mockRequest as any);
-
-    expect(response.status).toBe(503);
-  });
-
-  it("uses default BACKEND_URL when env var is not set", async () => {
-    process.env = { ...originalEnv };
-    delete process.env.BACKEND_URL;
-
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(null, { status: 200 }),
+  it("returns an SSE error chunk with code llm_unavailable when LLMUnavailableError is thrown", async () => {
+    const { LLMUnavailableError } = await import("@/lib/llm-client");
+    mockStream.mockRejectedValueOnce(
+      new LLMUnavailableError(
+        "DNS resolution failed: getaddrinfo ENOTFOUND api.minimax.io",
       ),
     );
 
     const { POST } = await import("../route");
 
-    const mockRequest = {
-      text: () => Promise.resolve("{}"),
-      headers: new Headers(),
-    };
+    const request = new Request("http://localhost:3000/api/jobs/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "test" }),
+    });
 
-    await POST(mockRequest as any);
+    const response = await POST(request as never);
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    let body = "";
+    while (reader) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      body += decoder.decode(value, { stream: true });
+    }
 
-    const fetchCall = (fetch as any).mock.calls[0]!;
-    expect(fetchCall[0]).toBe("http://localhost:8000/jobs/chat/stream");
+    expect(body).toContain("event: error");
+    expect(body).toContain('"code":"llm_unavailable"');
+    // No DNS / hostname / network internals in the SSE payload.
+    expect(body).not.toContain("getaddrinfo");
+    expect(body).not.toContain("ENOTFOUND");
+    expect(body).not.toContain("api.minimax.io");
+  });
+
+  it("returns 400 with a JSON body when the request body is malformed", async () => {
+    const { POST } = await import("../route");
+
+    const request = new Request("http://localhost:3000/api/jobs/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "not-json",
+    });
+
+    const response = await POST(request as never);
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { code: string };
+    expect(body.code).toBe("internal");
+    // LLM client must NOT have been called for a malformed body.
+    expect(mockStream).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when the 'message' field is missing", async () => {
+    const { POST } = await import("../route");
+
+    const request = new Request("http://localhost:3000/api/jobs/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    const response = await POST(request as never);
+    expect(response.status).toBe(400);
+    expect(mockStream).not.toHaveBeenCalled();
   });
 });

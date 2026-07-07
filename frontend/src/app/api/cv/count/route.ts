@@ -1,58 +1,54 @@
 import "server-only";
 
 import { type NextRequest, NextResponse } from "next/server";
-
-const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8000";
-const BACKEND_API_KEY = process.env.BACKEND_API_KEY;
-
-/**
- * Build request headers for outbound calls to the Python backend.
- *
- * Inlined here (post-Phase-2) because the legacy `getUserHeaders`
- * helper in `api-client.ts` was removed when `api-client.ts` was
- * deleted. The Phase 3 migration (LLM in Next.js) will eliminate
- * the last `BACKEND_URL` consumer in this file and this helper
- * goes with it.
- */
-function buildBackendHeaders(
-  authHeader: string | null,
-): Record<string, string> {
-  const h: Record<string, string> = { Accept: "application/json" };
-  if (BACKEND_API_KEY) h["X-API-Key"] = BACKEND_API_KEY;
-  if (authHeader) h["Authorization"] = authHeader;
-  return h;
-}
+import { createClient } from "@/lib/supabase/server";
 
 /**
  * GET /api/cv/count
  *
  * Returns today's CV generation count for the authenticated user.
- * Proxies to the backend `GET /cv/count` endpoint, forwarding the
- * user's JWT from the incoming request's `Authorization` header.
+ * Reads the `user_engagement` table directly from Supabase — replaces
+ * the previous Python backend proxy (`GET /cv/count`).
+ *
+ * RLS on `user_engagement` (`auth.uid() = user_id`, migration 007)
+ * scopes the query to the authenticated user automatically; we
+ * additionally filter by `event_type = 'cv_adapted'` and
+ * `created_at >= today UTC` so the response is just the user's own
+ * daily quota consumption.
  *
  * Response shape: `{ total_today: number }`
  *
- * Returns `{ total_today: 0 }` if the backend is unreachable
- * or returns a non-OK status — the frontend uses this as a best-
- * effort hint and the count is always 0 for anonymous users.
+ * Returns `{ total_today: 0 }` when:
+ *   - the user is not authenticated (anonymous users have no events),
+ *   - the Supabase query fails (graceful degradation so the dashboard
+ *     count widget never throws — `useCVAdapted` catches non-OK
+ *     responses and keeps the count at 0).
  */
-export async function GET(request: NextRequest) {
-  const authHeader = request.headers.get("authorization");
-  const headers = buildBackendHeaders(authHeader);
+export async function GET(_request: NextRequest) {
+  const supabase = await createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
 
-  try {
-    const backendResponse = await fetch(`${BACKEND_URL}/cv/count`, {
-      headers,
-      next: { revalidate: 30, tags: ["cv-count"] },
-    });
-
-    if (!backendResponse.ok) {
-      return NextResponse.json({ total_today: 0 });
-    }
-
-    const data = await backendResponse.json();
-    return NextResponse.json(data);
-  } catch {
+  if (!session) {
     return NextResponse.json({ total_today: 0 });
   }
+
+  // `today_utc` is the ISO date (YYYY-MM-DD) for the start of the
+  // current UTC day. `created_at` is a `timestamptz`, so the
+  // comparison is correct regardless of the user's locale.
+  const todayUtc = new Date().toISOString().slice(0, 10);
+
+  const { count, error } = await supabase
+    .from("user_engagement")
+    .select("id", { count: "exact", head: true })
+    .eq("event_type", "cv_adapted")
+    .gte("created_at", todayUtc);
+
+  if (error) {
+    console.error("cv/count: Supabase query failed", error);
+    return NextResponse.json({ total_today: 0 });
+  }
+
+  return NextResponse.json({ total_today: count ?? 0 });
 }
