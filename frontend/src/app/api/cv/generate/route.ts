@@ -142,6 +142,23 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Clone the ArrayBuffer once before handing it to the two PDF
+  // consumers. `extractCvImage` wraps the bytes with
+  // `PDFDocument.load(...)` (pdf-lib) which internally does
+  // `new Uint8Array(buffer)` — that operation DETACHES the source
+  // ArrayBuffer (transfers ownership into the new view), so the
+  // next consumer to wrap the same buffer crashes with
+  // "Cannot perform Construct on a detached ArrayBuffer".
+  //
+  // We give `extractCvImage` the clone and let `extractPdfText`
+  // take the original — `unpdf` either copies or is fine being the
+  // last user of the buffer (it's the first to run and we never
+  // touch `pdfBytes` again after this point). `slice(0)` returns a
+  // fresh `ArrayBuffer` (copy), which is what `extractCvImage`'s
+  // `bytes: ArrayBuffer` parameter expects — pdf-lib's
+  // `PDFDocument.load` accepts both `ArrayBuffer` and `Uint8Array`.
+  const pdfBytesForImage: ArrayBuffer = pdfBytes.slice(0);
+
   // 4. Extract the CV text with `unpdf` (returns "" on failure —
   //    the LLM's system prompt already handles empty input).
   const cvText = await extractPdfText(pdfBytes);
@@ -150,7 +167,7 @@ export async function POST(request: NextRequest) {
   //    `extract_cv_image` from the Python backend. Returns a
   //    base64 data URL or `null`. Best-effort: a failure here
   //    does NOT block the route (the CV renders without a photo).
-  const extractedPhoto = await extractCvImage(pdfBytes);
+  const extractedPhoto = await extractCvImage(pdfBytesForImage);
 
   // 6. Build the messages array and call the LLM.
   const userMessage = buildAdaptCVUserMessage(

@@ -137,7 +137,7 @@ describe("chatCompletion", () => {
     const body = JSON.parse(init?.body as string);
     expect(body.model).toBe("MiniMax-M3");
     expect(body.temperature).toBe(0);
-    expect(body.max_tokens).toBe(4096);
+    expect(body.max_tokens).toBe(8192);
     expect(body.response_format).toBeUndefined();
   });
 

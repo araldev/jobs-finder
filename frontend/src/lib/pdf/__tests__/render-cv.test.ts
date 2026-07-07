@@ -2,15 +2,25 @@
 // the cv/generate route to turn the LLM's `AdaptedCV` JSON into a
 // downloadable PDF.
 //
-// Verifies:
-//   - The output is a valid PDF (`pdf-lib.PDFDocument.load` succeeds).
+// Harvard CV template verification:
+//   - Output is a valid PDF (`pdf-lib.PDFDocument.load` succeeds).
 //   - At least one page is produced.
 //   - The user's name is embedded in the PDF and can be extracted
 //     back via `unpdf` (a real round-trip check, not a mock).
+//   - Spanish section titles render under yellow highlight
+//     rectangles (`PERFIL PROFESIONAL`, `EXPERIENCIA PROFESIONAL`,
+//     `EDUCACIÓN`, `PROYECTOS`, `HABILIDADES`, `IDIOMAS`).
+//   - Experience descriptions are split on sentence boundaries
+//     into bullet points (capped per entry to avoid layout
+//     breakage from runaway LLM output).
+//   - The LLM's language is preserved verbatim — the renderer
+//     emits only Spanish section titles; every other field
+//     (`name`, `email`, `phone`, `location`, `summary`, etc.) is
+//     rendered exactly as the LLM provided it.
 //   - Empty / minimal `AdaptedCV`s still produce a valid PDF
 //     (no crashes on missing fields).
-//   - Very long descriptions get wrapped and paginated correctly
-//     (multiple pages, all content extracted).
+//   - Long content triggers pagination across multiple pages
+//     (multi-entry overflow, not single-bullet cap).
 
 import { describe, it, expect, vi } from "vitest";
 import { PDFDocument, PDFName } from "pdf-lib";
@@ -139,6 +149,46 @@ const SAMPLE_CV: AdaptedCV = {
   photo: null,
 };
 
+// Spanish CV — exercises the user's typical input shape (the LLM is
+// instructed to return Spanish when the original CV was in Spanish).
+const SPANISH_CV: AdaptedCV = {
+  name: "María García",
+  email: "maria@example.es",
+  phone: "+34 600 111 222",
+  location: "Madrid, España",
+  summary:
+    "Ingeniera senior con 10 años de experiencia construyendo sistemas distribuidos.",
+  experience: [
+    {
+      company: "NTT DATA",
+      title: "Desarrolladora Backend",
+      start_date: "2020-01",
+      end_date: "Presente",
+      description:
+        "Lideré la plataforma de pagos. Diseñé la API REST. Mentoré a 4 juniors.",
+      location: "Madrid",
+    },
+  ],
+  education: [
+    {
+      degree: "Ingeniería Informática",
+      institution: "Universidad Politécnica de Madrid",
+      year: "2016",
+      grade: "8.5",
+    },
+  ],
+  projects: [
+    {
+      name: "V12-UI",
+      description: "Librería de componentes React usada en proyectos personales.",
+      technologies: ["React", "TypeScript"],
+    },
+  ],
+  skills: ["TypeScript", "React", "Node.js", "PostgreSQL"],
+  languages: ["Español", "Inglés"],
+  photo: null,
+};
+
 describe("renderAdaptedCvAsPdf", () => {
   it("produces a valid PDF with at least one page", async () => {
     const bytes = await renderAdaptedCvAsPdf(SAMPLE_CV);
@@ -159,7 +209,7 @@ describe("renderAdaptedCvAsPdf", () => {
     expect(text).toContain("Ada Lovelace");
   });
 
-  it("includes email, phone, and location in the header", async () => {
+  it("joins email, phone, and location on a single contact line", async () => {
     const bytes = await renderAdaptedCvAsPdf(SAMPLE_CV);
     const pdf = await getDocumentProxy(bytes);
     const { text } = await extractText(pdf, { mergePages: true });
@@ -168,21 +218,88 @@ describe("renderAdaptedCvAsPdf", () => {
     expect(text).toContain("Madrid");
   });
 
-  it("includes section headings and content for experience, education, skills, languages", async () => {
+  it("renders Spanish section titles (uppercase, matches user reference + Python template)", async () => {
     const bytes = await renderAdaptedCvAsPdf(SAMPLE_CV);
     const pdf = await getDocumentProxy(bytes);
     const { text } = await extractText(pdf, { mergePages: true });
+    // Harvard layout uses uppercase Spanish section titles. The
+    // `drawSectionTitle` helper upcases before drawing, so the PDF
+    // text extraction should match the UPPERCASE form.
+    expect(text).toContain("PERFIL PROFESIONAL");
+    expect(text).toContain("EXPERIENCIA PROFESIONAL");
+    expect(text).toContain("EDUCACIÓN");
+    expect(text).toContain("PROYECTOS");
+    expect(text).toContain("HABILIDADES");
+    expect(text).toContain("IDIOMAS");
+  });
 
-    expect(text).toContain("Summary");
-    expect(text).toContain("Experience");
-    expect(text).toContain("Acme");
-    expect(text).toContain("Senior Engineer");
-    expect(text).toContain("Education");
+  it("renders experience content as bullets (split on sentence boundaries)", async () => {
+    const bytes = await renderAdaptedCvAsPdf(SAMPLE_CV);
+    const pdf = await getDocumentProxy(bytes);
+    const { text } = await extractText(pdf, { mergePages: true });
+    // The description "Led the platform team. Built the realtime
+    // pipeline. Mentored 4 juniors." is split on sentence boundaries
+    // into three bullets, each preceded by `•`.
+    expect(text).toContain("\u2022 Led the platform team.");
+    expect(text).toContain("\u2022 Built the realtime pipeline.");
+    expect(text).toContain("\u2022 Mentored 4 juniors.");
+    // The second experience's description (single sentence) becomes
+    // one bullet.
+    expect(text).toContain(
+      "\u2022 Migrated the monolith to microservices on Kubernetes.",
+    );
+  });
+
+  it("caps bullet count per entry (defensive against runaway LLM output)", async () => {
+    // 200 short sentences → at most MAX_BULLETS_PER_ENTRY (8) bullets.
+    const longDescription = Array.from({ length: 200 })
+      .map((_, i) => `Responsibility ${i + 1}`)
+      .join(". ");
+    const cv: AdaptedCV = {
+      ...SAMPLE_CV,
+      experience: [
+        {
+          company: "Verbose Co",
+          title: "Overloaded Engineer",
+          start_date: "2020",
+          end_date: "Presente",
+          description: longDescription,
+          location: null,
+        },
+      ],
+    };
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    const pdf = await getDocumentProxy(bytes);
+    const { text } = await extractText(pdf, { mergePages: true });
+    // First 8 are rendered.
+    expect(text).toContain("Responsibility 1");
+    expect(text).toContain("Responsibility 8");
+    // Anything past the cap is dropped — the renderer bounds the
+    // bullet list to MAX_BULLETS_PER_ENTRY (8) per experience entry.
+    expect(text).not.toContain("Responsibility 9");
+    expect(text).not.toContain("Responsibility 200");
+  });
+
+  it("preserves the LLM's language verbatim (Spanish input stays Spanish)", async () => {
+    const bytes = await renderAdaptedCvAsPdf(SPANISH_CV);
+    const pdf = await getDocumentProxy(bytes);
+    const { text } = await extractText(pdf, { mergePages: true });
+    // The renderer must output the LLM-emitted strings unchanged —
+    // no translation, no language detection, no hardcoded English.
+    expect(text).toContain("María García");
+    expect(text).toContain("Ingeniera senior con 10 años");
+    expect(text).toContain("NTT DATA");
+    expect(text).toContain("Desarrolladora Backend");
+    expect(text).toContain("Lideré la plataforma de pagos.");
+    expect(text).toContain("Mentoré a 4 juniors.");
     expect(text).toContain("Universidad Politécnica de Madrid");
-    expect(text).toContain("Skills");
+    expect(text).toContain("Ingeniería Informática");
+    expect(text).toContain("Librería de componentes React");
+    expect(text).toContain("Español");
+    // The skills array is preserved verbatim — the renderer does not
+    // reformat, translate, or sort it.
     expect(text).toContain("TypeScript");
-    expect(text).toContain("Languages");
-    expect(text).toContain("Spanish");
+    expect(text).toContain("PostgreSQL");
   });
 
   it("renders an empty CV without crashing (no fields = no content lines)", async () => {
@@ -222,24 +339,18 @@ describe("renderAdaptedCvAsPdf", () => {
     expect(text).toContain("Ada Lovelace");
   });
 
-  it("renders a Projects section between Experience and Skills (Harvard order)", async () => {
+  it("renders sections in Harvard order: Educación before Experiencia before Proyectos", async () => {
     const bytes = await renderAdaptedCvAsPdf(SAMPLE_CV);
     const pdf = await getDocumentProxy(bytes);
     const { text } = await extractText(pdf, { mergePages: true });
-
-    expect(text).toContain("Projects");
-    expect(text).toContain("V12-UI");
-    expect(text).toContain("PORTFOLIO");
-    expect(text).toContain("Technologies:");
-    expect(text).toContain("React");
-    expect(text).toContain("Next.js");
-    // Harvard ordering: Education appears before Experience in the PDF.
-    const eduIdx = text.indexOf("Education");
-    const expIdx = text.indexOf("Experience");
-    const projIdx = text.indexOf("Projects");
+    const eduIdx = text.indexOf("EDUCACIÓN");
+    const expIdx = text.indexOf("EXPERIENCIA PROFESIONAL");
+    const projIdx = text.indexOf("PROYECTOS");
+    const skillsIdx = text.indexOf("HABILIDADES");
     expect(eduIdx).toBeGreaterThan(-1);
     expect(expIdx).toBeGreaterThan(eduIdx);
     expect(projIdx).toBeGreaterThan(expIdx);
+    expect(skillsIdx).toBeGreaterThan(projIdx);
   });
 
   it("skips the Projects section entirely when no projects are present", async () => {
@@ -249,12 +360,12 @@ describe("renderAdaptedCvAsPdf", () => {
     });
     const pdf = await getDocumentProxy(bytes);
     const { text } = await extractText(pdf, { mergePages: true });
-    expect(text).not.toContain("Projects");
+    expect(text).not.toContain("PROYECTOS");
     // V12-UI is also a project, so it shouldn't appear.
     expect(text).not.toContain("V12-UI");
   });
 
-  it("renders a project with no technologies without a Technologies: line", async () => {
+  it("renders a project with no technologies without a Tecnologías: line", async () => {
     const bytes = await renderAdaptedCvAsPdf({
       ...SAMPLE_CV,
       projects: [
@@ -269,20 +380,21 @@ describe("renderAdaptedCvAsPdf", () => {
     const { text } = await extractText(pdf, { mergePages: true });
     expect(text).toContain("MyNakedProject");
     expect(text).toContain("Description only.");
-    expect(text).not.toContain("Technologies:");
+    expect(text).not.toContain("Tecnologías:");
   });
 
-  it("does not emit em dashes in section dividers (replaced by commas)", async () => {
+  it("does not emit em dashes in section dividers (replaced by commas / en dashes)", async () => {
     const bytes = await renderAdaptedCvAsPdf(SAMPLE_CV);
     const pdf = await getDocumentProxy(bytes);
     const { text } = await extractText(pdf, { mergePages: true });
-    // The renderer uses commas for company/title/education headers;
-    // em dashes only appear inside the user's text content (e.g. the
-    // SAMPLE_CV description doesn't have any, but a future LLM might
-    // — what we GUARANTEE here is that the renderer never introduces
-    // em dashes itself).
-    expect(text).not.toContain("Globex \u2014");
-    expect(text).not.toContain("Globex —");
+    // The renderer uses commas for company/location headers and the
+    // en dash (U+2013) for date ranges. Em dashes (U+2014) are
+    // forbidden anywhere in the rendered output — both as separators
+    // the renderer introduces and as content from the LLM we don't
+    // want to echo back unchanged.
+    expect(text).not.toMatch(/Globex\s+\u2014/);
+    expect(text).not.toMatch(/Globex\s+\u2014\s*Backend/);
+    expect(text).not.toContain("\u2014");
   });
 
   it("embeds the photo as an image XObject when provided (Harvard header layout)", async () => {
@@ -355,34 +467,41 @@ describe("renderAdaptedCvAsPdf", () => {
     expect(text).toContain("Ada Lovelace");
   });
 
-  it("paginates long descriptions across multiple pages", async () => {
-    // Build a CV with one very long experience description so the
-    // renderer is forced to overflow the first page.
-    const longDescription = Array.from({ length: 200 })
-      .map((_, i) => `Responsibility ${i + 1}`)
-      .join(". ");
+  it("paginates long content across multiple pages", async () => {
+    // The bullet cap (8 per entry) means a single 200-sentence
+    // description no longer overflows the first page on its own.
+    // To exercise pagination we use 12 experience entries — each
+    // with a long description split into a few sentences. Combined,
+    // the entries overflow the first page and force a new page.
+    const longEntryDescription =
+      "Led a cross-functional team through a complex migration. " +
+      "Designed and shipped a new realtime pipeline. " +
+      "Mentored 4 junior engineers across two quarters.";
     const cv: AdaptedCV = {
       ...SAMPLE_CV,
-      experience: [
-        {
-          company: "Verbose Co",
-          title: "Overloaded Engineer",
-          start_date: "2020",
-          end_date: "Presente",
-          description: longDescription,
-          location: null,
-        },
-      ],
+      summary: "",
+      education: [],
+      projects: [],
+      skills: [],
+      languages: [],
+      experience: Array.from({ length: 12 }).map((_, i) => ({
+        company: `Company ${i + 1}`,
+        title: `Title ${i + 1}`,
+        start_date: "2020",
+        end_date: "Presente",
+        description: longEntryDescription,
+        location: `City ${i + 1}`,
+      })),
     };
     const bytes = await renderAdaptedCvAsPdf(cv);
     const loaded = await PDFDocument.load(bytes);
     expect(loaded.getPageCount()).toBeGreaterThan(1);
 
-    // All the responsibilities should still be extractable after
-    // pagination — the renderer doesn't truncate, it wraps + overflows.
+    // All the content should still be extractable after pagination —
+    // the renderer doesn't truncate, it wraps + overflows.
     const pdf = await getDocumentProxy(bytes);
     const { text } = await extractText(pdf, { mergePages: true });
-    expect(text).toContain("Responsibility 1");
-    expect(text).toContain("Responsibility 200");
+    expect(text).toContain("Company 1");
+    expect(text).toContain("Company 12");
   });
 });

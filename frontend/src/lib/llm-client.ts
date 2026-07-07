@@ -22,7 +22,16 @@ const DEFAULT_MODEL = "MiniMax-M3";
 // (not enforced server-side for every model). Creative calls
 // (chat) keep the higher temperature.
 const DEFAULT_TEMPERATURE = 0.0;
-const DEFAULT_MAX_TOKENS = 4096;
+// 8192 (not 4096): cv/generate emits a 5-7KB JSON blob and MiniMax-M3
+// spends a large part of its budget on a verbose thinking preamble
+// ("Let me analyze the original CV carefully... I'll extract... Then
+// I'll output...") before the JSON itself. With 4096 the LLM hits
+// `max_tokens` mid-thinking and never emits valid JSON (the parser
+// then sees the truncated thinking block). 8192 leaves room for the
+// preamble AND the full JSON output. The chat endpoint doesn't pass
+// an override, but its prompts are smaller (job filtering) and don't
+// burn the same budget.
+const DEFAULT_MAX_TOKENS = 8192;
 // cv/generate emits a 5-7KB JSON blob with 5+ experience entries,
 // education, skills, languages, and now projects. MiniMax-M3 has
 // been observed taking 25-40s for this prompt size. 30s was too

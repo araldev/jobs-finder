@@ -3,29 +3,106 @@ import "server-only";
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from "pdf-lib";
 import type { AdaptedCV } from "@/lib/llm/prompts";
 
-// A4 dimensions in points (1 point = 1/72 inch).
+// ── Page geometry ───────────────────────────────────────────────────────
+//
+// A4 (210 × 297 mm) ≈ 595 × 842 points (1 point = 1/72 inch).
+// Conservative margins — Harvard/ATS templates use ~15–20 mm.
 const PAGE_WIDTH = 595;
 const PAGE_HEIGHT = 842;
 const MARGIN = 50;
 const CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN;
 
 // Photo size matches the Python CSS template (28mm × 32mm ≈ 80pt × 91pt).
-// The Python template uses `object-fit: cover`; pdf-lib's `drawImage`
-// doesn't crop, so we draw at the natural aspect ratio and accept
-// slightly non-square photos — the photo still appears in the header
-// (the user's stated goal), we just don't crop aggressively.
+// pdf-lib's `drawImage` doesn't crop, so we draw at the natural aspect
+// ratio and accept slightly non-square photos.
 const PHOTO_WIDTH = 80;
 const PHOTO_HEIGHT = 90;
 
-// Body 10pt → line height 14. Section headings 12pt → 16. Name 18pt → 22.
-// Using a single `LINE_HEIGHT_RATIO` keeps the layout table easy to read.
+// ── Font selection ──────────────────────────────────────────────────────
+//
+// The Python template (`_template.py`) uses Arial — an ATS-friendly
+// sans-serif. The user's CV reference image targets a SERIF layout
+// (classic Harvard look), so the TS renderer uses Times Roman instead.
+// All four variants are available in pdf-lib's `StandardFonts`.
+const FONT_REG = StandardFonts.TimesRoman;
+const FONT_BOLD = StandardFonts.TimesRomanBold;
+const FONT_ITALIC = StandardFonts.TimesRomanItalic;
+const FONT_BOLD_ITALIC = StandardFonts.TimesRomanBoldItalic;
+
+// ── Font sizes ──────────────────────────────────────────────────────────
+//
+// Each constant is named for the visual role it plays (NAME, CONTACT,
+// BODY, SECTION_TITLE, etc.) so the layout stays readable.
+const SIZE_NAME = 18;
+const SIZE_CONTACT = 10;
+const SIZE_BODY = 10;
+const SIZE_BODY_ITALIC = 10;
+const SIZE_SECTION_TITLE = 11;
+const SIZE_EXP_COMPANY = 10;
+const SIZE_EXP_TITLE = 10;
+const SIZE_EXP_LOCATION = 9;
+const SIZE_EXP_DATE = 9;
+const SIZE_EXP_BULLET = 10;
+const SIZE_PROJECT_NAME = 10;
+const SIZE_PROJECT_DESC = 10;
+const SIZE_PROJECT_TECH = 9;
+const SIZE_EDU_DEGREE = 10;
+const SIZE_EDU_YEAR = 9;
+const SIZE_EDU_INSTITUTION = 9;
+const SIZE_SKILLS = 10;
+const SIZE_LANGUAGES = 10;
+
 const LINE_HEIGHT_RATIO = 1.4;
+
+// Section title block (rectangle + border + text). Slightly larger
+// than the text itself so the highlight feels like a "compartment"
+// rather than a colored text run.
+const SECTION_TITLE_HEIGHT = 16;
+const SECTION_TITLE_TEXT_PADDING = 6;
+const SECTION_TITLE_BORDER_THICKNESS = 0.4;
+
+// Inter-section vertical gap.
+const SECTION_GAP = 4;
+
+// Yellow highlight color (pastel — matches the Harvard reference image,
+// approximated as #fff3cd / rgb(255, 242, 205)).
+const HIGHLIGHT_COLOR = rgb(1, 0.949, 0.804);
+
+const DIVIDER_COLOR = rgb(0.55, 0.55, 0.55);
+const DIVIDER_THICKNESS = 0.4;
+
+// Section titles — Spanish to match the user's CV reference image AND
+// the backend Python template (`backend/.../cv/_template.py`), which
+// uses the same Spanish titles. The renderer does NOT pick these from
+// the LLM (the `AdaptedCV` schema doesn't include section titles);
+// they're hardcoded to match the user's language.
+const SECTION_TITLES = {
+  summary: "Perfil Profesional",
+  education: "Educación",
+  experience: "Experiencia Profesional",
+  projects: "Proyectos",
+  skills: "Habilidades",
+  languages: "Idiomas",
+} as const;
+
+// Maximum bullets per experience entry. Caps pathological LLM outputs
+// (e.g. a runaway list of 200 short sentences) from blowing out the
+// layout — real LLM descriptions are usually 3–7 sentences.
+const MAX_BULLETS_PER_ENTRY = 8;
+
+// Minimum bullet length (after trimming). Drops empty strings and
+// residual fragments like "." or "ok." that survive the sentence split.
+const MIN_BULLET_LENGTH = 5;
+
+// ── Drawing state ───────────────────────────────────────────────────────
 
 interface DrawState {
   doc: PDFDocument;
   page: PDFPage;
   font: PDFFont;
   bold: PDFFont;
+  italic: PDFFont;
+  boldItalic: PDFFont;
   y: number;
 }
 
@@ -71,28 +148,76 @@ function drawSpacer(state: DrawState, height: number): void {
   state.y -= height;
 }
 
-function drawLine(
+// ── Section title (yellow highlight + uppercase bold text) ─────────────
+
+function drawSectionTitle(state: DrawState, text: string): void {
+  const size = SIZE_SECTION_TITLE;
+  ensureSpace(state, SECTION_TITLE_HEIGHT + SECTION_GAP);
+
+  // Background rectangle (full content width).
+  const rectBottom = state.y - SECTION_TITLE_HEIGHT;
+  state.page.drawRectangle({
+    x: MARGIN,
+    y: rectBottom,
+    width: CONTENT_WIDTH,
+    height: SECTION_TITLE_HEIGHT,
+    color: HIGHLIGHT_COLOR,
+  });
+
+  // Subtle border-bottom line UNDER the highlight.
+  state.page.drawLine({
+    start: { x: MARGIN, y: rectBottom },
+    end: { x: MARGIN + CONTENT_WIDTH, y: rectBottom },
+    thickness: SECTION_TITLE_BORDER_THICKNESS,
+    color: DIVIDER_COLOR,
+  });
+
+  // Title text (uppercase bold) on top of the rectangle.
+  // Baseline is positioned at ~ the visual mid-height of the box
+  // minus a small offset for optical centering of the cap-height.
+  const titleText = text.toUpperCase();
+  const baseline = rectBottom + SECTION_TITLE_HEIGHT / 2 - size * 0.23;
+  state.page.drawText(titleText, {
+    x: MARGIN + SECTION_TITLE_TEXT_PADDING,
+    y: baseline,
+    font: state.bold,
+    size,
+    color: rgb(0, 0, 0),
+  });
+
+  // Advance past the title block + small gap.
+  state.y = rectBottom - SECTION_GAP;
+}
+
+// ── Wrapped text (left-aligned or centered) ────────────────────────────
+
+interface DrawTextOptions {
+  size?: number;
+  font?: PDFFont;
+  indent?: number;
+  center?: boolean;
+}
+
+function drawWrappedText(
   state: DrawState,
   text: string,
-  opts: { bold?: boolean; size?: number; center?: boolean } = {},
+  opts: DrawTextOptions = {},
 ): void {
-  const size = opts.size ?? 10;
-  const font = opts.bold ? state.bold : state.font;
-  const height = lineHeight(size);
+  const size = opts.size ?? SIZE_BODY;
+  const font = opts.font ?? state.font;
+  const indent = opts.indent ?? 0;
+  const center = opts.center ?? false;
 
   const trimmed = text.trim();
-  if (trimmed.length === 0) {
-    drawSpacer(state, height);
-    return;
-  }
+  if (trimmed.length === 0) return;
 
-  const lines = wrapLine(trimmed, font, size, CONTENT_WIDTH);
+  const lines = wrapLine(trimmed, font, size, CONTENT_WIDTH - indent);
+  const height = lineHeight(size);
   for (const line of lines) {
     ensureSpace(state, height);
-    const width = font.widthOfTextAtSize(line, size);
-    const x = opts.center
-      ? MARGIN + (CONTENT_WIDTH - width) / 2
-      : MARGIN;
+    const x = center
+      ? MARGIN + (CONTENT_WIDTH - font.widthOfTextAtSize(line, size)) / 2
+      : MARGIN + indent;
     state.page.drawText(line, {
       x,
       y: state.y - size,
@@ -104,86 +229,308 @@ function drawLine(
   }
 }
 
-/**
- * Decode a `data:image/<mime>;base64,<...>` URL into raw image bytes
- * + the pdf-lib embedder to call. Returns `null` if the URL is
- * malformed or the bytes can't be decoded.
- *
- * Mirrors the contract enforced by the route handler (always a
- * real data URL from `extractCvImage`). Falls back to `null` for any
- * malformed input rather than throwing — the renderer must not
- * crash on bad data.
- */
+// ── Bullet line (• character + wrapped, indented text) ────────────────
+
+function drawBullet(
+  state: DrawState,
+  text: string,
+  size: number = SIZE_EXP_BULLET,
+): void {
+  const font = state.font;
+  const bulletChar = "\u2022";
+  const indent = 14;
+  const bulletX = MARGIN + 2;
+  const textX = MARGIN + indent;
+  const maxTextWidth = CONTENT_WIDTH - indent;
+
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return;
+
+  const lines = wrapLine(trimmed, font, size, maxTextWidth);
+  if (lines.length === 0) return;
+
+  const height = lineHeight(size);
+  for (let i = 0; i < lines.length; i++) {
+    ensureSpace(state, height);
+    // The bullet character only appears on the first wrapped line —
+    // continuation lines are indented at the text column, not the
+    // bullet column.
+    if (i === 0) {
+      state.page.drawText(bulletChar, {
+        x: bulletX,
+        y: state.y - size,
+        font,
+        size,
+        color: rgb(0, 0, 0),
+      });
+    }
+    const line = lines[i]!;
+    state.page.drawText(line, {
+      x: textX,
+      y: state.y - size,
+      font,
+      size,
+      color: rgb(0, 0, 0),
+    });
+    state.y -= height;
+  }
+}
+
+// ── Two-column row (left text + right text on the same line) ──────────
+
+interface RowSideOpts {
+  font?: PDFFont;
+  size?: number;
+}
+
+function drawRow(
+  state: DrawState,
+  leftText: string | null,
+  rightText: string | null,
+  leftOpts: RowSideOpts = {},
+  rightOpts: RowSideOpts = {},
+): void {
+  const leftSize = leftOpts.size ?? SIZE_BODY;
+  const rightSize = rightOpts.size ?? SIZE_BODY;
+  const leftFont = leftOpts.font ?? state.font;
+  const rightFont = rightOpts.font ?? state.font;
+  const height = lineHeight(Math.max(leftSize, rightSize));
+
+  ensureSpace(state, height);
+
+  if (leftText && leftText.length > 0) {
+    state.page.drawText(leftText, {
+      x: MARGIN,
+      y: state.y - leftSize,
+      font: leftFont,
+      size: leftSize,
+      color: rgb(0, 0, 0),
+    });
+  }
+
+  if (rightText && rightText.length > 0) {
+    const w = rightFont.widthOfTextAtSize(rightText, rightSize);
+    state.page.drawText(rightText, {
+      x: MARGIN + CONTENT_WIDTH - w,
+      y: state.y - rightSize,
+      font: rightFont,
+      size: rightSize,
+      color: rgb(0, 0, 0),
+    });
+  }
+
+  state.y -= height;
+}
+
+// ── Header horizontal rule (full content width) ───────────────────────
+
+function drawHeaderRule(state: DrawState): void {
+  ensureSpace(state, 1);
+  state.page.drawLine({
+    start: { x: MARGIN, y: state.y },
+    end: { x: MARGIN + CONTENT_WIDTH, y: state.y },
+    thickness: 0.5,
+    color: rgb(0.2, 0.2, 0.2),
+  });
+}
+
+// ── Per-section content helpers ────────────────────────────────────────
+
+function drawEducationEntry(
+  state: DrawState,
+  ed: AdaptedCV["education"][number],
+): void {
+  const degreeText = ed.grade ? `${ed.degree}, ${ed.grade}` : ed.degree;
+  drawRow(
+    state,
+    degreeText || null,
+    ed.year || null,
+    { font: state.bold, size: SIZE_EDU_DEGREE },
+    { font: state.font, size: SIZE_EDU_YEAR },
+  );
+  if (ed.institution) {
+    drawWrappedText(state, ed.institution, {
+      size: SIZE_EDU_INSTITUTION,
+      font: state.italic,
+    });
+  }
+}
+
+function formatDateRange(start: string, end: string): string {
+  const s = (start ?? "").trim();
+  const e = (end ?? "").trim();
+  if (!s && !e) return "";
+  if (!e) return s;
+  if (!s) return e;
+  // En dash (U+2013) — typographically correct for date ranges.
+  // Em dashes are forbidden anywhere in the rendered output (the
+  // "no AI writing tells" rule from `ADAPT_CV_SYSTEM_PROMPT`).
+  return `${s} \u2013 ${e}`;
+}
+
+function drawExperienceEntry(
+  state: DrawState,
+  exp: AdaptedCV["experience"][number],
+): void {
+  // Row 1: company (bold, left) + location (italic, smaller, right).
+  drawRow(
+    state,
+    exp.company || null,
+    exp.location || null,
+    { font: state.bold, size: SIZE_EXP_COMPANY },
+    { font: state.italic, size: SIZE_EXP_LOCATION },
+  );
+  // Row 2: title (italic, left) + date range (smaller, right).
+  const dateRange = formatDateRange(exp.start_date, exp.end_date);
+  drawRow(
+    state,
+    exp.title || null,
+    dateRange || null,
+    { font: state.italic, size: SIZE_EXP_TITLE },
+    { font: state.font, size: SIZE_EXP_DATE },
+  );
+  // Bullets — split the description on sentence boundaries and
+  // newlines, drop fragments too short to be a real bullet.
+  if (exp.description) {
+    const bullets = splitDescriptionIntoBullets(exp.description);
+    for (const bullet of bullets) {
+      drawBullet(state, bullet, SIZE_EXP_BULLET);
+    }
+  }
+  // Subtle divider line below the entry.
+  drawSpacer(state, 2);
+  state.page.drawLine({
+    start: { x: MARGIN, y: state.y },
+    end: { x: MARGIN + CONTENT_WIDTH, y: state.y },
+    thickness: DIVIDER_THICKNESS,
+    color: DIVIDER_COLOR,
+  });
+  drawSpacer(state, 4);
+}
+
+function splitDescriptionIntoBullets(
+  description: string,
+  cap: number = MAX_BULLETS_PER_ENTRY,
+): string[] {
+  // Normalize line endings so \r\n / \r behave the same as \n.
+  const normalized = description.replace(/\r\n?/g, "\n").trim();
+  if (!normalized) return [];
+
+  const lines = normalized.split(/\n+/);
+  const bullets: string[] = [];
+  for (const line of lines) {
+    // Sentence boundary: period followed by whitespace. The lookbehind
+    // keeps the period attached to the previous sentence so it renders
+    // with the bullet text instead of starting the next bullet.
+    const sentences = line.split(/(?<=\.)\s+/);
+    for (const sentence of sentences) {
+      const t = sentence.trim();
+      if (t.length >= MIN_BULLET_LENGTH) bullets.push(t);
+    }
+  }
+  return bullets.slice(0, cap);
+}
+
+function drawProjectEntry(
+  state: DrawState,
+  proj: AdaptedCV["projects"][number],
+): void {
+  if (proj.name) {
+    drawWrappedText(state, proj.name, {
+      size: SIZE_PROJECT_NAME,
+      font: state.bold,
+    });
+  }
+  if (proj.description) {
+    drawWrappedText(state, proj.description, {
+      size: SIZE_PROJECT_DESC,
+      font: state.font,
+    });
+  }
+  if (proj.technologies && proj.technologies.length > 0) {
+    drawWrappedText(
+      state,
+      `Tecnologías: ${proj.technologies.join(", ")}`,
+      { size: SIZE_PROJECT_TECH, font: state.italic },
+    );
+  }
+  drawSpacer(state, 3);
+}
+
+// ── Photo decoder (mirrors the route's data-URL contract) ──────────────
+
 async function decodePhotoDataUrl(
   photo: string,
 ): Promise<{ bytes: Uint8Array; isJpeg: boolean } | null> {
-  const match = photo.match(
-    /^data:image\/(png|jpeg|jpg);base64,(.+)$/i,
-  );
+  const match = photo.match(/^data:image\/(png|jpeg|jpg);base64,(.+)$/i);
   if (!match) return null;
   const mime = match[1]!.toLowerCase();
   const b64 = match[2]!;
-
-  // Decode base64 → Uint8Array. `Buffer.from(b64, "base64")` works
-  // in Node; in the browser the route is gated by `import "server-only"`
-  // so we don't worry about the browser path here.
   const bytes = Uint8Array.from(
     typeof Buffer !== "undefined"
       ? Buffer.from(b64, "base64")
       : Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)),
   );
-
   return { bytes, isJpeg: mime === "jpeg" || mime === "jpg" };
 }
+
+// ── Public entry point ─────────────────────────────────────────────────
 
 /**
  * Render the LLM's `AdaptedCV` as a downloadable PDF (Uint8Array).
  *
- * Layout (Harvard CV template order):
- *   - Header (centered): name (18pt bold) + email/phone/location (10pt)
- *   - Summary (if present): "Summary" heading + body
- *   - Education: "Education" heading + per-entry degree, institution
- *     + year (9pt)
- *   - Experience: "Experience" heading + per-entry title, company
- *     (bold), date range (9pt), description (10pt)
- *   - Projects (if any): "Projects" heading + per-entry name, optional
- *     description, optional "Technologies:" line
- *   - Skills: "Skills" heading + comma-separated list
- *   - Languages: "Languages" heading + comma-separated list
+ * Layout — Harvard CV template:
+ *   - Header: photo (top-right) || centered name (18pt bold) +
+ *     contact line (10pt) + horizontal rule.
+ *   - Resumen / Perfil Profesional (italic body under a yellow
+ *     highlighted uppercase section title).
+ *   - One section per content group: Educación, Experiencia
+ *     Profesional, Proyectos, Habilidades, Idiomas. Each section
+ *     starts with a yellow-highlighted uppercase title bar.
+ *   - Experience: company (bold) + location (italic right) →
+ *     title (italic) + date range (smaller right) → bullet list
+ *     split on sentence boundaries, capped per entry.
+ *   - Education: degree (bold) + year (right) → institution (italic).
+ *   - Projects: name (bold) → optional description → "Tecnologías:"
+ *     line (italic).
+ *   - Skills / Languages: comma-separated list.
  *
- * Long lines wrap at `CONTENT_WIDTH`; if a line doesn't fit on the
- * current page, a new page is added. The output is a "good enough"
- * CV — not Canva-quality, but a real, valid PDF that opens in any
- * PDF viewer.
+ * Typography: serif (Times Roman). The Python backend uses Arial for
+ * ATS friendliness; this TS renderer targets the user's reference
+ * image instead — a classic serif Harvard look.
  *
- * No em dashes are emitted anywhere; section separators use commas or
- * the en dash (typographically correct for date ranges only). Matches
- * the "no AI writing tells" rule from `ADAPT_CV_SYSTEM_PROMPT`.
- *
- * No text is ever logged (the route logs the file size only, and
- * `LLM_API_KEY` is read upstream — this module never touches it).
+ * Constraints honored:
+ *   - No em dashes emitted anywhere (the "no AI writing tells" rule
+ *     from `ADAPT_CV_SYSTEM_PROMPT`).
+ *   - No translation: the renderer outputs whatever the LLM emits
+ *     for `name`, `email`, `phone`, `location`, `summary`, etc. The
+ *     section titles ARE the renderer's choice (the schema doesn't
+ *     carry them), and they're hardcoded to Spanish to match the
+ *     user's reference + the Python template.
+ *   - Photo flow unchanged: `cv.photo` (data URL or null) →
+ *     embedded image XObject or no photo.
  */
 export async function renderAdaptedCvAsPdf(
   cv: AdaptedCV,
 ): Promise<Uint8Array<ArrayBuffer>> {
   const doc = await PDFDocument.create();
-  const font = await doc.embedFont(StandardFonts.Helvetica);
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const font = await doc.embedFont(FONT_REG);
+  const bold = await doc.embedFont(FONT_BOLD);
+  const italic = await doc.embedFont(FONT_ITALIC);
+  const boldItalic = await doc.embedFont(FONT_BOLD_ITALIC);
 
   const state: DrawState = {
     doc,
     page: doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]),
     font,
     bold,
+    italic,
+    boldItalic,
     y: PAGE_HEIGHT - MARGIN,
   };
 
-  // Header — Harvard layout: photo on the right, name + contact
-  // info flow on the left (or centered when no photo is present).
-  // The photo is drawn BEFORE the header text so the text doesn't
-  // overlap the image (the photo bounding box is at the top-right
-  // corner and the text uses the left portion of the page).
-  let headerPhotoHeight = 0;
+  // Photo header — drawn FIRST so the text doesn't overlap it.
+  let hasPhoto = false;
   if (cv.photo) {
     const decoded = await decodePhotoDataUrl(cv.photo).catch(() => null);
     if (decoded) {
@@ -191,9 +538,6 @@ export async function renderAdaptedCvAsPdf(
         const embedded = decoded.isJpeg
           ? await doc.embedJpg(decoded.bytes)
           : await doc.embedPng(decoded.bytes);
-        // Anchor the photo to the top-right margin. `drawImage`'s
-        // `y` is the BOTTOM-left corner in PDF coordinates — so we
-        // subtract the photo height from the top margin.
         const photoX = PAGE_WIDTH - MARGIN - PHOTO_WIDTH;
         const photoY = PAGE_HEIGHT - MARGIN - PHOTO_HEIGHT;
         state.page.drawImage(embedded, {
@@ -202,127 +546,97 @@ export async function renderAdaptedCvAsPdf(
           width: PHOTO_WIDTH,
           height: PHOTO_HEIGHT,
         });
-        headerPhotoHeight = PHOTO_HEIGHT;
+        hasPhoto = true;
       } catch (err) {
-        // Embedder can throw on invalid image bytes (truncated,
-        // wrong format). Log + skip — header continues without the
-        // photo (better than crashing the whole render).
+        // Embedder can throw on invalid image bytes — log + skip
+        // (better than crashing the whole render).
         console.error("pdf/render-cv: photo embed failed", err);
       }
     }
   }
 
-  // Header text — centered when no photo, else left-aligned on the
-  // left portion of the page (photo occupies the right ~80pt).
-  const headerHasPhoto = headerPhotoHeight > 0;
+  // Header text — centered when no photo, else left-aligned (the
+  // photo occupies the right ~80pt of the page).
   if (cv.name) {
-    drawLine(state, cv.name, {
-      bold: true,
-      size: 18,
-      center: !headerHasPhoto,
+    drawWrappedText(state, cv.name, {
+      size: SIZE_NAME,
+      font: state.bold,
+      center: !hasPhoto,
     });
   }
-  if (cv.email) {
-    drawLine(state, cv.email, {
-      size: 10,
-      center: !headerHasPhoto,
-    });
-  }
-  if (cv.phone) {
-    drawLine(state, cv.phone, {
-      size: 10,
-      center: !headerHasPhoto,
-    });
-  }
-  if (cv.location) {
-    drawLine(state, cv.location, {
-      size: 10,
-      center: !headerHasPhoto,
+  const contactParts: string[] = [];
+  if (cv.location) contactParts.push(cv.location);
+  if (cv.email) contactParts.push(cv.email);
+  if (cv.phone) contactParts.push(cv.phone);
+  if (contactParts.length > 0) {
+    drawWrappedText(state, contactParts.join(" | "), {
+      size: SIZE_CONTACT,
+      center: !hasPhoto,
     });
   }
 
-  // Summary.
+  // Horizontal rule under the header (separates header from body).
+  drawSpacer(state, 5);
+  drawHeaderRule(state);
+  drawSpacer(state, 6);
+
+  // Resumen / Perfil Profesional — italic body under yellow section title.
   if (cv.summary) {
-    drawSpacer(state, lineHeight(10));
-    drawLine(state, "Summary", { bold: true, size: 12 });
-    drawLine(state, cv.summary, { size: 10 });
+    drawSectionTitle(state, SECTION_TITLES.summary);
+    drawWrappedText(state, cv.summary, {
+      size: SIZE_BODY_ITALIC,
+      font: state.italic,
+    });
+    drawSpacer(state, SECTION_GAP);
   }
 
-  // Education (Harvard order: before Experience).
+  // Educación (Harvard order: before Experience).
   if (cv.education && cv.education.length > 0) {
-    drawSpacer(state, lineHeight(10));
-    drawLine(state, "Education", { bold: true, size: 12 });
+    drawSectionTitle(state, SECTION_TITLES.education);
     for (const ed of cv.education) {
-      const line = [ed.degree, ed.institution].filter(Boolean).join(", ");
-      if (line) drawLine(state, line, { size: 10 });
-      if (ed.year) drawLine(state, ed.year, { size: 9 });
+      drawEducationEntry(state, ed);
+      drawSpacer(state, 2);
     }
+    drawSpacer(state, SECTION_GAP);
   }
 
-  // Experience.
+  // Experiencia Profesional.
   if (cv.experience && cv.experience.length > 0) {
-    drawSpacer(state, lineHeight(10));
-    drawLine(state, "Experience", { bold: true, size: 12 });
+    drawSectionTitle(state, SECTION_TITLES.experience);
     for (const exp of cv.experience) {
-      const heading = [exp.title, exp.company].filter(Boolean).join(", ");
-      if (heading) {
-        drawLine(state, heading, { bold: true, size: 10 });
-      }
-      if (exp.start_date || exp.end_date) {
-        drawLine(
-          state,
-          `${exp.start_date ?? ""} – ${exp.end_date ?? ""}`.trim(),
-          { size: 9 },
-        );
-      }
-      if (exp.description) {
-        drawLine(state, exp.description, { size: 10 });
-      }
+      drawExperienceEntry(state, exp);
     }
+    drawSpacer(state, SECTION_GAP);
   }
 
-  // Projects (personal projects / volunteer work / certifications).
-  // Sourced from the original CV via `ADAPT_CV_SYSTEM_PROMPT`; the
-  // LLM rephrases the description and lists the technologies.
+  // Proyectos (personal projects, volunteer work, certifications).
   if (cv.projects && cv.projects.length > 0) {
-    drawSpacer(state, lineHeight(10));
-    drawLine(state, "Projects", { bold: true, size: 12 });
+    drawSectionTitle(state, SECTION_TITLES.projects);
     for (const proj of cv.projects) {
-      if (proj.name) {
-        drawLine(state, proj.name, { bold: true, size: 10 });
-      }
-      if (proj.description) {
-        drawLine(state, proj.description, { size: 10 });
-      }
-      if (proj.technologies && proj.technologies.length > 0) {
-        drawLine(state, `Technologies: ${proj.technologies.join(", ")}`, {
-          size: 9,
-        });
-      }
+      drawProjectEntry(state, proj);
     }
+    drawSpacer(state, SECTION_GAP);
   }
 
-  // Skills.
+  // Habilidades.
   if (cv.skills && cv.skills.length > 0) {
-    drawSpacer(state, lineHeight(10));
-    drawLine(state, "Skills", { bold: true, size: 12 });
-    drawLine(state, cv.skills.join(", "), { size: 10 });
+    drawSectionTitle(state, SECTION_TITLES.skills);
+    drawWrappedText(state, cv.skills.join(", "), { size: SIZE_SKILLS });
+    drawSpacer(state, SECTION_GAP);
   }
 
-  // Languages.
+  // Idiomas.
   if (cv.languages && cv.languages.length > 0) {
-    drawSpacer(state, lineHeight(10));
-    drawLine(state, "Languages", { bold: true, size: 12 });
-    drawLine(state, cv.languages.join(", "), { size: 10 });
+    drawSectionTitle(state, SECTION_TITLES.languages);
+    drawWrappedText(state, cv.languages.join(", "), { size: SIZE_LANGUAGES });
   }
 
   const bytes = await doc.save();
   // `pdf-lib`'s `doc.save()` returns `Uint8Array<ArrayBufferLike>` under
   // TS 5.9 (the generic is widened because `ArrayBufferLike` covers
   // `SharedArrayBuffer` too). The bytes always live on a plain
-  // `ArrayBuffer` in practice — we copy them into a fresh
-  // `ArrayBuffer`-backed `Uint8Array` so the strict `BlobPart` type is
-  // satisfied without an `unknown` cast leaking into callers.
+  // `ArrayBuffer` in practice — copy them into a fresh `ArrayBuffer`-
+  // backed `Uint8Array` so the strict `BlobPart` type is satisfied.
   const out = new Uint8Array(bytes.byteLength);
   out.set(bytes);
   return out;
