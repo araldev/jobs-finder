@@ -10,6 +10,7 @@ import {
 } from "@/lib/llm/prompts";
 import { parseAdaptedCVResponse, AdaptedCVParseError } from "@/lib/llm/parser";
 import { extractPdfText } from "@/lib/pdf/extract-text";
+import { extractCvImage } from "@/lib/pdf/extract-image";
 import { renderAdaptedCvAsPdf } from "@/lib/pdf/render-cv";
 
 /**
@@ -31,32 +32,39 @@ import { renderAdaptedCvAsPdf } from "@/lib/pdf/render-cv";
  *   3. Extract the CV's text content with `unpdf`
  *      (`@/lib/pdf/extract-text`). Image-only / malformed PDFs
  *      yield an empty string — the LLM handles that gracefully.
- *   4. Send CV text + job description to the LLM
+ *   4. Extract the CV's embedded photo (if any) with
+ *      `@/lib/pdf/extract-image` (mirrors `extract_cv_image` from
+ *      the Python backend). Returns a base64 data URL or `null`
+ *      for PDFs without an eligible image.
+ *   5. Send CV text + job description to the LLM
  *      (`chatCompletion({ jsonMode: true })`).
- *   5. Parse the response with the defensive JSON parser.
- *   6. Record a `cv_adapted` engagement event in Supabase so
+ *   6. Parse the response with the defensive JSON parser. The
+ *      parser always returns `photo: null` (the LLM is instructed
+ *      to emit `null`; sending the full base64 photo as part of
+ *      the JSON request would balloon the token usage).
+ *   7. Overlay the extracted photo onto the parsed CV via
+ *      `finalCv = { ...adaptedCv, photo: extractedPhoto }` and
+ *      render the structured CV as a real PDF
+ *      (`@/lib/pdf/render-cv`).
+ *   8. Record a `cv_adapted` engagement event in Supabase so
  *      `useCVAdapted`'s dashboard widget keeps counting.
- *   7. Render the structured CV as a real PDF
- *      (`@/lib/pdf/render-cv`) and return it as
- *      `application/pdf` with a `Content-Disposition` attachment
- *      header so the browser saves it as `CV-adaptado.pdf`.
+ *   9. Return the rendered PDF as `application/pdf` with a
+ *      `Content-Disposition` attachment header so the browser
+ *      saves it as `CV-adaptado.pdf`.
  *
  * No `LLM_API_KEY` is ever logged or surfaced (AGENTS.md rule #24).
  * The static `"LLM provider unavailable"` message is what reaches
  * the client on any LLM failure; the underlying cause is logged
  * server-side with `console.error`.
  *
- * Photo support (intentionally NOT implemented here):
- *   The Python backend's `extract_cv_image` (PyMuPDF) can extract
- *   an embedded photo from a PDF and pass it as a base64 data URL
- *   into `renderAdaptedCvAsPdf`. `pdf-lib` + `unpdf` (the stack
- *   this route uses) do NOT expose the photo bytes from a parsed
- *   document — extracting images via `pdf-lib` requires walking
- *   the content stream and decoding XObjects manually.
- *   If photo support is needed, prefer a separate upload endpoint
- *   that stores the photo in Supabase Storage; the renderer then
- *   fetches it and embeds it as the first page element. See the
- *   `decouple-nextjs-from-backend` change for the prior discussion.
+ * Photo flow:
+ *   The Python backend's `extract_cv_image` (PyMuPDF) has a
+ *   TypeScript port here in `extract-image.ts` that walks the
+ *   page's `Resources / XObject` tree and extracts the first
+ *   image >= 10 KB (filters out logos, favicons, social icons).
+ *   The data URL flows into the renderer's header (Harvard layout,
+ *   photo on the right at ~28mm × 32mm — matches the Python
+ *   `_template.py` CSS).
  */
 export async function POST(request: NextRequest) {
   // 1. Authenticate.
@@ -138,7 +146,13 @@ export async function POST(request: NextRequest) {
   //    the LLM's system prompt already handles empty input).
   const cvText = await extractPdfText(pdfBytes);
 
-  // 5. Build the messages array and call the LLM.
+  // 5. Extract the CV's embedded photo (if any) — mirrors
+  //    `extract_cv_image` from the Python backend. Returns a
+  //    base64 data URL or `null`. Best-effort: a failure here
+  //    does NOT block the route (the CV renders without a photo).
+  const extractedPhoto = await extractCvImage(pdfBytes);
+
+  // 6. Build the messages array and call the LLM.
   const userMessage = buildAdaptCVUserMessage(
     cvText,
     jobTitle,
@@ -170,8 +184,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 6. Parse the LLM's response with the defensive parser (handles
+  // 7. Parse the LLM's response with the defensive parser (handles
   //    markdown fences, thinking blocks, brace-substring fallback).
+  //    The parser always returns `photo: null` — the LLM is
+  //    instructed to emit null because we don't ship the source
+  //    photo bytes through the JSON request (would balloon token
+  //    usage). The route overlays the extracted image afterward.
   let adaptedCv: AdaptedCV;
   try {
     adaptedCv = parseAdaptedCVResponse(rawResponse);
@@ -190,13 +208,20 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 7. Render the structured CV as a real PDF and return it. The
+  // 8. Overlay the extracted photo onto the parsed CV. The renderer
+  //    reads `cv.photo` to decide whether to embed an image XObject
+  //    in the Harvard header. `null` → no photo (text-only header,
+  //    centered); data URL → photo on the right, name + contact on
+  //    the left.
+  const finalCv: AdaptedCV = { ...adaptedCv, photo: extractedPhoto };
+
+  // 9. Render the structured CV as a real PDF and return it. The
   //    `GenerateCVModal` consumer does `await res.blob()` and saves
   //    it as `CV-adaptado.pdf` — we set the Content-Disposition
   //    header so the browser does the same thing.
   let renderedPdf: Uint8Array<ArrayBuffer>;
   try {
-    renderedPdf = await renderAdaptedCvAsPdf(adaptedCv);
+    renderedPdf = await renderAdaptedCvAsPdf(finalCv);
   } catch (err) {
     console.error("cv/generate: PDF rendering failed", err);
     return NextResponse.json(
@@ -205,7 +230,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 8. Record the engagement event (best-effort — the user still
+  // 10. Record the engagement event (best-effort — the user still
   //    gets their CV even if the event recording fails, matching
   //    the backend's ENG-002 contract).
   //
@@ -232,7 +257,7 @@ export async function POST(request: NextRequest) {
     console.error("cv/generate: failed to record engagement", engagementError);
   }
 
-  // 9. Return the rendered PDF. `Uint8Array<ArrayBuffer>` is a
+  // 11. Return the rendered PDF. `Uint8Array<ArrayBuffer>` is a
   //    valid `BodyInit` directly — no Blob wrapper needed (the
   //    `Blob` route we tried first caused the runtime to stringify
   //    the Blob instead of streaming its bytes in some Node

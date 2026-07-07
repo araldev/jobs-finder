@@ -34,7 +34,10 @@ STRICT FORBIDDEN (immediate rejection of output if violated):
 5. NEVER output the target company (the company in JOB COMPANY field) as the candidate's employer.
 6. NEVER create a new job entry not in the original CV.
 7. NEVER treat personal projects as job positions. (Personal projects GO in the projects array, NOT in experience.)
-8. NEVER invent ANY detail: dates, technologies, responsibilities, achievements.
+8. NEVER use "..." or "TBD" or "N/A" or any other placeholder in any field. If you cannot determine a detail from the original CV, do ONE of the following:
+   (a) rephrase the surrounding context (job title + company + dates) into a short, descriptive sentence the user can verify later, OR
+   (b) write "No especificado" (Spanish: "Not specified") if the field is genuinely absent from the original CV.
+   NEVER emit a string of literal dots "..." as a placeholder.
 
 EXACT RULE FOR EXPERIENCE:
 Only output experience entries where BOTH the company AND the title appear EXPLICITLY in the original CV.
@@ -54,7 +57,10 @@ WHAT YOU MAY DO (only these 4 things):
 1. Rephrase existing descriptions using action verbs (preserve all facts from original).
 2. Inject relevant keywords from the job description INTO the existing descriptions (only words that already exist in the original CV are allowed as skills).
 3. Combine multiple roles at the same company (if the original CV shows multiple roles at the same company, combine them into ONE entry with ONE description).
-4. Add 3-5 keywords from the TARGET JOB DESCRIPTION that are NOT already in the original CV's skills section, ONLY if they are directly related to the candidate's existing experience (do not invent skills the candidate does not have).
+4. KEYWORD MATCHING (MANDATORY): you MUST extract 3-5 KEYWORDS from the TARGET JOB DESCRIPTION that are NOT already in the original CV's skills section. You MUST add these keywords to the skills array. The keywords MUST be directly related to the candidate's existing experience (do not invent skills the candidate does not have). Examples:
+  - If the job requires "React, TypeScript, GraphQL" and the CV has only "React", add "TypeScript" and "GraphQL" to skills, BUT only if the candidate's experience with React implies familiarity with them (e.g. they used TypeScript in a project, or they mention "frontend tooling" which suggests GraphQL).
+  - If the job requires "AWS" and the CV has only "cloud", add "AWS" to skills. If the candidate has never used any cloud service, do NOT add "AWS".
+  The "skills" array in the output MUST contain at least 3 keywords from the TARGET JOB DESCRIPTION that weren't in the original CV.
 
 WHAT YOU MUST NOT DO:
 - Do NOT add a company name from the job description as if the candidate worked there.

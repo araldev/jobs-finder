@@ -9,6 +9,14 @@ const PAGE_HEIGHT = 842;
 const MARGIN = 50;
 const CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN;
 
+// Photo size matches the Python CSS template (28mm × 32mm ≈ 80pt × 91pt).
+// The Python template uses `object-fit: cover`; pdf-lib's `drawImage`
+// doesn't crop, so we draw at the natural aspect ratio and accept
+// slightly non-square photos — the photo still appears in the header
+// (the user's stated goal), we just don't crop aggressively.
+const PHOTO_WIDTH = 80;
+const PHOTO_HEIGHT = 90;
+
 // Body 10pt → line height 14. Section headings 12pt → 16. Name 18pt → 22.
 // Using a single `LINE_HEIGHT_RATIO` keeps the layout table easy to read.
 const LINE_HEIGHT_RATIO = 1.4;
@@ -97,6 +105,38 @@ function drawLine(
 }
 
 /**
+ * Decode a `data:image/<mime>;base64,<...>` URL into raw image bytes
+ * + the pdf-lib embedder to call. Returns `null` if the URL is
+ * malformed or the bytes can't be decoded.
+ *
+ * Mirrors the contract enforced by the route handler (always a
+ * real data URL from `extractCvImage`). Falls back to `null` for any
+ * malformed input rather than throwing — the renderer must not
+ * crash on bad data.
+ */
+async function decodePhotoDataUrl(
+  photo: string,
+): Promise<{ bytes: Uint8Array; isJpeg: boolean } | null> {
+  const match = photo.match(
+    /^data:image\/(png|jpeg|jpg);base64,(.+)$/i,
+  );
+  if (!match) return null;
+  const mime = match[1]!.toLowerCase();
+  const b64 = match[2]!;
+
+  // Decode base64 → Uint8Array. `Buffer.from(b64, "base64")` works
+  // in Node; in the browser the route is gated by `import "server-only"`
+  // so we don't worry about the browser path here.
+  const bytes = Uint8Array.from(
+    typeof Buffer !== "undefined"
+      ? Buffer.from(b64, "base64")
+      : Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)),
+  );
+
+  return { bytes, isJpeg: mime === "jpeg" || mime === "jpg" };
+}
+
+/**
  * Render the LLM's `AdaptedCV` as a downloadable PDF (Uint8Array).
  *
  * Layout (Harvard CV template order):
@@ -138,13 +178,68 @@ export async function renderAdaptedCvAsPdf(
     y: PAGE_HEIGHT - MARGIN,
   };
 
-  // Header — centered.
-  if (cv.name) {
-    drawLine(state, cv.name, { bold: true, size: 18, center: true });
+  // Header — Harvard layout: photo on the right, name + contact
+  // info flow on the left (or centered when no photo is present).
+  // The photo is drawn BEFORE the header text so the text doesn't
+  // overlap the image (the photo bounding box is at the top-right
+  // corner and the text uses the left portion of the page).
+  let headerPhotoHeight = 0;
+  if (cv.photo) {
+    const decoded = await decodePhotoDataUrl(cv.photo).catch(() => null);
+    if (decoded) {
+      try {
+        const embedded = decoded.isJpeg
+          ? await doc.embedJpg(decoded.bytes)
+          : await doc.embedPng(decoded.bytes);
+        // Anchor the photo to the top-right margin. `drawImage`'s
+        // `y` is the BOTTOM-left corner in PDF coordinates — so we
+        // subtract the photo height from the top margin.
+        const photoX = PAGE_WIDTH - MARGIN - PHOTO_WIDTH;
+        const photoY = PAGE_HEIGHT - MARGIN - PHOTO_HEIGHT;
+        state.page.drawImage(embedded, {
+          x: photoX,
+          y: photoY,
+          width: PHOTO_WIDTH,
+          height: PHOTO_HEIGHT,
+        });
+        headerPhotoHeight = PHOTO_HEIGHT;
+      } catch (err) {
+        // Embedder can throw on invalid image bytes (truncated,
+        // wrong format). Log + skip — header continues without the
+        // photo (better than crashing the whole render).
+        console.error("pdf/render-cv: photo embed failed", err);
+      }
+    }
   }
-  if (cv.email) drawLine(state, cv.email, { size: 10, center: true });
-  if (cv.phone) drawLine(state, cv.phone, { size: 10, center: true });
-  if (cv.location) drawLine(state, cv.location, { size: 10, center: true });
+
+  // Header text — centered when no photo, else left-aligned on the
+  // left portion of the page (photo occupies the right ~80pt).
+  const headerHasPhoto = headerPhotoHeight > 0;
+  if (cv.name) {
+    drawLine(state, cv.name, {
+      bold: true,
+      size: 18,
+      center: !headerHasPhoto,
+    });
+  }
+  if (cv.email) {
+    drawLine(state, cv.email, {
+      size: 10,
+      center: !headerHasPhoto,
+    });
+  }
+  if (cv.phone) {
+    drawLine(state, cv.phone, {
+      size: 10,
+      center: !headerHasPhoto,
+    });
+  }
+  if (cv.location) {
+    drawLine(state, cv.location, {
+      size: 10,
+      center: !headerHasPhoto,
+    });
+  }
 
   // Summary.
   if (cv.summary) {

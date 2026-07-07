@@ -235,6 +235,36 @@ describe("parseAdaptedCVResponse", () => {
     expect(cv.languages).toEqual([]);
   });
 
+  it("defaults photo to null when missing from the LLM response", () => {
+    // The LLM is instructed to emit `photo: null` (it does NOT have
+    // access to the source image bytes). The route handler is
+    // responsible for overlaying the extracted image afterward via
+    // `finalCv = { ...adaptedCv, photo: extractedPhoto }`.
+    const cv = parseAdaptedCVResponse(
+      JSON.stringify({ name: "Ada", experience: [], education: [], skills: [], languages: [] }),
+    );
+    expect(cv.photo).toBeNull();
+  });
+
+  it("passes through a photo value when the LLM emits one", () => {
+    // Defensive: if a model ever DOES emit a photo string, the
+    // parser preserves it as-is. The route handler still
+    // overrides it, but the parser must not silently drop the
+    // field (it would otherwise look like data loss in CI).
+    const dataUrl = "data:image/jpeg;base64,/9j/4AAQ";
+    const cv = parseAdaptedCVResponse(
+      JSON.stringify({ name: "Ada", photo: dataUrl }),
+    );
+    expect(cv.photo).toBe(dataUrl);
+  });
+
+  it("coerces a non-string photo to null (defensive parsing)", () => {
+    const cv = parseAdaptedCVResponse(
+      JSON.stringify({ name: "Ada", photo: { not: "a string" } }),
+    );
+    expect(cv.photo).toBeNull();
+  });
+
   it("throws AdaptedCVParseError on non-JSON garbage", () => {
     expect(() => parseAdaptedCVResponse("not json at all")).toThrow(
       AdaptedCVParseError,

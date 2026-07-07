@@ -71,6 +71,17 @@ function strOr(value: unknown, fallback = ""): string {
   return value === null || value === undefined ? fallback : String(value);
 }
 
+function photoOr(value: unknown): string | null {
+  // The LLM is supposed to emit `photo: null` (the route handler
+  // overlays the extracted image). If the model emits a non-string
+  // value (an object, array, number), we coerce to `null` rather
+  // than to a string — preserves the "no photo" signal and avoids
+  // surfacing malformed values to the renderer.
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") return value;
+  return null;
+}
+
 function listOr(value: unknown): string[] {
   if (!value) return [];
   if (Array.isArray(value)) {
@@ -188,6 +199,7 @@ export function parseAdaptedCVResponse(raw: string): AdaptedCV {
     projects,
     skills: listOr(obj.skills),
     languages: listOr(obj.languages),
+    photo: photoOr(obj.photo),
   };
 }
 

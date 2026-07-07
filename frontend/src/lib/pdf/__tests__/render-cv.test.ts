@@ -13,10 +13,71 @@
 //     (multiple pages, all content extracted).
 
 import { describe, it, expect, vi } from "vitest";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, PDFName } from "pdf-lib";
 import { extractText, getDocumentProxy } from "unpdf";
 import type { AdaptedCV } from "@/lib/llm/prompts";
 import { renderAdaptedCvAsPdf } from "../render-cv";
+
+// Build a synthetic JPEG byte array that satisfies pdf-lib's
+// `embedJpg` header check (FF D8 + valid SOF0 marker). Mirrors the
+// fixture in `extract-image.test.ts` — kept local to this file so
+// the two tests stay independently readable.
+function buildSyntheticJpeg(targetSize: number): Uint8Array {
+  const bytes = new Uint8Array(targetSize);
+  bytes[0] = 0xff;
+  bytes[1] = 0xd8;
+  bytes[2] = 0xff;
+  bytes[3] = 0xe0;
+  const app0Len = 16;
+  bytes[4] = (app0Len >> 8) & 0xff;
+  bytes[5] = app0Len & 0xff;
+  bytes[6] = 0x4a;
+  bytes[7] = 0x46;
+  bytes[8] = 0x49;
+  bytes[9] = 0x46;
+  bytes[10] = 0x00;
+  bytes[11] = 0x01;
+  bytes[12] = 0x01;
+  bytes[13] = 0x00;
+  bytes[14] = 0x00;
+  bytes[15] = 0x01;
+  bytes[16] = 0x00;
+  bytes[17] = 0x01;
+  bytes[18] = 0x00;
+  bytes[19] = 0x00;
+  bytes[20] = 0xff;
+  bytes[21] = 0xc0;
+  const sofLen = 11;
+  bytes[22] = (sofLen >> 8) & 0xff;
+  bytes[23] = sofLen & 0xff;
+  bytes[24] = 0x08;
+  bytes[25] = 0x00;
+  bytes[26] = 0x40;
+  bytes[27] = 0x00;
+  bytes[28] = 0x40;
+  bytes[29] = 0x03;
+  for (let i = 30; i < targetSize - 2; i += 2) {
+    bytes[i] = 0xff;
+    bytes[i + 1] = 0xfe;
+  }
+  bytes[targetSize - 2] = 0xff;
+  bytes[targetSize - 1] = 0xd9;
+  return bytes;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(bytes).toString("base64");
+  }
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.byteLength; i += chunk) {
+    binary += String.fromCharCode(
+      ...bytes.subarray(i, Math.min(i + chunk, bytes.byteLength)),
+    );
+  }
+  return btoa(binary);
+}
 
 // `server-only` is an empty module that throws if imported from a
 // Client Component. The renderer's `import "server-only"` would
@@ -75,6 +136,7 @@ const SAMPLE_CV: AdaptedCV = {
   ],
   skills: ["TypeScript", "React", "Node.js", "PostgreSQL", "Kubernetes"],
   languages: ["Spanish", "English"],
+  photo: null,
 };
 
 describe("renderAdaptedCvAsPdf", () => {
@@ -135,6 +197,7 @@ describe("renderAdaptedCvAsPdf", () => {
       projects: [],
       skills: [],
       languages: [],
+      photo: null,
     };
     const bytes = await renderAdaptedCvAsPdf(empty);
     const loaded = await PDFDocument.load(bytes);
@@ -220,6 +283,76 @@ describe("renderAdaptedCvAsPdf", () => {
     // em dashes itself).
     expect(text).not.toContain("Globex \u2014");
     expect(text).not.toContain("Globex —");
+  });
+
+  it("embeds the photo as an image XObject when provided (Harvard header layout)", async () => {
+    // Build a JPEG that satisfies the 10 KB threshold we use
+    // elsewhere (pdf-lib's `embedJpg` only inspects the header +
+    // SOF marker — see extract-image.test.ts for the format).
+    const jpeg = buildSyntheticJpeg(12_000);
+    const photoDataUrl =
+      "data:image/jpeg;base64," + bytesToBase64(jpeg);
+
+    const cv: AdaptedCV = { ...SAMPLE_CV, photo: photoDataUrl };
+    const bytes = await renderAdaptedCvAsPdf(cv);
+
+    const loaded = await PDFDocument.load(bytes);
+    const firstPage = loaded.getPages()[0]!;
+    const xobjects = firstPage.node
+      .Resources()
+      ?.get(PDFName.of("XObject"));
+    // The header photo is rendered via `page.drawImage`, which
+    // pdf-lib stores as an XObject on the page's Resources. We
+    // assert at least one image XObject is present (the photo).
+    expect(xobjects).toBeDefined();
+    const entries = (
+      xobjects as unknown as { entries(): Iterable<[unknown, unknown]> }
+    ).entries();
+    const xObjectEntries = Array.from(entries);
+    expect(xObjectEntries.length).toBeGreaterThan(0);
+
+    // Confirm the name appears in the body text (header text
+    // flows on the left of the photo).
+    const pdf = await getDocumentProxy(bytes);
+    const { text } = await extractText(pdf, { mergePages: true });
+    expect(text).toContain("Ada Lovelace");
+  });
+
+  it("does NOT embed a photo when photo is null (no XObjects in Resources)", async () => {
+    const bytes = await renderAdaptedCvAsPdf({ ...SAMPLE_CV, photo: null });
+    const loaded = await PDFDocument.load(bytes);
+    const firstPage = loaded.getPages()[0]!;
+    const xobjects = firstPage.node
+      .Resources()
+      ?.get(PDFName.of("XObject"));
+    // No photo → no image XObjects on the first page. (Font +
+    // graphics state are still there but no XObject entry.)
+    if (xobjects) {
+      const entries = Array.from(
+        (
+          xobjects as unknown as { entries(): Iterable<[unknown, unknown]> }
+        ).entries(),
+      );
+      expect(entries).toHaveLength(0);
+    }
+  });
+
+  it("treats a malformed photo string as no photo (does not throw)", async () => {
+    // Defensive: the route handler always passes a real data URL,
+    // but a future caller could pass garbage. The renderer must
+    // skip the image gracefully (no crash, no garbage bytes in
+    // the PDF).
+    const cv: AdaptedCV = {
+      ...SAMPLE_CV,
+      photo: "data:image/jpeg;base64,!!!not-base64!!!",
+    };
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    const loaded = await PDFDocument.load(bytes);
+    expect(loaded.getPageCount()).toBeGreaterThanOrEqual(1);
+
+    const pdf = await getDocumentProxy(bytes);
+    const { text } = await extractText(pdf, { mergePages: true });
+    expect(text).toContain("Ada Lovelace");
   });
 
   it("paginates long descriptions across multiple pages", async () => {

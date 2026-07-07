@@ -188,7 +188,10 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "5. NEVER output the target company (the company in JOB COMPANY field) as the candidate's employer.\n" +
   "6. NEVER create a new job entry not in the original CV.\n" +
   "7. NEVER treat personal projects as job positions. (Personal projects GO in the projects array, NOT in experience.)\n" +
-  "8. NEVER invent ANY detail: dates, technologies, responsibilities, achievements.\n" +
+  "8. NEVER use \"...\" or \"TBD\" or \"N/A\" or any other placeholder in any field. If you cannot determine a detail from the original CV, do ONE of the following:\n" +
+  "   (a) rephrase the surrounding context (job title + company + dates) into a short, descriptive sentence the user can verify later, OR\n" +
+  "   (b) write \"No especificado\" (Spanish: \"Not specified\") if the field is genuinely absent from the original CV.\n" +
+  "   NEVER emit a string of literal dots \"...\" as a placeholder.\n" +
   "\n" +
   "EXACT RULE FOR EXPERIENCE:\n" +
   "Only output experience entries where BOTH the company AND the title appear EXPLICITLY in the original CV.\n" +
@@ -208,7 +211,10 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "1. Rephrase existing descriptions using action verbs (preserve all facts from original).\n" +
   "2. Inject relevant keywords from the job description INTO the existing descriptions (only words that already exist in the original CV are allowed as skills).\n" +
   "3. Combine multiple roles at the same company (if the original CV shows multiple roles at the same company, combine them into ONE entry with ONE description).\n" +
-  "4. Add 3-5 keywords from the TARGET JOB DESCRIPTION that are NOT already in the original CV's skills section, ONLY if they are directly related to the candidate's existing experience (do not invent skills the candidate does not have).\n" +
+  "4. KEYWORD MATCHING (MANDATORY): you MUST extract 3-5 KEYWORDS from the TARGET JOB DESCRIPTION that are NOT already in the original CV's skills section. You MUST add these keywords to the skills array. The keywords MUST be directly related to the candidate's existing experience (do not invent skills the candidate does not have). Examples:\n" +
+  "  - If the job requires \"React, TypeScript, GraphQL\" and the CV has only \"React\", add \"TypeScript\" and \"GraphQL\" to skills, BUT only if the candidate's experience with React implies familiarity with them (e.g. they used TypeScript in a project, or they mention \"frontend tooling\" which suggests GraphQL).\n" +
+  "  - If the job requires \"AWS\" and the CV has only \"cloud\", add \"AWS\" to skills. If the candidate has never used any cloud service, do NOT add \"AWS\".\n" +
+  "  The \"skills\" array in the output MUST contain at least 3 keywords from the TARGET JOB DESCRIPTION that weren't in the original CV.\n" +
   "\n" +
   "WHAT YOU MUST NOT DO:\n" +
   "- Do NOT add a company name from the job description as if the candidate worked there.\n" +
@@ -284,6 +290,19 @@ export interface AdaptedCV {
   projects: AdaptedCVProject[];
   skills: string[];
   languages: string[];
+  /**
+   * CV profile photo as a `data:image/...;base64,<...>` URL.
+   *
+   * The LLM is instructed to ALWAYS emit `photo: null` (it does
+   * NOT have access to the source image bytes — sending the full
+   * base64 photo as part of the JSON request would balloon the
+   * token usage). The route handler overrides this field with the
+   * actual extracted image from `extractCvImage(pdfBytes)`.
+   *
+   * Mirrors `photo_base64` on the Python `AdaptedCV` dataclass
+   * (`backend/.../cv/_template.py`).
+   */
+  photo: string | null;
 }
 
 function projectJob(job: JobLike): Record<string, unknown> {

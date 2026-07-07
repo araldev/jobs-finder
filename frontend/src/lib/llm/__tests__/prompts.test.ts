@@ -126,7 +126,7 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
       "NEVER output the target company",
       "NEVER create a new job entry",
       "NEVER treat personal projects",
-      "NEVER invent ANY detail",
+      'NEVER use "..." or "TBD" or "N/A" or any other placeholder',
     ]) {
       expect(ADAPT_CV_SYSTEM_PROMPT).toContain(rule);
     }
@@ -152,9 +152,15 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
       "name, email, phone, location, education, experience, projects, skills, languages",
     );
 
-    // Keyword matching: 3-5 new keywords from the job description.
+    // Keyword matching: MANDATORY, with explicit examples
+    // (added in cv-quality-round-2 to strengthen the LLM's
+    // adherence to the keyword-extraction rule).
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain("KEYWORD MATCHING (MANDATORY):");
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "Add 3-5 keywords from the TARGET JOB DESCRIPTION",
+      "you MUST extract 3-5 KEYWORDS from the TARGET JOB DESCRIPTION",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "MUST contain at least 3 keywords from the TARGET JOB DESCRIPTION",
     );
 
     // No em dashes in the JSON output.

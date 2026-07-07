@@ -32,10 +32,15 @@ vi.mock("@/lib/llm-client", () => ({
 }));
 
 // Mock the PDF modules so we exercise the route's plumbing rather
-// than re-testing the PDF code (covered in `__tests__/extract-text.test.ts`
-// and `__tests__/render-cv.test.ts`).
+// than re-testing the PDF code (covered in `__tests__/extract-text.test.ts`,
+// `__tests__/render-cv.test.ts`, and `__tests__/extract-image.test.ts`).
+const mockExtractImage = vi.fn();
 vi.mock("@/lib/pdf/extract-text", () => ({
   extractPdfText: vi.fn(async (_bytes: ArrayBuffer) => "stub extracted cv text"),
+}));
+
+vi.mock("@/lib/pdf/extract-image", () => ({
+  extractCvImage: (...args: unknown[]) => mockExtractImage(...args),
 }));
 
 vi.mock("@/lib/pdf/render-cv", () => ({
@@ -100,6 +105,7 @@ vi.mock("@/lib/llm/parser", async () => {
         ],
         skills: ["TypeScript", "React"],
         languages: ["Spanish", "English"],
+        photo: null,
       };
     }),
   };
@@ -195,6 +201,8 @@ beforeEach(() => {
     insert: mockInsert,
   };
   mockFrom.mockReturnValue(insertBuilder);
+  // Default: no photo extracted from the PDF.
+  mockExtractImage.mockResolvedValue(null);
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -458,5 +466,71 @@ describe("POST /api/cv/generate — LLM + engagement flow", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toMatch(/^application\/pdf/);
     expect(mockInsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls extractCvImage and forwards the photo data URL to the renderer", async () => {
+    mockLLMCompletion.mockResolvedValueOnce(
+      JSON.stringify({
+        name: "Ada",
+        experience: [],
+        education: [],
+        skills: [],
+        languages: [],
+      }),
+    );
+
+    const dataUrl = "data:image/jpeg;base64,/9j/4AAQ-test-photo";
+    mockExtractImage.mockResolvedValueOnce(dataUrl);
+
+    const { renderAdaptedCvAsPdf } = await import("@/lib/pdf/render-cv");
+    const renderMock = renderAdaptedCvAsPdf as unknown as ReturnType<
+      typeof vi.fn
+    >;
+
+    const res = await POST(
+      makeFormRequest({
+        file: makePdfFile(),
+        job_title: "Senior Engineer",
+        job_company: "Acme",
+      }) as never,
+    );
+
+    expect(res.status).toBe(200);
+    // extractCvImage was called once with the PDF bytes.
+    expect(mockExtractImage).toHaveBeenCalledTimes(1);
+    // The renderer received the data URL as `cv.photo` (overlaid
+    // by the route after parsing the LLM response).
+    expect(renderMock).toHaveBeenCalledTimes(1);
+    const cvArg = renderMock.mock.calls[0]![0] as { photo: string | null };
+    expect(cvArg.photo).toBe(dataUrl);
+  });
+
+  it("forwards photo: null to the renderer when no image is found in the PDF", async () => {
+    mockLLMCompletion.mockResolvedValueOnce(
+      JSON.stringify({
+        name: "Ada",
+        experience: [],
+        education: [],
+        skills: [],
+        languages: [],
+      }),
+    );
+    // mockExtractImage returns null by default (beforeEach).
+    const { renderAdaptedCvAsPdf } = await import("@/lib/pdf/render-cv");
+    const renderMock = renderAdaptedCvAsPdf as unknown as ReturnType<
+      typeof vi.fn
+    >;
+
+    const res = await POST(
+      makeFormRequest({
+        file: makePdfFile(),
+        job_title: "Senior Engineer",
+        job_company: "Acme",
+      }) as never,
+    );
+
+    expect(res.status).toBe(200);
+    const cvArg = renderMock.mock.calls[0]![0] as { photo: string | null };
+    expect(cvArg.photo).toBeNull();
   });
 });
