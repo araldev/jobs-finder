@@ -113,11 +113,12 @@ describe("extractCvImage", () => {
   it("accepts a 5 KB image (the previous 10 KB threshold rejected this — a real compressed CV photo)", async () => {
     // Regression test: this image size was rejected under the
     // 10 KB threshold even though it's a legitimate CV photo.
-    // The 4 KB threshold now accepts it. We use a 40x40 image
-    // (4_000+ pixels) — unpdf returns 3-channel RGB so the byte
-    // count is 3*40*40 = 4_800 bytes, comfortably above the
-    // 4 KB threshold.
-    const smallPng = buildPngBytes(1600);
+    // The 4 KB threshold now accepts it. We use a 120x120
+    // image (14_400 pixels) — above the new 100x100 minimum
+    // size for a real headshot. unpdf returns 3-channel RGB so
+    // the byte count is 3*120*120 = 43_200 bytes, comfortably
+    // above the 4 KB threshold.
+    const smallPng = buildPngBytes(14_400);
     const bytes = await makePdfWithPng(smallPng);
 
     const dataUrl = await extractCvImage(bytes.buffer.slice(0) as ArrayBuffer);
@@ -126,9 +127,10 @@ describe("extractCvImage", () => {
   });
 
   it("accepts an image at the 4 KB threshold boundary", async () => {
-    // 40x40 = 1_600 pixels, 3-channel RGB = 4_800 bytes — just
-    // over the 4 KB threshold.
-    const boundaryPng = buildPngBytes(1600);
+    // 120x120 = 14_400 pixels, 3-channel RGB = 43_200 bytes —
+    // well over the 4 KB threshold and above the 100x100
+    // minimum size.
+    const boundaryPng = buildPngBytes(14_400);
     const bytes = await makePdfWithPng(boundaryPng);
 
     const dataUrl = await extractCvImage(bytes.buffer.slice(0) as ArrayBuffer);
@@ -160,12 +162,13 @@ describe("extractCvImage", () => {
     // the RGB data as a FlateDecode stream (see PngEmbedder in
     // pdf-lib). The new extractor decodes via unpdf (pdfjs) which
     // returns raw RGBA pixel data; we then re-encode as PNG.
-    // 100x100 with random-ish noise so the PNG compresses to
-    // well over the 4 KB MIN_IMAGE_BYTES threshold.
-    const png = new PNG({ width: 80, height: 80 });
-    for (let y = 0; y < 80; y++) {
-      for (let x = 0; x < 80; x++) {
-        const idx = (y * 80 + x) * 4;
+    // 120x120 (above the 100x100 minimum headshot size) with
+    // random-ish noise so the PNG compresses to well over the
+    // 4 KB MIN_IMAGE_BYTES threshold.
+    const png = new PNG({ width: 120, height: 120 });
+    for (let y = 0; y < 120; y++) {
+      for (let x = 0; x < 120; x++) {
+        const idx = (y * 120 + x) * 4;
         png.data[idx] = ((x * 13 + y * 29) * 7) & 0xff;
         png.data[idx + 1] = ((x * 17 + y * 31) * 11) & 0xff;
         png.data[idx + 2] = ((x * 19 + y * 23) * 5) & 0xff;
@@ -195,8 +198,8 @@ describe("extractCvImage", () => {
     const b64 = dataUrl!.replace(/^data:image\/png;base64,/, "");
     const decodedBytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
     const decoded = PNG.sync.read(Buffer.from(decodedBytes));
-    expect(decoded.width).toBe(80);
-    expect(decoded.height).toBe(80);
+    expect(decoded.width).toBe(120);
+    expect(decoded.height).toBe(120);
     // The image should have per-pixel variation (not constant color).
     // This proves the noise pattern round-tripped through the
     // pdfjs decode → pngjs re-encode pipeline.

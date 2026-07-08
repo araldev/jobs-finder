@@ -15,40 +15,34 @@
 //      to PyMuPDF's `page.get_images(full=True)`. Finds ALL
 //      images on the page (in Resources / XObject, Form
 //      XObjects, patterns, annotations, soft masks, etc.).
-//   3. For each image: filter by size (skip logos / icons
-//      that are too small to be a headshot) and collect it
-//      as a candidate.
-//   4. From all candidates, pick the BEST one — most
-//      channels first (favors 3- or 4-channel color images
-//      over 1-channel grayscale SMasks), then largest by raw
-//      data size. This filter is what fixes the "photo
-//      appears as a grayscale tile" regression: pdfjs emits
-//      the SMask (alpha channel) as a separate 1-channel
-//      grayscale image with the SAME dimensions as the main
-//      image. Taking the first image returned gave us the
-//      SMask (grayscale, smaller byte count) instead of the
-//      main color image.
+//   3. For each image: filter by:
+//      - Must NOT be a Form XObject / pattern (key starts with
+//        "g_" — pdfjs uses that prefix for patterns and form
+//        XObjects, NOT for regular images; this is what was
+//        causing the tiled-headshot rendering regression).
+//      - Must be at least 100x100 pixels (a real CV headshot;
+//        smaller images are icons, logos, or tiling pattern
+//        units).
+//      - Must be at most 2000x2000 pixels (a real CV headshot;
+//        larger images are page backgrounds).
+//      - Must be RGB or RGBA (3 or 4 channels; grayscale = SMask).
+//      - Pixel data must be at least 4 KB (filter out tiny
+//        compressed icons that pass the size check but are
+//        actually pixel data, not real photos).
+//   4. From all eligible candidates, pick the BEST one:
+//      most channels first, then largest by raw data size,
+//      then earliest page.
 //   5. Re-encode the selected image as a valid PNG byte
-//      stream via pngjs and return as a
-//      `data:image/png;base64,<...>` URL.
+//      stream via pngjs. FORCE the alpha channel to 255
+//      (opaque) so any SMask-derived transparency doesn't
+//      cause the renderer to composite the image weirdly.
+//   6. Return as a `data:image/png;base64,<...>` URL.
 //
-// Why this is more robust than the previous pdf-lib walk:
-//   - The old code only looked at `Resources / XObject` on each
-//     page. If the CV's photo was placed in a Form XObject, a
-//     pattern, or referenced indirectly from the content
-//     stream, the old code missed it entirely. unpdf walks the
-//     same way PyMuPDF does and finds the photo wherever it lives.
-//   - The old code only handled 3 filters (DCTDecode, JPXDecode,
-//     FlateDecode). unpdf returns RGBA pixel data regardless of
-//     the original filter, so we get a uniform path with no
-//     per-filter manual decode.
-//   - Same `4 KB` size threshold as the Python backend so a
-//     small headshot (5–10 KB) is NOT silently dropped.
-//
-// The function never throws on bad input — it returns `null` on
-// any failure (malformed PDF, no images, oversized threshold).
-// This matches `extractPdfText`'s contract and AGENTS.md rule #24
-// (no leaking of internal exception details).
+// The function never throws on bad input — it returns `null`
+// on any failure (malformed PDF, no images, oversized
+// threshold). This matches `extractPdfText`'s contract and
+// AGENTS.md rule #24 (no leaking of internal exception
+// details).
 
 import "server-only";
 
@@ -56,6 +50,14 @@ import { extractImages, getDocumentProxy } from "unpdf";
 import { PNG } from "pngjs";
 
 const MIN_IMAGE_BYTES = 4_000;
+// Headshot dimensions. Below 100x100 the image is too small
+// to be a real photo (likely a pattern tile unit, an icon, or
+// a logo). Above 2000x2000 the image is too large to be a real
+// photo (likely a page background or full-bleed decoration).
+const MIN_WIDTH = 100;
+const MIN_HEIGHT = 100;
+const MAX_WIDTH = 2000;
+const MAX_HEIGHT = 2000;
 
 type Candidate = {
   pageNum: number;
@@ -78,11 +80,7 @@ export async function extractCvImage(
   }
 
   // Walk each page in order. Collect ALL eligible candidates,
-  // then pick the best one. Going best-of-all (not first-of-all)
-  // is what filters out the SMask (alpha channel) which pdfjs
-  // emits as a separate 1-channel grayscale image with the
-  // same dimensions as the main image — the SMask has fewer
-  // channels and a smaller byte count than the main image.
+  // then pick the best one.
   const candidates: Candidate[] = [];
   const pageCount = doc.numPages;
 
@@ -99,18 +97,58 @@ export async function extractCvImage(
     }
 
     for (const img of images) {
-      // Filter out tiny images (likely icons/logos, not a
-      // photo). The previous code filtered on byte count; here
-      // we have raw pixel data so we compute the equivalent
-      // size — `width * height * channels` bytes — and compare
-      // against the same 4 KB threshold.
-      const pixelBytes = img.width * img.height * img.channels;
-      if (pixelBytes < MIN_IMAGE_BYTES) {
+      // The `key` property from unpdf comes from pdfjs's
+      // operator list args. Image keys from the page's
+      // resource table typically start with "img_"; Form
+      // XObjects and patterns start with "g_". The "g_"
+      // prefix was the root cause of the tiled-headshot
+      // regression — unpdf was returning the tile unit of
+      // a pattern, and the renderer drew it as a single
+      // image at the photo position, showing the tile
+      // pattern instead of the actual photo.
+      if (img.key?.startsWith("g_")) {
         console.log(
-          `pdf/extract-image: skipping ${img.width}x${img.height} (${img.channels}ch) — ${pixelBytes} bytes (< ${MIN_IMAGE_BYTES} threshold, probably a logo/icon)`,
+          `pdf/extract-image: skipping ${img.width}x${img.height} (${img.channels}ch) key=${img.key} — Form XObject / pattern`,
         );
         continue;
       }
+
+      // Filter by reasonable headshot dimensions. Below
+      // 100x100 is almost certainly a tile unit, icon, or
+      // logo (not a real photo). Above 2000x2000 is a page
+      // background or full-bleed decoration.
+      if (img.width < MIN_WIDTH || img.height < MIN_HEIGHT) {
+        console.log(
+          `pdf/extract-image: skipping ${img.width}x${img.height} (${img.channels}ch) — too small (< ${MIN_WIDTH}x${MIN_HEIGHT})`,
+        );
+        continue;
+      }
+      if (img.width > MAX_WIDTH || img.height > MAX_HEIGHT) {
+        console.log(
+          `pdf/extract-image: skipping ${img.width}x${img.height} (${img.channels}ch) — too large (> ${MAX_WIDTH}x${MAX_HEIGHT})`,
+        );
+        continue;
+      }
+
+      // Only accept RGB or RGBA. Grayscale = 1 channel is
+      // the SMask (alpha channel) which pdfjs emits as a
+      // separate image.
+      if (img.channels < 3) {
+        console.log(
+          `pdf/extract-image: skipping ${img.width}x${img.height} (${img.channels}ch) — grayscale (likely SMask)`,
+        );
+        continue;
+      }
+
+      // Pixel data size threshold.
+      const pixelBytes = img.width * img.height * img.channels;
+      if (pixelBytes < MIN_IMAGE_BYTES) {
+        console.log(
+          `pdf/extract-image: skipping ${img.width}x${img.height} (${img.channels}ch) — ${pixelBytes} bytes (< ${MIN_IMAGE_BYTES} threshold)`,
+        );
+        continue;
+      }
+
       candidates.push({
         pageNum,
         width: img.width,
@@ -127,10 +165,9 @@ export async function extractCvImage(
     return null;
   }
 
-  // Pick the BEST candidate: most channels (favors 3-/4-channel
-  // color over 1-channel grayscale SMask), then largest by raw
-  // data size, then earliest page (first page wins when there
-  // are multiple same-size main images).
+  // Pick the BEST candidate: most channels (favors 4-channel
+  // RGBA over 3-channel RGB), then largest by raw data size,
+  // then earliest page.
   candidates.sort((a, b) => {
     if (b.channels !== a.channels) return b.channels - a.channels;
     if (b.bytes !== a.bytes) return b.bytes - a.bytes;
@@ -140,19 +177,24 @@ export async function extractCvImage(
   const best = candidates[0]!;
 
   // Re-encode the raw pixel data to a valid PNG byte stream
-  // via pngjs. The renderer embeds this PNG via
-  // `doc.embedPng(...)` (see `render-cv.ts`), so the photo
-  // data URL must be `data:image/png;base64,...`.
+  // via pngjs. FORCE the alpha channel to 255 (opaque) so
+  // any residual transparency from the unpdf decode does
+  // not cause the renderer to composite the image with the
+  // page background in a way that looks "tiled" or "washed
+  // out".
   try {
     const png = new PNG({
       width: best.width,
       height: best.height,
       channels: best.channels,
     });
-    // `img.data` is a Uint8ClampedArray; pngjs' data field
-    // is a Uint8Array (alias for Buffer in Node). We copy
-    // into a plain Uint8Array so the TS type aligns.
     png.data = new Uint8Array(best.data);
+    // Force alpha to 255 (only if RGBA, channels === 4).
+    if (best.channels === 4) {
+      for (let i = 3; i < png.data.length; i += 4) {
+        png.data[i] = 0xff;
+      }
+    }
     const pngBytes = PNG.sync.write(png);
     const b64 = Buffer.from(pngBytes).toString("base64");
     console.log(
