@@ -614,10 +614,22 @@ function drawProjectEntry(
     }
   }
   if (proj.description) {
+    const descStartY = state.y;
     drawWrappedText(state, proj.description, {
       size: SIZE_PROJECT_DESC,
       font: state.font,
     });
+    const descEndY = state.y;
+    // Auto-detect HTTP URLs in description text and make them clickable
+    if (/https?:\/\/\S+/.test(proj.description)) {
+      const urls = proj.description.match(/https?:\/\/\S+/g);
+      if (urls) {
+        const descHeight = descStartY - descEndY;
+        for (const url of urls) {
+          drawLinkAnnotation(state, url, MARGIN, descEndY, CONTENT_WIDTH, descHeight);
+        }
+      }
+    }
   }
   if (proj.technologies && proj.technologies.length > 0) {
     drawWrappedText(

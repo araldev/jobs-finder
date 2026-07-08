@@ -11,6 +11,7 @@ Design principles:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 
@@ -332,6 +333,13 @@ class AdaptedCV:
             location_html = (
                 f', <span class="exp-location">{exp.location}</span>' if exp.location else ""
             )
+            exp_desc_html = exp.description
+            if exp.description:
+                exp_desc_html = re.sub(
+                    r'(https?://[^\s]+)',
+                    r'<a href="\1">\1</a>',
+                    exp.description,
+                )
             items += f"""
 <div class="experience-item">
   <div class="exp-header">
@@ -339,7 +347,7 @@ class AdaptedCV:
     <span class="exp-date">{exp.start_date} – {exp.end_date}</span>
   </div>
   <div class="exp-title">{exp.title}{location_html}</div>
-  <div class="exp-description">{exp.description}</div>
+  <div class="exp-description">{exp_desc_html}</div>
 </div>"""
         return (
             f'<div class="section">'
@@ -373,11 +381,15 @@ class AdaptedCV:
                 if proj.technologies
                 else ""
             )
-            desc_html = (
-                f"<div class='project-description'>{proj.description}</div>"
-                if proj.description
-                else ""
-            )
+            desc_html = ""
+            if proj.description:
+                # Auto-link any HTTP/HTTPS URLs in the description text
+                linked_desc = re.sub(
+                    r'(https?://[^\s]+)',
+                    r'<a href="\1">\1</a>',
+                    proj.description,
+                )
+                desc_html = f"<div class='project-description'>{linked_desc}</div>"
             name_html = (
                 f'<a href="{proj.url}">{proj.name}</a>' if proj.url else proj.name
             )
