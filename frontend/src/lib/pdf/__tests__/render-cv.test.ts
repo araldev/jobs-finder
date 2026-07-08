@@ -544,4 +544,55 @@ describe("renderAdaptedCvAsPdf", () => {
     expect(text).toContain("Company 1");
     expect(text).toContain("Company 12");
   });
+
+  it("sanitizes non-WinAnsi characters from the cv object (the '⟶' regression)", async () => {
+    // Regression: the LLM was copying special characters verbatim
+    // from the original CV (e.g. "⟶" in "Ultimate JavaScript
+    // - Arturo Alba - 2025-02-09 ⟶ Más información"). The built-in
+    // PDF fonts (Times Roman) use WinAnsi encoding which can't
+    // represent those characters — pdf-lib threw WinAnsiError
+    // on drawText. The renderer now sanitizes every string field
+    // of the cv object before drawing.
+    const cv: AdaptedCV = {
+      name: "Arturo Alba",
+      email: "arturo@example.com",
+      phone: "+34 600 000 000",
+      location: "Málaga",
+      summary: "Desarrollador web \u2014 experiencia en React", // em dash
+      experience: [
+        {
+          company: "NTT DATA \u2013 España", // en dash
+          title: "Prácticas",
+          start_date: "2026-04",
+          end_date: "2026-05",
+          description: "Prácticas en NTT DATA. \u201CJava SE\u201D preparación.",
+          location: null,
+        },
+      ],
+      education: [],
+      projects: [],
+      certifications: [
+        "Ultimate JavaScript \u27F6 Arturo Alba \u2014 2025-02-09", // ⟶ arrow + em dash
+      ],
+      skills: ["TypeScript", "React"],
+      languages: ["Español"],
+      photo: null,
+    };
+
+    // The renderer should NOT throw. If the sanitizer isn't
+    // applied, pdf-lib would throw a WinAnsiError on the
+    // certification bullet containing "⟶" or on the em dash.
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    expect(bytes.byteLength).toBeGreaterThan(0);
+
+    // Verify the PDF was generated and the sanitized content
+    // round-trips. The em dash should be replaced with "-"
+    // and the ⟶ should be replaced with "->" (the long arrow
+    // is not in WinAnsi and gets replaced with ASCII).
+    const pdf = await getDocumentProxy(new Uint8Array(bytes));
+    const { text } = await extractText(pdf, { mergePages: true });
+    expect(text).toContain("Ultimate JavaScript");
+    expect(text).toContain("->"); // ⟶ → ->
+    expect(text).toContain("Arturo Alba");
+  });
 });

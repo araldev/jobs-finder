@@ -95,6 +95,102 @@ const MAX_BULLETS_PER_ENTRY = 8;
 // residual fragments like "." or "ok." that survive the sentence split.
 const MIN_BULLET_LENGTH = 5;
 
+// Sanitize text for the built-in PDF fonts (Times Roman family
+// uses WinAnsi encoding). The LLM often copies special chars
+// verbatim from the original CV — e.g. "⟶" (U+27F6 long arrow)
+// in "Ultimate JavaScript — Arturo Alba — 2025-02-09 ⟶ Más
+// información." WinAnsi can't encode that char and pdf-lib
+// throws WinAnsiError on the drawText call. We map common
+// Unicode chars to their WinAnsi-safe equivalents (or strip
+// if no equivalent exists). Mappings are exhaustive for the
+// chars we see in real CVs; anything outside WinAnsi not in
+// the map is dropped silently.
+const WIN_ANSI_MAP: Record<string, string> = {
+  // Long arrows (U+27F6 etc.) → ASCII equivalents directly
+  // (not to the intermediate U+2192, which is also NOT in
+  // WinAnsi and would be dropped on the second pass).
+  "⟶": "->", // U+27F6 long rightwards arrow
+  "⟵": "<-", // U+27F5 long leftwards arrow
+  "↔": "<->", // U+2194 left right arrow
+  "⇒": "=>", // U+21D2 rightwards double arrow
+  "⇐": "<=", // U+21D0 leftwards double arrow
+  "→": "->", // U+2192 rightwards arrow (NOT in WinAnsi)
+  "←": "<-", // U+2190 leftwards arrow (NOT in WinAnsi)
+  "↑": "^", // U+2191 upwards arrow (NOT in WinAnsi)
+  "↓": "v", // U+2193 downwards arrow (NOT in WinAnsi)
+  // Em dash and en dash
+  "—": "-", // U+2014 em dash → hyphen
+  "–": "-", // U+2013 en dash → hyphen
+  // Curly quotes
+  "\u201C": '"', // U+201C left double quotation mark
+  "\u201D": '"', // U+201D right double quotation mark
+  "\u2018": "'", // U+2018 left single quotation mark
+  "\u2019": "'", // U+2019 right single quotation mark
+  // Ellipsis, bullet, daggers
+  "…": "...", // U+2026 horizontal ellipsis
+  "•": "*", // U+2022 bullet → asterisk
+  "†": "+", // U+2020 dagger
+  "‡": "++", // U+2021 double dagger
+  // Common math / misc
+  "×": "x", // U+00D7 multiplication sign (in WinAnsi actually)
+  "÷": "/", // U+00F7 division sign (in WinAnsi actually)
+  "°": "°", // U+00B0 degree sign (in WinAnsi)
+  "©": "(c)", // U+00A9 copyright sign
+  "®": "(R)", // U+00AE registered sign
+  "™": "TM", // U+2122 trademark
+  "€": "EUR", // U+20AC euro sign (in WinAnsi actually)
+  // Spanish / Catalan letters that are NOT in basic Latin
+  "·": ".", // U+00B7 middle dot (in WinAnsi)
+  "ª": "a.", // U+00AA feminine ordinal
+  "º": "o.", // U+00BA masculine ordinal
+  "¡": "!", // U+00A1 inverted exclamation
+  "¿": "?", // U+00BF inverted question
+};
+
+function sanitizeForWinAnsi(text: string): string {
+  // First, map known chars. Then strip anything that's still
+  // outside the WinAnsi codepoints (basic Latin + Latin-1
+  // supplement + the small set of PDF WinAnsi extensions
+  // listed in the PDF spec table D.2).
+  let result = "";
+  for (const ch of text) {
+    const mapped = WIN_ANSI_MAP[ch] ?? ch;
+    if (isWinAnsiSafe(mapped)) {
+      result += mapped;
+    }
+    // else: drop the char silently (it would crash pdf-lib).
+  }
+  return result;
+}
+
+function isWinAnsiSafe(ch: string): boolean {
+  // Basic Latin (U+0000..U+007F) is always safe.
+  // Latin-1 supplement (U+00A0..U+00FF) minus U+00AD is safe.
+  // The PDF WinAnsi extension set (per spec table D.2):
+  //   U+0152, U+0153, U+2013, U+2014, U+2018, U+2019,
+  //   U+201C, U+201D, U+2022, U+2026, U+2030, U+2039,
+  //   U+203A, U+20AC.
+  const code = ch.codePointAt(0)!;
+  if (code <= 0x7f) return true;
+  if (code >= 0xa0 && code <= 0xff && code !== 0xad) return true;
+  return (
+    code === 0x152 || // Œ
+    code === 0x153 || // œ
+    code === 0x2013 || // – en dash
+    code === 0x2014 || // — em dash
+    code === 0x2018 || // ' left single quote
+    code === 0x2019 || // ' right single quote
+    code === 0x201c || // " left double quote
+    code === 0x201d || // " right double quote
+    code === 0x2022 || // • bullet
+    code === 0x2026 || // … ellipsis
+    code === 0x2030 || // ‰ per mille
+    code === 0x2039 || // ‹ single guillemet
+    code === 0x203a || // › single guillemet
+    code === 0x20ac    // € euro
+  );
+}
+
 // ── Drawing state ───────────────────────────────────────────────────────
 
 interface DrawState {
@@ -514,6 +610,45 @@ async function decodePhotoDataUrl(
 export async function renderAdaptedCvAsPdf(
   cv: AdaptedCV,
 ): Promise<Uint8Array<ArrayBuffer>> {
+  // Sanitize the cv object for WinAnsi-safe encoding. The LLM
+  // often copies special characters verbatim from the original
+  // CV (e.g. "⟶" in "Ultimate JavaScript ⟶ Más información",
+  // em dashes, curly quotes, ellipsis, etc.) and the built-in
+  // PDF fonts (Times Roman family) use WinAnsi encoding which
+  // can't represent those chars — pdf-lib throws WinAnsiError
+  // on drawText. We walk the cv object and sanitize every
+  // string field once, before any drawing happens.
+  const sanitized: AdaptedCV = {
+    name: sanitizeForWinAnsi(cv.name),
+    email: sanitizeForWinAnsi(cv.email),
+    phone: sanitizeForWinAnsi(cv.phone),
+    location: sanitizeForWinAnsi(cv.location),
+    summary: sanitizeForWinAnsi(cv.summary),
+    experience: cv.experience.map((e) => ({
+      company: sanitizeForWinAnsi(e.company),
+      title: sanitizeForWinAnsi(e.title),
+      start_date: sanitizeForWinAnsi(e.start_date),
+      end_date: sanitizeForWinAnsi(e.end_date),
+      description: sanitizeForWinAnsi(e.description),
+      location: e.location ? sanitizeForWinAnsi(e.location) : null,
+    })),
+    education: cv.education.map((e) => ({
+      degree: sanitizeForWinAnsi(e.degree),
+      institution: sanitizeForWinAnsi(e.institution),
+      year: sanitizeForWinAnsi(e.year),
+      grade: e.grade ? sanitizeForWinAnsi(e.grade) : null,
+    })),
+    projects: cv.projects.map((p) => ({
+      name: sanitizeForWinAnsi(p.name),
+      description: sanitizeForWinAnsi(p.description),
+      technologies: p.technologies.map(sanitizeForWinAnsi),
+    })),
+    certifications: cv.certifications.map(sanitizeForWinAnsi),
+    skills: cv.skills.map(sanitizeForWinAnsi),
+    languages: cv.languages.map(sanitizeForWinAnsi),
+    photo: cv.photo, // base64 data URL — no sanitization needed
+  };
+
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(FONT_REG);
   const bold = await doc.embedFont(FONT_BOLD);
@@ -532,8 +667,8 @@ export async function renderAdaptedCvAsPdf(
 
   // Photo header — drawn FIRST so the text doesn't overlap it.
   let hasPhoto = false;
-  if (cv.photo) {
-    const decoded = await decodePhotoDataUrl(cv.photo).catch(() => null);
+  if (sanitized.photo) {
+    const decoded = await decodePhotoDataUrl(sanitized.photo).catch(() => null);
     if (decoded) {
       try {
         const embedded = decoded.isJpeg
@@ -558,17 +693,17 @@ export async function renderAdaptedCvAsPdf(
 
   // Header text — centered when no photo, else left-aligned (the
   // photo occupies the right ~80pt of the page).
-  if (cv.name) {
-    drawWrappedText(state, cv.name, {
+  if (sanitized.name) {
+    drawWrappedText(state, sanitized.name, {
       size: SIZE_NAME,
       font: state.bold,
       center: !hasPhoto,
     });
   }
   const contactParts: string[] = [];
-  if (cv.location) contactParts.push(cv.location);
-  if (cv.email) contactParts.push(cv.email);
-  if (cv.phone) contactParts.push(cv.phone);
+  if (sanitized.location) contactParts.push(sanitized.location);
+  if (sanitized.email) contactParts.push(sanitized.email);
+  if (sanitized.phone) contactParts.push(sanitized.phone);
   if (contactParts.length > 0) {
     drawWrappedText(state, contactParts.join(" | "), {
       size: SIZE_CONTACT,
@@ -582,9 +717,9 @@ export async function renderAdaptedCvAsPdf(
   drawSpacer(state, 6);
 
   // Resumen / Perfil Profesional — italic body under yellow section title.
-  if (cv.summary) {
+  if (sanitized.summary) {
     drawSectionTitle(state, SECTION_TITLES.summary);
-    drawWrappedText(state, cv.summary, {
+    drawWrappedText(state, sanitized.summary, {
       size: SIZE_BODY_ITALIC,
       font: state.italic,
     });
@@ -592,9 +727,9 @@ export async function renderAdaptedCvAsPdf(
   }
 
   // Educación (Harvard order: before Experience).
-  if (cv.education && cv.education.length > 0) {
+  if (sanitized.education && sanitized.education.length > 0) {
     drawSectionTitle(state, SECTION_TITLES.education);
-    for (const ed of cv.education) {
+    for (const ed of sanitized.education) {
       drawEducationEntry(state, ed);
       drawSpacer(state, 2);
     }
@@ -602,9 +737,9 @@ export async function renderAdaptedCvAsPdf(
   }
 
   // Experiencia Profesional.
-  if (cv.experience && cv.experience.length > 0) {
+  if (sanitized.experience && sanitized.experience.length > 0) {
     drawSectionTitle(state, SECTION_TITLES.experience);
-    for (const exp of cv.experience) {
+    for (const exp of sanitized.experience) {
       drawExperienceEntry(state, exp);
     }
     drawSpacer(state, SECTION_GAP);
@@ -612,9 +747,9 @@ export async function renderAdaptedCvAsPdf(
 
   // Proyectos (personal projects, volunteer work, standalone
   // experience items from the original CV that look like projects).
-  if (cv.projects && cv.projects.length > 0) {
+  if (sanitized.projects && sanitized.projects.length > 0) {
     drawSectionTitle(state, SECTION_TITLES.projects);
-    for (const proj of cv.projects) {
+    for (const proj of sanitized.projects) {
       drawProjectEntry(state, proj);
     }
     drawSpacer(state, SECTION_GAP);
@@ -623,29 +758,29 @@ export async function renderAdaptedCvAsPdf(
   // Certificaciones (items from a 'Certificaciones' / 'Licencias'
   // / 'Certifications' section in the original CV — licenses,
   // courses, and training programs).
-  if (cv.certifications && cv.certifications.length > 0) {
+  if (sanitized.certifications && sanitized.certifications.length > 0) {
     drawSectionTitle(state, SECTION_TITLES.certifications);
     // Bullet list — each cert gets its own line. Splitting a
     // comma-joined string would lose the issuer / date suffix
     // that lives in the verbatim name (e.g. '... | NTT DATA /
     // Oracle Training', '... - 2025-02-09').
-    for (const cert of cv.certifications) {
+    for (const cert of sanitized.certifications) {
       drawBullet(state, cert);
     }
     drawSpacer(state, SECTION_GAP);
   }
 
   // Habilidades.
-  if (cv.skills && cv.skills.length > 0) {
+  if (sanitized.skills && sanitized.skills.length > 0) {
     drawSectionTitle(state, SECTION_TITLES.skills);
-    drawWrappedText(state, cv.skills.join(", "), { size: SIZE_SKILLS });
+    drawWrappedText(state, sanitized.skills.join(", "), { size: SIZE_SKILLS });
     drawSpacer(state, SECTION_GAP);
   }
 
   // Idiomas.
-  if (cv.languages && cv.languages.length > 0) {
+  if (sanitized.languages && sanitized.languages.length > 0) {
     drawSectionTitle(state, SECTION_TITLES.languages);
-    drawWrappedText(state, cv.languages.join(", "), { size: SIZE_LANGUAGES });
+    drawWrappedText(state, sanitized.languages.join(", "), { size: SIZE_LANGUAGES });
   }
 
   const bytes = await doc.save();
