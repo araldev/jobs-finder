@@ -126,7 +126,10 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
       "NEVER output the target company",
       "NEVER create a new job entry",
       "NEVER treat personal projects",
-      'NEVER use "..." or "TBD" or "N/A" or any other placeholder',
+      // Rule 8 was reworded when the "no placeholders" rule was
+      // promoted to its own section. The intent is the same — the
+      // prompt forbids "..." (and other placeholders) anywhere.
+      'NEVER emit a string of literal dots "..."',
     ]) {
       expect(ADAPT_CV_SYSTEM_PROMPT).toContain(rule);
     }
@@ -146,10 +149,11 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
     );
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain("the projects array instead");
 
-    // Harvard output structure: keys in this order, summary optional.
+    // Harvard output structure: keys in this order, summary is now
+    // required (was optional before the no-placeholders rewrite).
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain("OUTPUT STRUCTURE (Harvard format):");
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "name, email, phone, location, education, experience, projects, skills, languages",
+      "name, email, phone, location, summary, education, experience, projects, skills, languages",
     );
 
     // Keyword matching: MANDATORY, with explicit examples
