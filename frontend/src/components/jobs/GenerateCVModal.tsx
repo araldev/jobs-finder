@@ -18,18 +18,71 @@ interface SavedCV {
   storage_path: string;
 }
 
+interface PersistedState {
+  status: "idle" | "uploading" | "done" | "error";
+  downloadUrl: string | null;
+  errorMsg: string | null;
+}
+
+const STORAGE_PREFIX = "cv-gen-";
+
+function getStorageKey(jobId: string): string {
+  return `${STORAGE_PREFIX}${jobId}`;
+}
+
+function readPersistedState(jobId: string): PersistedState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(getStorageKey(jobId));
+    return raw ? (JSON.parse(raw) as PersistedState) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writePersistedState(jobId: string, state: PersistedState) {
+  try {
+    sessionStorage.setItem(getStorageKey(jobId), JSON.stringify(state));
+  } catch {
+    // sessionStorage full or unavailable — silently ignore
+  }
+}
+
+function clearPersistedState(jobId: string) {
+  try {
+    sessionStorage.removeItem(getStorageKey(jobId));
+  } catch {
+    // ignore
+  }
+}
+
 export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [savedCV, setSavedCV] = useState<SavedCV | null>(null);
   const [cvFile, setCvFile] = useState<File | null>(null);
-  const [status, setStatus] = useState<"idle" | "uploading" | "done" | "error">("idle");
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+
+  // Restore generation state from sessionStorage so navigating
+  // away and back to the same job preserves the download / status.
+  const [status, setStatus] = useState<"idle" | "uploading" | "done" | "error">(
+    () => readPersistedState(job.id)?.status ?? "idle",
+  );
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(
+    () => readPersistedState(job.id)?.downloadUrl ?? null,
+  );
+
+  const [errorMsg, setErrorMsg] = useState<string | null>(
+    () => readPersistedState(job.id)?.errorMsg ?? null,
+  );
   const [loadingSavedCV, setLoadingSavedCV] = useState(false);
   const [consentGiven, setConsentGiven] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const supabase = createClient();
   const { incrementCVAdapted } = useCVAdapted();
+
+  // Persist generation state to sessionStorage whenever it changes.
+  useEffect(() => {
+    writePersistedState(job.id, { status, downloadUrl, errorMsg });
+  }, [job.id, status, downloadUrl, errorMsg]);
 
   // Track CV adaptation count when successfully generated
   useEffect(() => {
@@ -58,19 +111,15 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
 
   function open() {
     setIsOpen(true);
-    setCvFile(null);
-    setStatus("idle");
-    setErrorMsg(null);
-    setDownloadUrl(null);
-    setConsentGiven(false);
+    // Don't reset generation state — preserve downloadUrl/status
+    // so the user can see a completed download or in-flight generation.
     fetchSavedCV();
   }
 
   function close() {
     setIsOpen(false);
-    if (downloadUrl) {
-      URL.revokeObjectURL(downloadUrl);
-    }
+    // Don't revoke the blob URL here — it's reused on reopen.
+    // It gets revoked when the user generates a new one or on page unload.
   }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -167,14 +216,14 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
         {trigger}
       </span>
 
-      {isOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) close();
-          }}
-        >
-          <div className="relative w-full max-w-md rounded-xl border bg-card p-6 shadow-lg">
+      {/* Always mounted so React state (downloadUrl, status) survives close/reopen */}
+      <div
+        className={`fixed inset-0 z-50 flex items-center justify-center bg-black/50 transition-opacity duration-200 ${isOpen ? "opacity-100" : "pointer-events-none opacity-0"}`}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) close();
+        }}
+      >
+        <div className={`relative w-full max-w-md rounded-xl border bg-card p-6 shadow-lg transition-all duration-200 ${isOpen ? "scale-100" : "scale-95"}`}>
             <button
               onClick={close}
               className="absolute right-4 top-4 text-muted-foreground hover:text-foreground"
@@ -209,10 +258,12 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
                 </a>
                 <button
                   onClick={() => {
+                    if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+                    clearPersistedState(job.id);
                     setCvFile(null);
                     setStatus("idle");
                     setDownloadUrl(null);
-                    if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+                    setErrorMsg(null);
                   }}
                   className="text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
                   type="button"
@@ -334,22 +385,10 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
                     temporalmente.
                   </p>
                 )}
-
-                <p className="text-center text-xs text-muted-foreground">
-                  Tu CV será procesado por nuestro proveedor de IA.{" "}
-                  <Link
-                    href="/privacidad"
-                    target="_blank"
-                    className="underline underline-offset-2 hover:text-foreground"
-                  >
-                    Más información
-                  </Link>
-                </p>
               </form>
             )}
           </div>
         </div>
-      )}
-    </>
+      </>
   );
 }

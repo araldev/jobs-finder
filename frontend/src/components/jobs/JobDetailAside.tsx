@@ -64,6 +64,7 @@ export function JobDetailAside({ job }: JobDetailAsideProps) {
         <Separator />
 
         <GenerateCVModal
+          key={job.id}
           job={job}
           trigger={
             <Button variant="default" className="w-full" type="button">
