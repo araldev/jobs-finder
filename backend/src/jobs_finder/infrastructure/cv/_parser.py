@@ -185,7 +185,7 @@ def _extract_page_hyperlinks(
         # Skip degenerate rects (zero area).
         if from_rect.x0 == from_rect.x1 and from_rect.y0 == from_rect.y1:
             continue
-        label = _derive_link_label(from_rect, words)
+        label = _derive_link_label(page, from_rect, words)
         if not label:
             # Icon-only link — no visible text at the rect.
             continue
@@ -194,26 +194,70 @@ def _extract_page_hyperlinks(
 
 
 def _derive_link_label(
+    page: pymupdf.Page,
     rect: pymupdf.Rect,
     words: list[tuple[float, float, float, float, str, int, int, int]],
 ) -> str:
-    """Find the visible text inside `rect` by center-point intersection.
+    """Find the visible text inside `rect` by PyMuPDF's native
+    `get_textbox` (the same engine PDF readers use to select text).
 
-    Returns the matched words concatenated in reading order with
-    single spaces. Returns "" when no word's center falls inside the
-    rect (icon-only link case).
+    Why `get_textbox` (not center-point intersection): Canva-style
+    PDF exports (and other design-tool exports) use TIGHT link
+    rects that cover only the baseline area of the text. The text
+    glyphs extend ABOVE the link rect, so a center-point check on
+    word bboxes misses the text entirely (the text's vertical
+    center is above the link's y0). `get_textbox` instead returns
+    whatever text the PDF engine considers to be inside the rect,
+    regardless of where the text bbox centers are. This is the
+    same method Adobe Reader uses for "copy link text".
+
+    Edge cases:
+      - Empty rect → empty string (icon-only link, skipped upstream).
+      - Rect covers multiple text elements (e.g. rect spans two
+        adjacent labels) → we use the FIRST non-empty text block
+        only (the one closest to the link's vertical center),
+        since the LATER blocks are likely other unrelated labels
+        that happen to fall inside a too-tall rect.
     """
-    parts: list[str] = []
-    for w in words:
-        # Word tuple shape: (x0, y0, x1, y1, text, block_no, line_no, word_no)
-        wx0, wy0, wx1, wy1, wtext = w[0], w[1], w[2], w[3], w[4]
-        if not isinstance(wtext, str) or not wtext.strip():
-            continue
-        cx = (wx0 + wx1) / 2.0
-        cy = (wy0 + wy1) / 2.0
-        if rect.x0 <= cx <= rect.x1 and rect.y0 <= cy <= rect.y1:
+    # First, try the robust `get_textbox` path (handles tight rects).
+    try:
+        text = page.get_textbox(rect).strip()
+    except Exception:
+        text = ""
+
+    if text and "\n" in text:
+        # Multiple text blocks landed inside the rect (e.g. when the
+        # link rect is tall enough to overlap an adjacent text line
+        # below). `get_textbox` returns them in reading order — TOP
+        # first, BOTTOM last — and for tight Canva-style rects, the
+        # TOP one is the one the link was attached to (the link's
+        # `y0` sits at that text's baseline). So we just take the
+        # first non-empty line.
+        lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+        text = lines[0]
+    elif not text:
+        # Fallback for the rare case where `get_textbox` returned
+        # nothing (e.g. link rect is between two text lines) —
+        # check if any word bbox is at least partially inside the
+        # rect (not just center intersection, which was too strict
+        # for the Canva case). This is a soft overlap: bbox of
+        # word must intersect with rect in BOTH x and y.
+        parts: list[str] = []
+        for w in words:
+            wx0, wy0, wx1, wy1, wtext = w[0], w[1], w[2], w[3], w[4]
+            if not isinstance(wtext, str) or not wtext.strip():
+                continue
+            # Soft intersection: word bbox overlaps rect bbox
+            # (not just center-in-rect).
+            if wx1 < rect.x0 or wx0 > rect.x1:
+                continue
+            if wy1 < rect.y0 or wy0 > rect.y1:
+                continue
             parts.append(wtext.strip())
-    return " ".join(parts)
+        if parts:
+            text = " ".join(parts)
+
+    return text.strip()
 
 
 def extract_cv_image(pdf_bytes: bytes) -> str | None:

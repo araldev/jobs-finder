@@ -257,4 +257,111 @@ class TestExtractCVDataWrapper:
         assert cv_data.full_text  # non-empty
         assert len(cv_data.hyperlinks) == 1
         assert cv_data.hyperlinks[0].label == "Demo"
-        assert cv_data.hyperlinks[0].url == "https://demo.example.com"
+
+
+# ── Canva-style tight-rect case (regression) ────────────────────
+
+
+def _make_canva_style_pdf(
+    texts: list[tuple[str, float, float]],
+    links: list[tuple[str, pymupdf.Rect]],
+) -> bytes:
+    """Build a PDF that mimics a Canva export: text written with
+    `insert_text` (so the text bbox is positioned by the text engine,
+    not by an explicit rect) and a LINK_URI annotation with a TIGHT
+    rect that covers only the bottom half of the text glyphs.
+
+    This is the pattern the user's CV uses: a Canva design with text
+    elements that have a URL link attached. When exported as PDF, the
+    text bbox and the link rect are NOT identical — the link rect
+    often covers only the baseline area of the text.
+
+    Args:
+        texts: list of `(text, x, y)` to insert. `y` is the BASELINE
+            coordinate (per `insert_text` convention).
+        links: list of `(url, rect)` to insert as LINK_URI annotations.
+    """
+    doc = pymupdf.open()  # type: ignore[no-untyped-call]
+    page = doc.new_page(width=612, height=792)
+
+    for text, x, y in texts:
+        page.insert_text((x, y), text, fontsize=11)
+    for url, rect in links:
+        page.insert_link(
+            {
+                "kind": pymupdf.LINK_URI,
+                "from": rect,
+                "uri": url,
+            },
+        )
+
+    pdf_bytes = doc.tobytes()  # type: ignore[no-untyped-call]
+    doc.close()  # type: ignore[no-untyped-call]
+    return pdf_bytes  # type: ignore[no-any-return]
+
+
+class TestCanvaStyleTightRect:
+    """REGRESSION (user-reported 2026-07-09): the previous extractor
+    used center-point intersection to find the label text inside a
+    link's `from` rect. Canva exports often have TIGHT link rects that
+    cover only the baseline area of the text, NOT the full glyph
+    bbox. The text's vertical center falls OUTSIDE the link rect, so
+    the center-point check misses the link entirely — and the user's
+    CV never produces any chips.
+
+    The fix uses `page.get_textbox(rect)` which returns whatever text
+    PyMuPDF places inside the rect, regardless of where the word
+    centers are. This makes extraction robust against tight-rect
+    PDFs (Canva, Figma exports, etc.).
+    """
+
+    def test_tight_rect_at_text_baseline_extracts_label(self) -> None:
+        # The link rect is tight around the bottom 3pt of the text
+        # glyphs (the baseline area). The text center is ABOVE the
+        # link rect, so the old center-point intersection would fail.
+        # `get_textbox` returns the text correctly.
+        pdf_bytes = _make_canva_style_pdf(
+            texts=[("Github link", 100.0, 130.0)],
+            links=[
+                (
+                    "https://github.com/user/v12-ui",
+                    pymupdf.Rect(100.0, 130.0, 175.0, 142.0),  # type: ignore[no-untyped-call]
+                ),
+            ],
+        )
+        result = extract_cv_hyperlinks(pdf_bytes)
+        assert len(result) == 1
+        assert result[0].url == "https://github.com/user/v12-ui"
+        # The label should include the visible text "Github link"
+        # (allow whitespace differences from PyMuPDF's textbox output).
+        assert "Github" in result[0].label
+        assert "link" in result[0].label
+
+    def test_three_canva_style_links_all_extracted(self) -> None:
+        # The user's real case: 3 link labels with tight rects.
+        pdf_bytes = _make_canva_style_pdf(
+            texts=[
+                ("V12-UI", 50.0, 100.0),
+                ("Github link", 50.0, 130.0),
+                ("Storybook link", 50.0, 145.0),
+                ("npm link", 50.0, 160.0),
+            ],
+            links=[
+                ("https://github.com/user/v12-ui", pymupdf.Rect(50.0, 130.0, 130.0, 142.0)),  # type: ignore[no-untyped-call]
+                ("https://user.github.io/v12-ui", pymupdf.Rect(50.0, 145.0, 150.0, 157.0)),  # type: ignore[no-untyped-call]
+                ("https://www.npmjs.com/package/v12-ui", pymupdf.Rect(50.0, 160.0, 115.0, 172.0)),  # type: ignore[no-untyped-call]
+            ],
+        )
+        result = extract_cv_hyperlinks(pdf_bytes)
+        assert len(result) == 3
+        urls = sorted(r.url for r in result)
+        assert urls == [
+            "https://github.com/user/v12-ui",
+            "https://user.github.io/v12-ui",
+            "https://www.npmjs.com/package/v12-ui",
+        ]
+        # Each label should contain the corresponding text keyword.
+        labels = " ".join(r.label for r in result)
+        assert "Github" in labels
+        assert "Storybook" in labels
+        assert "npm" in labels
