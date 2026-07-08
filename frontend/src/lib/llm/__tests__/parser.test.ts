@@ -112,6 +112,36 @@ describe("parseAdaptedCVResponse", () => {
     expect(cv.projects[0]?.name).toBe("V12-UI");
   });
 
+  it("extracts certifications as a string array (respects original CV's section)", () => {
+    // The user has a 'CERTIFICACIONES Y COMPETENCIAS' section in
+    // their INFORMACIÓN ADICIONAL. The LLM should populate this
+    // array verbatim from that section.
+    const raw = JSON.stringify({
+      name: "Arturo",
+      certifications: [
+        "Carné de conducir B y vehículo propio.",
+        "Ultimate JavaScript - Arturo Alba - 2025-02-09",
+        "Java SE Programmer Certification Preparation | NTT DATA / Oracle Training",
+      ],
+    });
+    const cv = parseAdaptedCVResponse(raw);
+    expect(cv.certifications).toEqual([
+      "Carné de conducir B y vehículo propio.",
+      "Ultimate JavaScript - Arturo Alba - 2025-02-09",
+      "Java SE Programmer Certification Preparation | NTT DATA / Oracle Training",
+    ]);
+  });
+
+  it("defaults certifications to [] when missing or not an array", () => {
+    const missing = parseAdaptedCVResponse(JSON.stringify({ name: "Ada" }));
+    expect(missing.certifications).toEqual([]);
+
+    const wrongType = parseAdaptedCVResponse(
+      JSON.stringify({ name: "Ada", certifications: "not-an-array" }),
+    );
+    expect(wrongType.certifications).toEqual([]);
+  });
+
   it("extracts JSON from a markdown ```json``` block (strategy 2)", () => {
     const raw = "Here is the result:\n\n```json\n" +
       JSON.stringify({

@@ -135,42 +135,63 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
     }
   });
 
-  it("forbids splitting a job's responsibilities / modules / academic subjects into separate projects", () => {
-    // Regression: MiniMax-M3 was treating academic modules (DAW
-    // subjects like 'Desarrollo Backend con Java y Spring Boot',
-    // 'Calidad de Software', 'Gestión de Datos', etc.) and the
-    // tasks listed under a job entry ('PRÁCTICAS en NTT DATA') as
-    // separate project entries, polluting the projects array.
+  it("forbids splitting a specific job's responsibilities / modules into separate projects", () => {
+    // Regression: MiniMax-M3 was treating items listed under a
+    // specific job entry (the tasks / modules under 'PRÁCTICAS en
+    // NTT DATA — Abril 2026 / Mayo 2026') as separate project
+    // entries, polluting the projects array. The new rule
+    // forbids ONLY items that are part of a specific JOB
+    // DESCRIPTION — standalone experience items (DAW module names
+    // listed as top-level experience entries) ARE allowed as
+    // projects (see the next test).
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
       "PROJECTS — WHAT IS NOT A PROJECT (CRITICAL):",
     );
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "ACADEMIC MODULES / SUBJECTS",
+      "Items that are part of a SPECIFIC JOB DESCRIPTION",
     );
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "experience entry's description, NOT in projects",
-    );
-    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "DAW modules like",
+      "PRÁCTICAS en NTT DATA",
     );
   });
 
-  it("forbids merging in-progress certifications / training into projects, requires merging into experience or education instead", () => {
-    // Regression: 'Java SE Programmer Certification Preparation |
-    // NTT DATA / Oracle Training' is a training PREPARATION, not
-    // an obtained cert. The user does not have that cert. The
-    // rule forces the LLM to merge such content into the
-    // experience or education entry's description (whichever is
-    // contextually closer in the original CV) — NOT to invent a
-    // 'certifications' array the user does not actually have.
+  it("respects the original CV's certifications / licenses / courses section (the user wants it surfaced)", () => {
+    // Regression: the user pushed back on a previous fix that
+    // REMOVED the certifications field. The user has a
+    // 'CERTIFICACIONES Y COMPETENCIAS' section in their
+    // INFORMACIÓN ADICIONAL (with the Carné de conducir, the
+    // Ultimate JavaScript course, etc.) and wants that section
+    // respected in the adapted CV. The rule allows in-progress
+    // trainings too — the user may not have obtained the cert
+    // yet, but the program is in the original CV's section.
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "IN-PROGRESS TRAININGS / CERTIFICATIONS",
+      "CERTIFICATIONS — RESPECT THE ORIGINAL CV'S SECTION STRUCTURE:",
     );
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "training / certification PREPARATION, not obtained certifications",
+      "Certificaciones y Competencias",
     );
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "NEVER be presented as obtained certifications",
+      "Do NOT filter to 'only obtained'",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "Do NOT invent certifications that are not in the original CV",
+    );
+  });
+
+  it("allows standalone experience items (DAW module names listed as top-level experience entries) to be projects", () => {
+    // Regression: the previous rule said 'academic modules like
+    // DAW subjects are part of education, NOT projects'. That
+    // rule was too aggressive — it caused important info to
+    // disappear from the adapted CV when the user listed those
+    // items as standalone experience entries (with their own
+    // name + description + skills). The new rule allows them as
+    // projects when they are top-level items, not under a
+    // specific job or school.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "STANDALONE ITEMS IN AN 'EXPERIENCIA' / 'EXPERIENCE' SECTION",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "DAW module names (e.g. 'Desarrollo Backend con Java y Spring Boot') when they are listed as standalone experience items",
     );
   });
 
@@ -190,9 +211,12 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
 
     // Harvard output structure: keys in this order, summary is now
     // required (was optional before the no-placeholders rewrite).
+    // 'certifications' is between 'projects' and 'skills' — the
+    // user explicitly wants the original CV's certifications /
+    // licenses / courses section to be respected in the output.
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain("OUTPUT STRUCTURE (Harvard format):");
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "name, email, phone, location, summary, education, experience, projects, skills, languages",
+      "name, email, phone, location, summary, education, experience, projects, certifications, skills, languages",
     );
 
     // Keyword matching: MANDATORY, with explicit examples

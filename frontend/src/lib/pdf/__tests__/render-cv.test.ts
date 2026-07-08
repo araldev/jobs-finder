@@ -146,6 +146,7 @@ const SAMPLE_CV: AdaptedCV = {
   ],
   skills: ["TypeScript", "React", "Node.js", "PostgreSQL", "Kubernetes"],
   languages: ["Spanish", "English"],
+  certifications: [],
   photo: null,
 };
 
@@ -186,6 +187,7 @@ const SPANISH_CV: AdaptedCV = {
   ],
   skills: ["TypeScript", "React", "Node.js", "PostgreSQL"],
   languages: ["Español", "Inglés"],
+  certifications: [],
   photo: null,
 };
 
@@ -314,6 +316,7 @@ describe("renderAdaptedCvAsPdf", () => {
       projects: [],
       skills: [],
       languages: [],
+      certifications: [],
       photo: null,
     };
     const bytes = await renderAdaptedCvAsPdf(empty);
@@ -351,6 +354,43 @@ describe("renderAdaptedCvAsPdf", () => {
     expect(expIdx).toBeGreaterThan(eduIdx);
     expect(projIdx).toBeGreaterThan(expIdx);
     expect(skillsIdx).toBeGreaterThan(projIdx);
+  });
+
+  it("renders a Certificaciones section between Proyectos and Habilidades when certifications are present", async () => {
+    // The user's original CV has a 'CERTIFICACIONES Y COMPETENCIAS'
+    // section in INFORMACIÓN ADICIONAL. The LLM surfaces those
+    // items in the 'certifications' array and the renderer draws
+    // a 'Certificaciones' section between 'Proyectos' and
+    // 'Habilidades', with each cert as a bullet so the issuer /
+    // date suffix is preserved.
+    const bytes = await renderAdaptedCvAsPdf({
+      ...SPANISH_CV,
+      certifications: [
+        "Carné de conducir B y vehículo propio.",
+        "Ultimate JavaScript - Arturo Alba - 2025-02-09",
+        "Java SE Programmer Certification Preparation | NTT DATA / Oracle Training",
+      ],
+    });
+    const pdf = await getDocumentProxy(new Uint8Array(bytes));
+    const { text } = await extractText(pdf, { mergePages: true });
+    expect(text).toContain("CERTIFICACIONES");
+    expect(text).toContain("Carné de conducir B y vehículo propio.");
+    expect(text).toContain("Ultimate JavaScript - Arturo Alba - 2025-02-09");
+    expect(text).toContain(
+      "Java SE Programmer Certification Preparation | NTT DATA / Oracle Training",
+    );
+    const projIdx = text.indexOf("PROYECTOS");
+    const certIdx = text.indexOf("CERTIFICACIONES");
+    const skillsIdx = text.indexOf("HABILIDADES");
+    expect(certIdx).toBeGreaterThan(projIdx);
+    expect(skillsIdx).toBeGreaterThan(certIdx);
+  });
+
+  it("skips the Certifications section entirely when no certifications are present", async () => {
+    const bytes = await renderAdaptedCvAsPdf(SPANISH_CV);
+    const pdf = await getDocumentProxy(new Uint8Array(bytes));
+    const { text } = await extractText(pdf, { mergePages: true });
+    expect(text).not.toContain("CERTIFICACIONES");
   });
 
   it("skips the Projects section entirely when no projects are present", async () => {
