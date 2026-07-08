@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   Briefcase,
   Search,
+  FileText,
   Settings,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -16,6 +17,7 @@ const navItems = [
   { href: "/dashboard", key: "dashboard", icon: LayoutDashboard },
   { href: "/search", key: "search", icon: Search },
   { href: "/favorites", key: "favorites", icon: Briefcase },
+  { href: "/adapt-cv", key: "adaptCv", icon: FileText },
   { href: "/settings", key: "settings", icon: Settings },
 ] as const;
 
