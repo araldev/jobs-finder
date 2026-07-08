@@ -68,8 +68,8 @@ export async function fetchUrlContent(url: string): Promise<FetchResult> {
     return { title: null, textContent: "", success: false };
   }
 
-  // Extract <title> via regex
-  const titleMatch = html.match(/<title>(.*?)<\/title>/is);
+  // Extract <title> via regex (no /s flag — target is ES2017)
+  const titleMatch = html.match(/<title>([\s\S]*?)<\/title>/i);
   const title = titleMatch ? titleMatch[1]!.trim() : null;
 
   // Strip all HTML tags
