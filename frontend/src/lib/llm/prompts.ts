@@ -217,10 +217,19 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "- For each experience entry: the \"description\" field MUST be either\n" +
   "  (a) a verbatim copy of the description in the original CV, OR\n" +
   "  (b) a rephrased short sentence built from the surrounding context\n" +
-  "      (title + company + dates).\n" +
+  "      (title + company + dates), OR\n" +
+  "  (c) for a RELATED TRAINING that the user was pursuing during the\n" +
+  "      job (e.g. the user was studying for the Java SE Certification\n" +
+  "      during their 'PRÁCTICAS en NTT DATA' — the original CV puts\n" +
+  "      the training description near the prácticas entry), merge the\n" +
+  "      training's description into the experience entry as bullet points.\n" +
   "  Do NOT emit \"...\" as the description. Do NOT leave it empty.\n" +
-  "  If the original CV lists tasks / modules / topics / a related training under an experience entry (e.g. 'PRÁCTICAS en NTT DATA — Abril 2026 / Mayo 2026: Desarrollo Backend, Testing, ...'), include that content as bullet points in the experience description. The same applies to a training program that the user was pursuing during the job (e.g. Java SE Certification Preparation) — it goes in the experience description, NOT in a separate section.\n" +
-  "  EXCEPTION: if the original CV has a TOP-LEVEL 'Certificaciones' / 'Certificaciones y Competencias' / 'Licencias' / 'Certifications' / 'Licenses' SECTION, populate the 'certifications' array with those items (see CERTIFICATIONS section below) — DO NOT merge them into experience descriptions in that case. The user explicitly wants the original CV's section structure respected.\n" +
+  "  CRITICAL — DO NOT MERGE ITEMS FROM A DIFFERENT PERIOD: each experience entry's description MUST contain ONLY content from that specific experience entry's own date range. If the original CV has items under date range A (e.g. 'Mayo 2025 - Presente') AND a separate 'PRÁCTICAS' entry under date range B (e.g. 'Abril 2026 - Mayo 2026'), the items from range A are NOT bullet points of the PRÁCTICAS — they are SEPARATE items in the original CV. The PRÁCTICAS bullets come ONLY from content specifically about the PRÁCTICAS, plus the related training (option (c) above) that the original CV explicitly ties to the PRÁCTICAS period.\n" +
+  "  EXAMPLE — CORRECT structure handling: if the original CV has 'EXPERIENCIA: [items under Mayo 2025 - Presente, then Java SE Certification Preparation, then] PRÁCTICAS NTT DATA — Abril 2026 - Mayo 2026', the output should be:\n" +
+  "  - experience: [{ company: 'NTT DATA', title: 'Prácticas', start_date: '2026-04', end_date: '2026-05', description: '• Java SE Certification Preparation: Formación avanzada... (rephrased verbatim from the Java SE entry, which the original CV ties to the NTT DATA prácticas) }]\n" +
+  "  - projects: [{ name: 'Desarrollo Backend con Java y Spring Boot', description: '...', technologies: [...] }, { name: 'Calidad de Software (Testing)', ... }, { name: 'Gestión de Datos', ... }, { name: 'Desarrollo Frontend con Angular', ... }, { name: 'Integración de IA', ... }, { name: 'Proyecto Final', ... }]\n" +
+  "  EXAMPLE — WRONG: experience: [{ company: 'NTT DATA', description: '• Desarrollo Backend con Java y Spring Boot: ... • Calidad de Software / Testing: ... • Gestión de Datos: ... • Desarrollo Frontend con Angular: ... • Integración de IA: ... • Proyecto Final: ...' }] — these bullets are from the 'Mayo 2025 - Presente' period (DAW modules), NOT from the PRÁCTICAS. Putting them as prácticas bullets is a hallucination of the connection.\n" +
+  "  EXCEPTION: if the original CV has a TOP-LEVEL 'Certificaciones' / 'Certificaciones y Competencias' / 'Licencias' / 'Certifications' / 'Licenses' SECTION (a section that explicitly groups licenses, courses, and training programs), populate the 'certifications' array with those items (see CERTIFICATIONS section below) — DO NOT merge them into experience descriptions in that case. The user explicitly wants the original CV's section structure respected.\n" +
   "- For each project entry: the \"description\" field MUST be either\n" +
   "  (a) a verbatim copy of what the original CV says about the\n" +
   "      project, OR\n" +
@@ -264,6 +273,7 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "4. KEYWORD MATCHING (MANDATORY): you MUST extract 3-5 KEYWORDS from the TARGET JOB DESCRIPTION that are NOT already in the original CV's skills section. You MUST add these keywords to the skills array. The keywords MUST be directly related to the candidate's existing experience (do not invent skills the candidate does not have). Examples:\n" +
   "  - If the job requires \"React, TypeScript, GraphQL\" and the CV has only \"React\", add \"TypeScript\" and \"GraphQL\" to skills, BUT only if the candidate's experience with React implies familiarity with them (e.g. they used TypeScript in a project, or they mention \"frontend tooling\" which suggests GraphQL).\n" +
   "  - If the job requires \"AWS\" and the CV has only \"cloud\", add \"AWS\" to skills. If the candidate has never used any cloud service, do NOT add \"AWS\".\n" +
+  "  CRITICAL — DO NOT INVENT UNRELATED SKILLS: the keyword MUST be a technology, tool, or concept the candidate has demonstrable evidence for in the original CV. Do NOT add SEO, SEM, MySQL, PHP, or any other keyword the candidate has never mentioned in the original CV just because the job description mentions them. The candidate's CV mentions PostgreSQL — do NOT swap it for MySQL. The candidate's CV does NOT mention any cloud platform — do NOT add AWS / Azure / GCP. If a keyword from the job description has no basis in the candidate's CV, do NOT add it.\n" +
   "  The \"skills\" array in the output MUST contain at least 3 keywords from the TARGET JOB DESCRIPTION that weren't in the original CV.\n" +
   "\n" +
   "WHAT YOU MUST NOT DO:\n" +

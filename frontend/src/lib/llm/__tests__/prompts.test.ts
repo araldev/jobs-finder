@@ -195,6 +195,41 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
     );
   });
 
+  it("forbids merging items from a different date period into an experience entry's bullets (DAW modules vs prácticas)", () => {
+    // Regression: the LLM was putting 'Mayo 2025 - Presente'
+    // items (Desarrollo Backend, Calidad de Software, Gestión de
+    // Datos, etc.) as bullet points of the 'PRÁCTICAS NTT DATA'
+    // entry (Abril 2026 - Mayo 2026). They're SEPARATE items in
+    // the original CV — the date ranges are different, so the
+    // LLM was hallucinating the connection. The new rule makes
+    // the LLM understand that each experience entry's bullets
+    // come ONLY from that entry's own date range, plus any
+    // related training the original CV explicitly ties to it.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "CRITICAL — DO NOT MERGE ITEMS FROM A DIFFERENT PERIOD",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "EXAMPLE — WRONG: experience: [{ company: 'NTT DATA', description: '• Desarrollo Backend con Java y Spring Boot",
+    );
+  });
+
+  it("forbids inventing unrelated skills via the keyword matching rule", () => {
+    // Regression: the LLM was adding 'MySQL, PHP, SEO, SEM' to
+    // the skills array because the job description mentioned
+    // them, even though the candidate's CV only mentions
+    // PostgreSQL and has no mention of SEO/SEM/PHP. The new
+    // rule explicitly forbids this.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "CRITICAL — DO NOT INVENT UNRELATED SKILLS",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "Do NOT add SEO, SEM, MySQL, PHP",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "do NOT swap it for MySQL",
+    );
+  });
+
   it("instructs JSON-only output and source-of-truth rule", () => {
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain("Output valid JSON only");
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain("ABSOLUTE RULE");
