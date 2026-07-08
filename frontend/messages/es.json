@@ -370,12 +370,21 @@
       "howItWorks": "Cómo funciona",
       "pricing": "Precios",
       "signIn": "Iniciar sesión",
-      "getStarted": "Empezar"
+      "getStarted": "Empezar",
+      "searchJobs": "Buscar empleos",
+      "adaptCv": "Adaptar CV",
+      "signOut": "Cerrar sesión",
+      "signUp": "Registrarse",
+      "signUpFree": "Registrarse gratis"
     },
     "hero": {
-      "badge": "Búsqueda de empleo con IA",
+      "badge": "Potenciado por IA",
       "title": "Adapta tu CV a cada oferta en <highlight>30 segundos</highlight>.",
       "subtitle": "Deja de enviar CVs iguales. Genera versiones a medida para LinkedIn, Indeed e InfoJobs. Optimizado para ATS españoles. Gratis para empezar.",
+      "savedCvLine1": "Una vez guardado, úsalo desde",
+      "savedCvLink": "cualquier oferta de empleo",
+      "savedCvLine2": "para generar tu CV adaptado",
+      "goToAdaptCv": "Ir a Adaptar CV",
       "ctaPrimary": "Empezar — es gratis",
       "ctaSecondary": "Ver cómo funciona",
       "guestUploadTitle": "Sube tu CV (PDF)",
@@ -411,24 +420,46 @@
       }
     },
     "howItWorks": {
-      "title": "Cómo funciona",
+      "title": "¿Cómo funciona?",
+      "subtitle": "Tres pasos simples para adaptar tu CV a cualquier oferta de empleo",
       "step1": {
-        "title": "Subí tu CV",
-        "description": "PDF o pegado. Detectamos automáticamente tus habilidades, experiencia y preferencias."
+        "title": "Sube tu CV",
+        "description": "Sube tu CV en PDF una sola vez. Lo guardamos de forma segura para que lo uses cuando quieras."
       },
       "step2": {
-        "title": "Buscá y filtrá",
-        "description": "Encontrá roles por palabra clave, ubicación, salario, tipo de contrato y fuente."
+        "title": "Selecciona una oferta",
+        "description": "Elige el empleo que te interesa. Nuestra IA analiza la oferta y adapta tu CV automáticamente."
       },
       "step3": {
-        "title": "Postulate en un clic",
-        "description": "Abrí la oferta en el sitio de origen y enviá tu postulación."
+        "title": "Descarga y aplica",
+        "description": "Descarga tu CV adaptado en PDF listo para enviar. Optimizado para pasar filtros ATS."
       }
+    },
+    "benefits": {
+      "title": "¿Por qué funciona?",
+      "intro": "La mayoría de los CVs son descartados en los primeros 7 segundos. Nuestro sistema asegura que el tuyo pase el filtro.",
+      "instantAdapt": {
+        "title": "Adaptación instantánea",
+        "description": "Nuestra IA identifica las keywords y habilidades clave de cada oferta y las destaca en tu CV."
+      },
+      "ats": {
+        "title": "Optimizado para ATS",
+        "description": "Los sistemas de tracking de candidatos (ATS) premian CVs que coinciden con la descripción del empleo."
+      },
+      "effortless": {
+        "title": "Sin esfuerzo, máximo impacto",
+        "description": "Genera tantos CVs adaptados como ofertas te interesen. En minutos, tienes un CV a medida."
+      },
+      "demoPlaceholder": "Demo del flujo: CV → oferta → CV adaptado (próximamente)"
     },
     "cta": {
       "title": "¿Listo para encontrar tu próximo empleo?",
-      "subtitle": "Sumate a miles de求职者 que dejaron de buscar y empezaron a conseguir entrevistas.",
-      "button": "Empezar ahora — es gratis"
+      "subtitle": "Sumate a miles de buscadores de empleo que dejaron de buscar y empezaron a conseguir entrevistas.",
+      "button": "Empezar ahora — es gratis",
+      "sectionTitle": "Empieza ahora",
+      "sectionSubtitle": "Sube tu CV y genera tu primera versión adaptada en menos de 3 minutos. Es gratis.",
+      "registerFree": "Registrarse gratis",
+      "goToAdaptCv": "Ir a Adaptar CV"
     },
     "testimonials": {
       "heading": "Amado por quienes buscan empleo"
@@ -437,13 +468,17 @@
       "copyright": "© 2024 Jobs Finder. Todos los derechos reservados."
     },
     "upload": {
-      "title": "Subí tu CV (PDF)",
-      "placeholder": "Arrastrá o hacé clic para seleccionar",
+      "title": "Sube tu CV (PDF)",
+      "placeholder": "Arrastra o haz clic para seleccionar",
       "uploading": "Subiendo tu CV…",
       "saved": "Tu CV está guardado",
+      "successMessage": "¡CV subido!",
+      "update": "Actualizar",
       "pdfOnly": "Solo se aceptan archivos PDF",
       "tooBig": "El archivo debe ser menor a 5MB",
-      "mustSignIn": "Inicia sesión para subir tu CV"
+      "mustSignIn": "Inicia sesión para subir tu CV",
+      "storageError": "Error al subir el archivo",
+      "dbError": "Error al guardar la referencia"
     },
     "founder": {
       "kicker": "Hecho por una persona, no por una empresa",

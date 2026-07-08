@@ -370,12 +370,21 @@
       "howItWorks": "How it works",
       "pricing": "Pricing",
       "signIn": "Sign in",
-      "getStarted": "Get started"
+      "getStarted": "Get started",
+      "searchJobs": "Search jobs",
+      "adaptCv": "Adapt CV",
+      "signOut": "Sign out",
+      "signUp": "Sign up",
+      "signUpFree": "Sign up free"
     },
     "hero": {
-      "badge": "AI-powered job discovery",
+      "badge": "AI-powered",
       "title": "Adapt your CV to every job in <highlight>30 seconds</highlight>.",
       "subtitle": "Stop sending the same CV everywhere. Generate tailored versions for LinkedIn, Indeed and InfoJobs. Optimized for Spanish ATS. Free to start.",
+      "savedCvLine1": "Once saved, use it from",
+      "savedCvLink": "any job listing",
+      "savedCvLine2": "to generate your adapted CV",
+      "goToAdaptCv": "Go to Adapt CV",
       "ctaPrimary": "Get started — it's free",
       "ctaSecondary": "See how it works",
       "guestUploadTitle": "Upload your CV (PDF)",
@@ -411,24 +420,46 @@
       }
     },
     "howItWorks": {
-      "title": "How it works",
+      "title": "How does it work?",
+      "subtitle": "Three simple steps to adapt your CV to any job posting",
       "step1": {
         "title": "Upload your CV",
-        "description": "PDF or paste. We auto-detect your skills, experience, and preferences."
+        "description": "Upload your CV as PDF once. We store it securely so you can use it whenever you need."
       },
       "step2": {
-        "title": "Search & filter",
-        "description": "Find roles by keyword, location, salary, contract type, and source."
+        "title": "Select a job",
+        "description": "Choose the job you're interested in. Our AI analyzes the posting and adapts your CV automatically."
       },
       "step3": {
-        "title": "Apply in one click",
-        "description": "Open the posting on the source site and submit your application."
+        "title": "Download and apply",
+        "description": "Download your adapted CV as PDF, ready to submit. Optimized to pass ATS filters."
       }
+    },
+    "benefits": {
+      "title": "Why does it work?",
+      "intro": "Most CVs are discarded in the first 7 seconds. Our system ensures yours passes the filter.",
+      "instantAdapt": {
+        "title": "Instant adaptation",
+        "description": "Our AI identifies the keywords and key skills in each job posting and highlights them on your CV."
+      },
+      "ats": {
+        "title": "ATS-optimized",
+        "description": "Applicant Tracking Systems reward CVs that match the job description."
+      },
+      "effortless": {
+        "title": "No effort, maximum impact",
+        "description": "Generate as many adapted CVs as jobs interest you. In minutes, you have a tailored CV."
+      },
+      "demoPlaceholder": "Flow demo: CV → job → adapted CV (coming soon)"
     },
     "cta": {
       "title": "Ready to find your next role?",
       "subtitle": "Join thousands of job seekers who stopped searching and started getting interviews.",
-      "button": "Start now — it's free"
+      "button": "Start now — it's free",
+      "sectionTitle": "Start now",
+      "sectionSubtitle": "Upload your CV and generate your first adapted version in under 3 minutes. It's free.",
+      "registerFree": "Sign up free",
+      "goToAdaptCv": "Go to Adapt CV"
     },
     "testimonials": {
       "heading": "Loved by job seekers"
@@ -441,9 +472,13 @@
       "placeholder": "Drag or click to select",
       "uploading": "Uploading your CV…",
       "saved": "Your CV is saved",
+      "successMessage": "CV uploaded!",
+      "update": "Update",
       "pdfOnly": "PDF files only",
       "tooBig": "File must be under 5MB",
-      "mustSignIn": "Sign in to upload your CV"
+      "mustSignIn": "Sign in to upload your CV",
+      "storageError": "Error uploading file",
+      "dbError": "Error saving reference"
     },
     "founder": {
       "kicker": "Built by a person, not a company",

@@ -9,6 +9,8 @@ import founderPhoto from "@/assets/perfil_2_sin_fondo.webp";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Footer } from "@/components/layout/Footer";
+import { ThemeToggle } from "@/components/layout/ThemeToggle";
+import { LanguageSwitcher } from "@/components/layout/LanguageSwitcher";
 import {
   Upload,
   FileText,
@@ -108,7 +110,7 @@ export default function CVLandingPage() {
       .upload(storagePath, file, { upsert: true });
 
     if (storageError) {
-      setError(`Error subiendo archivo: ${storageError.message}`);
+      setError(`${t("upload.storageError")}: ${storageError.message}`);
       setUploading(false);
       return;
     }
@@ -120,7 +122,7 @@ export default function CVLandingPage() {
     });
 
     if (dbError) {
-      setError(`Error guardando referencia: ${dbError.message}`);
+      setError(`${t("upload.dbError")}: ${dbError.message}`);
       setUploading(false);
       return;
     }
@@ -160,7 +162,7 @@ export default function CVLandingPage() {
               prefetch={true}
               className="text-sm text-muted-foreground transition-colors hover:text-foreground"
             >
-              Buscar empleos
+              {t("nav.searchJobs")}
             </Link>
             {!loading && (
               <>
@@ -173,21 +175,25 @@ export default function CVLandingPage() {
                       {user.email}
                     </Link>
                     <Link href="/adapt-cv">
-                      <Button size="sm">Adaptar CV</Button>
+                      <Button size="sm">{t("nav.adaptCv")}</Button>
                     </Link>
+                    <ThemeToggle />
+                    <LanguageSwitcher />
                     <Button variant="ghost" size="sm" onClick={handleLogout}>
-                      Cerrar sesión
+                      {t("nav.signOut")}
                     </Button>
                   </div>
                 ) : (
                   <div className="flex items-center gap-3">
+                    <ThemeToggle />
+                    <LanguageSwitcher />
                     <Link href="/login">
                       <Button variant="ghost" size="sm">
-                        Iniciar sesión
+                        {t("nav.signIn")}
                       </Button>
                     </Link>
                     <Link href="/login">
-                      <Button size="sm">Registrarse</Button>
+                      <Button size="sm">{t("nav.signUp")}</Button>
                     </Link>
                   </div>
                 )}
@@ -212,22 +218,26 @@ export default function CVLandingPage() {
         {mobileMenuOpen && (
           <div className="border-t md:hidden">
             <div className="container mx-auto space-y-4 px-4 py-4">
+              <div className="flex items-center gap-2">
+                <ThemeToggle />
+                <LanguageSwitcher />
+              </div>
               <Link
                 href="/search"
                 className="block text-sm text-muted-foreground"
                 onClick={() => setMobileMenuOpen(false)}
               >
-                Buscar empleos
+                {t("nav.searchJobs")}
               </Link>
               {!loading && !user && (
                 <div className="flex flex-col gap-2">
                   <Link href="/login" onClick={() => setMobileMenuOpen(false)}>
                     <Button variant="outline" className="w-full">
-                      Iniciar sesión
+                      {t("nav.signIn")}
                     </Button>
                   </Link>
                   <Link href="/login" onClick={() => setMobileMenuOpen(false)}>
-                    <Button className="w-full">Registrarse</Button>
+                    <Button className="w-full">{t("nav.signUp")}</Button>
                   </Link>
                 </div>
               )}
@@ -240,10 +250,10 @@ export default function CVLandingPage() {
                     {user.email}
                   </Link>
                   <Link href="/adapt-cv" onClick={() => setMobileMenuOpen(false)}>
-                    <Button className="w-full">Adaptar CV</Button>
+                    <Button className="w-full">{t("nav.adaptCv")}</Button>
                   </Link>
                   <Button variant="ghost" onClick={handleLogout}>
-                    Cerrar sesión
+                    {t("nav.signOut")}
                   </Button>
                 </div>
               )}
@@ -264,7 +274,7 @@ export default function CVLandingPage() {
             <div className="mb-6 inline-flex items-center gap-2 rounded-full border bg-muted/50 px-4 py-1.5 text-sm">
               <Sparkles className="h-4 w-4 text-primary" />
               <span className="text-muted-foreground">
-                Potenciado por IA
+                {t("hero.badge")}
               </span>
             </div>
 
@@ -293,16 +303,16 @@ export default function CVLandingPage() {
                     onUpload={handleUpload}
                   />
                   <p className="text-sm text-muted-foreground">
-                    Una vez guardado, úsalo desde{" "}
+                    {t("hero.savedCvLine1")}{" "}
                     <Link href="/search" className="text-primary hover:underline">
-                      cualquier oferta de empleo
+                      {t("hero.savedCvLink")}
                     </Link>{" "}
-                    para generar tu CV adaptado
+                    {t("hero.savedCvLine2")}
                   </p>
                   <div className="mt-4">
                     <Link href="/adapt-cv">
                       <Button size="lg" className="gap-2">
-                        Ir a Adaptar CV
+                        {t("hero.goToAdaptCv")}
                         <ArrowRight className="h-4 w-4" />
                       </Button>
                     </Link>
@@ -347,11 +357,10 @@ export default function CVLandingPage() {
         <div className="container mx-auto px-4">
           <div className="mb-12 text-center">
             <h2 className="font-display text-3xl font-bold tracking-tight md:text-4xl">
-              ¿Cómo funciona?
+              {t("howItWorks.title")}
             </h2>
             <p className="mx-auto mt-3 max-w-xl text-muted-foreground">
-              Tres pasos simples para adaptar tu CV a cualquier oferta de
-              empleo
+              {t("howItWorks.subtitle")}
             </p>
           </div>
 
@@ -366,12 +375,11 @@ export default function CVLandingPage() {
                     01
                   </span>
                   <h3 className="font-display text-lg font-bold">
-                    Sube tu CV
+                    {t("howItWorks.step1.title")}
                   </h3>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  Sube tu CV en PDF una sola vez. Lo guardamos de forma
-                  segura para que lo uses cuando quieras.
+                  {t("howItWorks.step1.description")}
                 </p>
               </CardContent>
             </Card>
@@ -386,12 +394,11 @@ export default function CVLandingPage() {
                     02
                   </span>
                   <h3 className="font-display text-lg font-bold">
-                    Selecciona una oferta
+                    {t("howItWorks.step2.title")}
                   </h3>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  Elige el empleo que te interesa. Nuestra IA analiza la
-                  oferta y adapta tu CV automáticamente.
+                  {t("howItWorks.step2.description")}
                 </p>
               </CardContent>
             </Card>
@@ -406,12 +413,11 @@ export default function CVLandingPage() {
                     03
                   </span>
                   <h3 className="font-display text-lg font-bold">
-                    Descarga y aplica
+                    {t("howItWorks.step3.title")}
                   </h3>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  Descarga tu CV adaptado en PDF listo para enviar.
-                  Optimizado para pasar filtros ATS.
+                  {t("howItWorks.step3.description")}
                 </p>
               </CardContent>
             </Card>
@@ -425,12 +431,10 @@ export default function CVLandingPage() {
           <div className="grid gap-12 lg:grid-cols-2 lg:items-center">
             <div>
               <h2 className="font-display text-3xl font-bold tracking-tight md:text-4xl">
-                ¿Por qué funciona?
+                {t("benefits.title")}
               </h2>
               <p className="mt-4 text-lg text-muted-foreground">
-                La mayoría de los CVs son descartados en los primeros 7
-                segundos. Nuestro sistema asegura que el tuyo pase el
-                filtro.
+                {t("benefits.intro")}
               </p>
 
               <div className="mt-8 space-y-4">
@@ -440,11 +444,10 @@ export default function CVLandingPage() {
                   </div>
                   <div>
                     <h3 className="font-display font-bold">
-                      Adaptación instantánea
+                      {t("benefits.instantAdapt.title")}
                     </h3>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Nuestra IA identifica las keywords y habilidades
-                      clave de cada oferta y las destaca en tu CV.
+                      {t("benefits.instantAdapt.description")}
                     </p>
                   </div>
                 </div>
@@ -455,12 +458,10 @@ export default function CVLandingPage() {
                   </div>
                   <div>
                     <h3 className="font-display font-bold">
-                      Optimizado para ATS
+                      {t("benefits.ats.title")}
                     </h3>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Los sistemas de tracking de candidatos (ATS)
-                      premian CVs que coinciden con la descripción del
-                      empleo.
+                      {t("benefits.ats.description")}
                     </p>
                   </div>
                 </div>
@@ -471,11 +472,10 @@ export default function CVLandingPage() {
                   </div>
                   <div>
                     <h3 className="font-display font-bold">
-                      Sin esfuerzo, máximo impacto
+                      {t("benefits.effortless.title")}
                     </h3>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Genera tantos CVs adaptados como ofertas te
-                      interesen. En minutos, tienes un CV a medida.
+                      {t("benefits.effortless.description")}
                     </p>
                   </div>
                 </div>
@@ -487,7 +487,7 @@ export default function CVLandingPage() {
               <Card className="relative overflow-hidden">
                 <div className="aspect-video bg-muted/30 flex items-center justify-center">
                   <p className="text-sm text-muted-foreground">
-                    Demo del flujo: CV → oferta → CV adaptado (próximamente)
+                    {t("benefits.demoPlaceholder")}
                   </p>
                 </div>
               </Card>
@@ -576,11 +576,10 @@ export default function CVLandingPage() {
         <div className="container mx-auto px-4">
           <div className="mx-auto max-w-2xl text-center">
             <h2 className="font-display text-3xl font-bold tracking-tight md:text-4xl">
-              Empieza ahora
+              {t("cta.sectionTitle")}
             </h2>
             <p className="mx-auto mt-4 max-w-xl text-lg text-muted-foreground">
-              Sube tu CV y genera tu primera versión adaptada en menos
-              de 3 minutos. Es gratis.
+              {t("cta.sectionSubtitle")}
             </p>
 
             <div className="mt-8 flex flex-col items-center gap-4">
@@ -595,7 +594,7 @@ export default function CVLandingPage() {
                   />
                   <Link href="/adapt-cv">
                     <Button size="lg" className="gap-2 text-base">
-                      Ir a Adaptar CV
+                      {t("cta.goToAdaptCv")}
                       <ArrowRight className="h-4 w-4" />
                     </Button>
                   </Link>
@@ -603,7 +602,7 @@ export default function CVLandingPage() {
               ) : (
                 <Link href="/login">
                   <Button size="lg" className="gap-2 text-base">
-                    Registrarse gratis
+                    {t("cta.registerFree")}
                     <ArrowRight className="h-4 w-4" />
                   </Button>
                 </Link>
@@ -632,6 +631,7 @@ function UploadCVSection({
   error: string | null;
   onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }) {
+  const t = useTranslations("Landing");
   return (
     <div className="w-full max-w-md">
       <label className="cursor-pointer">
@@ -648,11 +648,11 @@ function UploadCVSection({
             <div className="text-left">
               <p className="font-medium text-sm">{savedCV.original_filename}</p>
               <p className="text-xs text-muted-foreground">
-                Tu CV está guardado
+                {t("upload.saved")}
               </p>
             </div>
             <span className="ml-auto text-xs text-primary">
-              Actualizar
+              {t("upload.update")}
             </span>
           </div>
         ) : (
@@ -661,23 +661,23 @@ function UploadCVSection({
               <>
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 <p className="text-sm text-muted-foreground">
-                  Subiendo tu CV...
+                  {t("upload.uploading")}
                 </p>
               </>
             ) : uploadSuccess ? (
               <>
                 <CheckCircle2 className="h-8 w-8 text-green-600" />
-                <p className="text-sm text-green-600">¡CV subido!</p>
+                <p className="text-sm text-green-600">{t("upload.successMessage")}</p>
               </>
             ) : (
               <>
                 <Upload className="h-8 w-8 text-muted-foreground" />
                 <div className="text-center">
                   <p className="font-medium text-sm">
-                    Sube tu CV (PDF)
+                    {t("upload.title")}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Arrastra o haz click para seleccionar
+                    {t("upload.placeholder")}
                   </p>
                 </div>
               </>

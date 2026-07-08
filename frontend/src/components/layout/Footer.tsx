@@ -38,7 +38,7 @@ export function Footer() {
         <Link
           href="/"
           className="flex items-center gap-2 text-foreground hover:opacity-80 transition-opacity"
-          aria-label="Jobs Finder — Ir al inicio"
+          aria-label="Jobs Finder"
         >
           <Logo size="sm" />
           <span className="font-display text-base font-bold tracking-tight">
