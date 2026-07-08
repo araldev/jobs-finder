@@ -521,7 +521,8 @@ function buildHyperlinksMapSection(
   }
   lines.push(
     "(If a label in the original CV has no matching hyperlink in this MAP, " +
-      "OMIT it from links[].)",
+      "STILL emit it in links[] with `label` set and `url: \"\"` — the renderer " +
+      "shows a label-only chip so the user SEES the link exists.)",
   );
   lines.push("");
   return lines.join("\n");

@@ -9,7 +9,9 @@ import {
   type AdaptedCV,
 } from "@/lib/llm/prompts";
 import { parseAdaptedCVResponse, AdaptedCVParseError } from "@/lib/llm/parser";
+import { substituteHyperlinksInCv } from "@/lib/llm/substitute-hyperlinks";
 import { extractPdfText } from "@/lib/pdf/extract-text";
+import { extractPdfHyperlinks } from "@/lib/pdf/extract-hyperlinks";
 import { extractCvImage } from "@/lib/pdf/extract-image";
 import { renderAdaptedCvAsPdf } from "@/lib/pdf/render-cv";
 import { fetchUrlContent } from "@/lib/url-fetch";
@@ -139,9 +141,19 @@ export async function POST(request: NextRequest) {
   // 7. Clone the ArrayBuffer for image extraction (same reason as the
   //    generate route — pdf-lib's PDFDocument.load detaches the buffer).
   const pdfBytesForImage: ArrayBuffer = pdfBytes.slice(0);
+  // Same reason — `extractPdfHyperlinks` (pdfjs-dist via unpdf) takes
+  // ownership of its input. Give it a clone so the rest of the
+  // pipeline stays intact.
+  const pdfBytesForLinks: ArrayBuffer = pdfBytes.slice(0);
 
   // 8. Extract the CV text.
   const cvText = await extractPdfText(pdfBytes);
+
+  // 8b. Extract the CV's external hyperlinks (real URLs from the PDF's
+  //     link annotations). Passed to the LLM as a HYPERLINKS — ORIGINAL
+  //     URL MAP so it doesn't have to invent URLs from labels. Returns
+  //     `[]` on failure or for PDFs with no http(s) link annotations.
+  const pdfHyperlinks = await extractPdfHyperlinks(pdfBytesForLinks);
 
   // 9. Extract the CV's embedded photo (best-effort).
   const extractedPhoto = await extractCvImage(pdfBytesForImage);
@@ -154,6 +166,7 @@ export async function POST(request: NextRequest) {
     jobTitle,
     jobCompany,
     effectiveDescription,
+    pdfHyperlinks,
   );
 
   let rawResponse: string;
@@ -199,8 +212,15 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // 11b. SUSPENDERS layer: substitute LLM-invented URLs in
+  //      `cv.projects[].links[]` with the real URLs from the PDF
+  //      hyperlink map (by label match — 4-strategy cascade). When
+  //      `pdfHyperlinks` is empty this is a no-op. Mirrors the
+  //      `substitute_hyperlinks_in_cv` step in the Python use case.
+  const substitutedCv = substituteHyperlinksInCv(adaptedCv, pdfHyperlinks);
+
   // 12. Overlay the extracted photo.
-  const finalCv: AdaptedCV = { ...adaptedCv, photo: extractedPhoto };
+  const finalCv: AdaptedCV = { ...substitutedCv, photo: extractedPhoto };
 
   // 13. Render the structured CV as a PDF.
   let renderedPdf: Uint8Array<ArrayBuffer>;

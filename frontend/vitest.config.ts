@@ -23,6 +23,13 @@ export default defineConfig({
       // Mirror the tsconfig `@/messages/*` path alias for JSON imports.
       { find: /^@\/messages\/(.*)$/, replacement: path.resolve(__dirname, "./messages/$1") },
       { find: "@", replacement: path.resolve(__dirname, "./src") },
+      // `server-only` is a Next.js convention — in the Next.js webpack
+      // build it's a no-op for server modules and a hard error for
+      // client modules. In vitest we treat it as a no-op so we can
+      // unit-test server-only modules directly. (Server-only modules
+      // that have client-side data dependencies are still excluded
+      // from the client bundle by Next.js at build time.)
+      { find: /^server-only$/, replacement: path.resolve(__dirname, "vitest.server-only-shim.ts") },
     ],
   },
 });

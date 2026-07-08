@@ -285,6 +285,7 @@ describe("POST /api/cv/generate-custom — URL vs description resolution", () =>
       expect.any(String),
       expect.any(String),
       "We are looking for a senior engineer with TypeScript experience.",
+      expect.any(Array),  // pdfHyperlinks (empty when no annotations)
     );
   });
 
@@ -317,6 +318,7 @@ describe("POST /api/cv/generate-custom — URL vs description resolution", () =>
       expect.any(String),
       expect.any(String),
       "Custom user-written description",
+      expect.any(Array),  // pdfHyperlinks
     );
   });
 
@@ -346,6 +348,7 @@ describe("POST /api/cv/generate-custom — URL vs description resolution", () =>
       expect.any(String),
       expect.any(String),
       "Direct description text",
+      expect.any(Array),  // pdfHyperlinks
     );
   });
 });

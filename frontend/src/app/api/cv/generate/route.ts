@@ -9,7 +9,9 @@ import {
   type AdaptedCV,
 } from "@/lib/llm/prompts";
 import { parseAdaptedCVResponse, AdaptedCVParseError } from "@/lib/llm/parser";
+import { substituteHyperlinksInCv } from "@/lib/llm/substitute-hyperlinks";
 import { extractPdfText } from "@/lib/pdf/extract-text";
+import { extractPdfHyperlinks } from "@/lib/pdf/extract-hyperlinks";
 import { extractCvImage } from "@/lib/pdf/extract-image";
 import { renderAdaptedCvAsPdf } from "@/lib/pdf/render-cv";
 
@@ -158,10 +160,22 @@ export async function POST(request: NextRequest) {
   // `bytes: ArrayBuffer` parameter expects — pdf-lib's
   // `PDFDocument.load` accepts both `ArrayBuffer` and `Uint8Array`.
   const pdfBytesForImage: ArrayBuffer = pdfBytes.slice(0);
+  // Same reason — `extractPdfHyperlinks` (pdfjs-dist via unpdf) takes
+  // ownership of its input. Give it a clone so the rest of the
+  // pipeline stays intact.
+  const pdfBytesForLinks: ArrayBuffer = pdfBytes.slice(0);
 
   // 4. Extract the CV text with `unpdf` (returns "" on failure —
   //    the LLM's system prompt already handles empty input).
   const cvText = await extractPdfText(pdfBytes);
+
+  // 4b. Extract the CV's external hyperlinks (the real URLs from
+  //     the PDF's link annotations). These are passed to the LLM as
+  //     a HYPERLINKS — ORIGINAL URL MAP so it doesn't have to invent
+  //     URLs from labels (and doesn't OMIT labels when the CV has
+  //     no hyperlink annotation for them). Returns `[]` on failure
+  //     or for PDFs with no http(s) link annotations.
+  const pdfHyperlinks = await extractPdfHyperlinks(pdfBytesForLinks);
 
   // 5. Extract the CV's embedded photo (if any) — mirrors
   //    `extract_cv_image` from the Python backend. Returns a
@@ -175,6 +189,7 @@ export async function POST(request: NextRequest) {
     jobTitle,
     jobCompany,
     typeof jobDescription === "string" ? jobDescription : "",
+    pdfHyperlinks,
   );
 
   let rawResponse: string;
@@ -225,12 +240,19 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // 7b. SUSPENDERS layer: substitute LLM-invented URLs in
+  //     `cv.projects[].links[]` with the real URLs from the PDF
+  //     hyperlink map (by label match — 4-strategy cascade). When
+  //     `pdfHyperlinks` is empty this is a no-op. Mirrors the
+  //     `substitute_hyperlinks_in_cv` step in the Python use case.
+  const substitutedCv = substituteHyperlinksInCv(adaptedCv, pdfHyperlinks);
+
   // 8. Overlay the extracted photo onto the parsed CV. The renderer
   //    reads `cv.photo` to decide whether to embed an image XObject
   //    in the Harvard header. `null` → no photo (text-only header,
   //    centered); data URL → photo on the right, name + contact on
   //    the left.
-  const finalCv: AdaptedCV = { ...adaptedCv, photo: extractedPhoto };
+  const finalCv: AdaptedCV = { ...substitutedCv, photo: extractedPhoto };
 
   // 9. Render the structured CV as a real PDF and return it. The
   //    `GenerateCVModal` consumer does `await res.blob()` and saves
