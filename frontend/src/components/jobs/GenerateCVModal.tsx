@@ -372,8 +372,12 @@ export function GenerateCVModal({ job, trigger }: GenerateCVModalProps) {
 
                 <button
                   type="submit"
-                  disabled={(!cvFile && !savedCV) || !consentGiven}
-                  className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                  disabled={
+                    (!cvFile && !savedCV) ||
+                    !consentGiven ||
+                    status === "uploading"
+                  }
+                  className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {status === "uploading" ? (
                     <span className="inline-flex items-center gap-2">

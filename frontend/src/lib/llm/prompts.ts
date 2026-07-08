@@ -235,6 +235,10 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "        Simply EXCLUDE them from the output entirely. The user\n" +
   "        is studying, not obtained.\n" +
   "  Do NOT emit \"...\" as the description. Do NOT leave it empty.\n" +
+  "  BULLET FORMATTING — CRITICAL: the \"description\" field MUST have each\n" +
+  "  bullet point on a SEPARATE LINE separated by \\n. WRONG (single paragraph):\n" +
+  "  \"Bullet 1. Bullet 2. Bullet 3.\" CORRECT (separate lines):\n" +
+  "  \"• Bullet 1\\n• Bullet 2\\n• Bullet 3\".\n" +
   "  EXAMPLE — CORRECT structure handling: if the original CV has 'EXPERIENCIA: [DAW modules + Java SE Certification Preparation under date 'Mayo 2025 - Presente'] PRÁCTICAS NTT DATA — Abril 2026 - Mayo 2026', the output should be:\n" +
   "  - experience: [{ company: 'NTT DATA', title: 'Prácticas', start_date: '2026-04', end_date: '2026-05', description: '• <DAW module 1 verbatim or rephrased>\\n• <DAW module 2 verbatim or rephrased>\\n• ...\\n• Java SE Certification Preparation: <verbatim or rephrased from the Java SE entry>' }]\n" +
   "  - projects: [V12-UI, ENGLISH-WEB, PORTFOLIO — the user's REAL personal projects, not DAW modules]\n" +
@@ -279,9 +283,25 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "CRITICAL — 'CERTIFICATION' IN THE NAME DOES NOT MAKE IT A CERT:\n" +
   "An item that contains the words 'Certification' / 'Certificación' / 'Preparation' / 'Curso' in its name is NOT automatically a 'certifications'-array entry. The 'certifications' array is reserved for items that come from a TOP-LEVEL 'Certificaciones' / 'Certificaciones y Competencias' / 'Licencias' / 'Formación Complementaria' SECTION in the original CV. If the item is in the EXPERIENCIA / EXPERIENCE section (even with 'Certification' in its name), it is part of the experiencia — put its description in the experience entry's bullets, NOT in the 'certifications' array.\n" +
   "EXAMPLE — WRONG: the original CV has 'EXPERIENCIA: ... [DAW modules] ... Java SE Programmer Certification Preparation | NTT DATA / Oracle Training [description] ... PRÁCTICAS NTT DATA'. Output: certifications: ['Java SE Programmer Certification Preparation | NTT DATA / Oracle Training', ...] — WRONG. The Java SE entry is in the EXPERIENCIA section, NOT in a top-level certifications section. Putting it in 'certifications' invents a separation that does not exist in the original CV.\n" +
-  "EXAMPLE — CORRECT: the same original CV. Output: experience: [{ company: 'NTT DATA', title: 'Prácticas', description: '• Java SE Certification Preparation: <rephrased verbatim from the original entry, which the CV puts near the prácticas>' }], certifications: ['Carné de conducir B y vehículo propio.', 'Ultimate JavaScript — Arturo Alba — 2025-02-09'] — the Carné and Ultimate JavaScript come from the 'CERTIFICACIONES Y COMPETENCIAS' subsection of INFORMACIÓN ADICIONAL. The Java SE Cert is part of the NTT DATA experiencia.\n" +
-  "\n" +
-  "WHAT YOU MAY DO (only these 4 things):\n" +
+    "EXAMPLE — CORRECT: the same original CV. Output: experience: [{ company: 'NTT DATA', title: 'Prácticas', description: '• Java SE Certification Preparation: <rephrased verbatim from the original entry, which the CV puts near the prácticas>' }], certifications: ['Carné de conducir B y vehículo propio.', 'Ultimate JavaScript — Arturo Alba — 2025-02-09'] — the Carné and Ultimate JavaScript come from the 'CERTIFICACIONES Y COMPETENCIAS' subsection of INFORMACIÓN ADICIONAL. The Java SE Cert is part of the NTT DATA experiencia.\n" +
+    "\n" +
+    "CRITICAL — DO NOT INFER CERTIFICATIONS FROM VENDOR MENTIONS:\n" +
+    "A vendor name (Oracle, Microsoft, AWS, Google, Meta, etc.) appearing ANYWHERE in the original CV\n" +
+    "does NOT mean the candidate holds a certification from that vendor.\n" +
+    "Just because the original CV says 'Oracle Training' or 'Oracle' in an experience description,\n" +
+    "the LLM must NOT output 'Oracle Certified Professional' or any Oracle certification.\n" +
+    "\"Oracle Certified Professional\" is NOT in the original CV — the LLM invented it.\n" +
+    "The ONLY valid source for certifications is the TOP-LEVEL 'Certificaciones' / 'Certificaciones y Competencias'\n" +
+    "/ 'Licencias' / 'Certifications' / 'Licenses' / 'Formación Complementaria' section.\n" +
+    "If the original CV has no such section, return an empty array [] for certifications.\n" +
+    "EXAMPLE — WRONG: Original CV mentions 'Java SE Programmer Certification Preparation | NTT DATA / Oracle Training'\n" +
+    "in EXPERIENCIA. Output: certifications: ['Oracle Certified Professional', ...] — WRONG.\n" +
+    "'Oracle Certified Professional' is NOT in the original CV at all. The LLM invented it.\n" +
+    "EXAMPLE — CORRECT: The same CV. certifications: ['Carné de conducir B y vehículo propio.',\n" +
+    "'Ultimate JavaScript — Arturo Alba — 2025-02-09'] — ONLY items that appear VERBATIM\n" +
+    "in the 'CERTIFICACIONES Y COMPETENCIAS' section of the original CV.\n" +
+    "\n" +
+    "WHAT YOU MAY DO (only these 4 things):\n" +
   "1. Rephrase existing descriptions using action verbs (preserve all facts from original, do NOT emit \"...\").\n" +
   "2. Inject relevant keywords from the job description INTO the existing descriptions (only words that already exist in the original CV are allowed as skills).\n" +
   "3. Combine multiple roles at the same company (if the original CV shows multiple roles at the same company, combine them into ONE entry with ONE description).\n" +

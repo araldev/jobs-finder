@@ -508,7 +508,7 @@ function drawExperienceEntry(
   drawSpacer(state, 4);
 }
 
-function splitDescriptionIntoBullets(
+export function splitDescriptionIntoBullets(
   description: string,
   cap: number = MAX_BULLETS_PER_ENTRY,
 ): string[] {
@@ -532,6 +532,30 @@ function splitDescriptionIntoBullets(
       if (t.length >= MIN_BULLET_LENGTH) bullets.push(t);
     }
   }
+
+  // Fallback: if no \n was found and we ended up with a single very
+  // long bullet, try re-splitting on stricter [.;] + whitespace
+  // boundaries to catch pathological LLM output that collapsed
+  // multiple sentences into one continuous paragraph.
+  if (
+    bullets.length === 1 &&
+    bullets[0]!.length >= 200 &&
+    !normalized.includes("\n")
+  ) {
+    const longBullet = bullets[0]!;
+    if (/[.;]\s/.test(longBullet)) {
+      const reSplit = longBullet.split(/(?<=[.;])\s+/);
+      const refiltered: string[] = [];
+      for (const frag of reSplit) {
+        const t = frag.trim();
+        if (t.length >= MIN_BULLET_LENGTH) refiltered.push(t);
+      }
+      // Replace bullets with the re-split (still capped).
+      bullets.length = 0;
+      bullets.push(...refiltered.slice(0, cap));
+    }
+  }
+
   return bullets.slice(0, cap);
 }
 
@@ -682,6 +706,7 @@ export async function renderAdaptedCvAsPdf(
   let hasPhoto = false;
   let photoWidth = PHOTO_WIDTH;
   let photoHeight = PHOTO_HEIGHT;
+  let photoY: number | null = null;
   if (sanitized.photo) {
     const decoded = await decodePhotoDataUrl(sanitized.photo).catch(() => null);
     if (decoded) {
@@ -703,7 +728,7 @@ export async function renderAdaptedCvAsPdf(
           photoHeight = Math.round(intr.height * scale);
         }
         const photoX = PAGE_WIDTH - MARGIN - photoWidth;
-        const photoY = PAGE_HEIGHT - MARGIN - photoHeight;
+        photoY = PAGE_HEIGHT - MARGIN - photoHeight;
         state.page.drawImage(embedded, {
           x: photoX,
           y: photoY,
@@ -737,6 +762,12 @@ export async function renderAdaptedCvAsPdf(
       size: SIZE_CONTACT,
       center: !hasPhoto,
     });
+  }
+
+  // Advance state.y below the photo's bottom edge so content
+  // doesn't run alongside the photo (REQ-PHOTO-001).
+  if (hasPhoto && photoY !== null) {
+    state.y = Math.min(state.y, photoY - 5);
   }
 
   // Horizontal rule under the header (separates header from body).

@@ -427,7 +427,12 @@ export default function AdaptCVPage() {
                 {/* Submit button */}
                 <Button
                   type="submit"
-                  disabled={(!cvFile && !savedCV) || !hasUrlOrDescription || !consentGiven}
+                  disabled={
+                    (!cvFile && !savedCV) ||
+                    !hasUrlOrDescription ||
+                    !consentGiven ||
+                    status === "uploading"
+                  }
                   className="w-full"
                 >
                   {status === "uploading" ? (

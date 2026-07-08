@@ -1,3 +1,5 @@
+// @vitest-environment node
+//
 // Tests for `renderAdaptedCvAsPdf` — the pdf-lib renderer used by
 // the cv/generate route to turn the LLM's `AdaptedCV` JSON into a
 // downloadable PDF.
@@ -26,7 +28,7 @@ import { describe, it, expect, vi } from "vitest";
 import { PDFDocument, PDFName } from "pdf-lib";
 import { extractText, getDocumentProxy } from "unpdf";
 import type { AdaptedCV } from "@/lib/llm/prompts";
-import { renderAdaptedCvAsPdf } from "../render-cv";
+import { renderAdaptedCvAsPdf, splitDescriptionIntoBullets } from "../render-cv";
 
 // Build a synthetic JPEG byte array that satisfies pdf-lib's
 // `embedJpg` header check (FF D8 + valid SOF0 marker). Mirrors the
@@ -651,5 +653,63 @@ describe("renderAdaptedCvAsPdf", () => {
     expect(text).toContain("Calidad de Software (Testing)");
     expect(text).toContain("Gestión de Datos");
     expect(text).toContain("Habilidades ganadas");
+  });
+});
+
+describe("splitDescriptionIntoBullets", () => {
+  it("keeps short single-paragraph text as-is (fallback NOT triggered)", () => {
+    // GIVEN a short 80-char description with no newlines and no
+    // period-space boundaries
+    const desc = "Developed features using React and TypeScript";
+
+    // WHEN splitDescriptionIntoBullets processes it
+    const bullets = splitDescriptionIntoBullets(desc);
+
+    // THEN the result contains exactly 1 bullet (the original text)
+    expect(bullets).toHaveLength(1);
+    expect(bullets[0]).toBe(desc);
+  });
+
+  it("re-splits long single paragraph with period-space separators into multiple bullets (fallback triggered)", () => {
+    // GIVEN a long single-paragraph description (>200 chars) with
+    // no \n but with period-space boundaries
+    const desc =
+      "Led a cross-functional team of 8 engineers through a complex migration from a monolith to microservices architecture using Kubernetes and Docker. " +
+      "Designed and shipped a new realtime notification pipeline handling 50k events per second with sub-100ms latency and full fault tolerance. " +
+      "Mentored 4 junior engineers across two quarters through structured pair programming sessions, code reviews, and weekly 1-on-1 coaching.";
+
+    expect(desc.length).toBeGreaterThanOrEqual(200);
+    expect(desc).not.toContain("\n");
+
+    // WHEN splitDescriptionIntoBullets processes it
+    const bullets = splitDescriptionIntoBullets(desc);
+
+    // THEN the result contains ≥2 bullets
+    expect(bullets.length).toBeGreaterThanOrEqual(2);
+    // AND every bullet is ≥5 characters
+    for (const bullet of bullets) {
+      expect(bullet.length).toBeGreaterThanOrEqual(5);
+    }
+  });
+
+  it("leaves text already split by newlines unchanged (no regression)", () => {
+    // GIVEN a description already split by \n
+    const desc = "• Led the platform team\n• Built the realtime pipeline\n• Mentored 4 juniors";
+    const expected = [
+      "Led the platform team",
+      "Built the realtime pipeline",
+      "Mentored 4 juniors",
+    ];
+
+    // WHEN splitDescriptionIntoBullets processes it
+    const bullets = splitDescriptionIntoBullets(desc);
+
+    // THEN the result matches the expected bullets
+    expect(bullets).toEqual(expected);
+  });
+
+  it("handles empty description gracefully", () => {
+    expect(splitDescriptionIntoBullets("")).toEqual([]);
+    expect(splitDescriptionIntoBullets("   ")).toEqual([]);
   });
 });
