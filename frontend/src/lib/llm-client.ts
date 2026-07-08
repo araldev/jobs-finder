@@ -140,7 +140,12 @@ function buildRequestBody(
     model,
     messages,
     temperature: options.temperature ?? DEFAULT_TEMPERATURE,
-    max_tokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
+    // `max_completion_tokens` is the recommended field for new
+    // integrations (the Python backend's `_client.py` uses this
+    // exact name). `max_tokens` is the legacy field; MiniMax-M3
+    // accepts both but `max_completion_tokens` is the more
+    // reliable one in the current API contract.
+    max_completion_tokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
     stream,
   };
   if (options.jsonMode) {
@@ -152,6 +157,14 @@ function buildRequestBody(
     // which is the only way to fit a 5-7KB JSON blob inside the
     // 8192-token budget for `cv/generate`.
     body.thinking = options.thinking;
+    // The Python backend's `_client.py` comment is explicit: BOTH
+    // parameters are needed. `reasoning_effort: "off"` shortens the
+    // thinking block; `thinking.type: "disabled"` suppresses the
+    // extended thinking. Without `reasoning_effort`, the model
+    // still emits a partial thinking block and burns part of the
+    // max_completion_tokens budget on it. Mirrored from the
+    // Python backend so the two pipelines behave identically.
+    body.reasoning_effort = "off";
   }
   return body;
 }

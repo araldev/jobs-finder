@@ -104,6 +104,14 @@ describe("chatCompletion", () => {
     // 'Let me analyze...' preamble unless we opt out via
     // `thinking: { type: 'disabled' }`. The cv/generate route uses
     // this to fit the 5-7KB JSON blob inside the 8192-token budget.
+    //
+    // BOTH parameters are needed (per the Python backend's
+    // `_client.py` comment):
+    //   - `reasoning_effort: "off"` shortens the thinking block.
+    //   - `thinking.type: "disabled"` suppresses extended thinking.
+    // Without `reasoning_effort`, the model still emits a partial
+    // thinking block and burns part of the max_completion_tokens
+    // budget on it.
     const fetchMock = mockFetchOnce(
       new Response(
         JSON.stringify({ choices: [{ message: { content: "{}" } }] }),
@@ -119,9 +127,10 @@ describe("chatCompletion", () => {
     const [, init] = fetchMock.mock.calls[0]!;
     const body = JSON.parse(init?.body as string);
     expect(body.thinking).toEqual({ type: "disabled" });
+    expect(body.reasoning_effort).toBe("off");
   });
 
-  it("omits the `thinking` key from the request body when not requested (API default applies)", async () => {
+  it("omits the `thinking` and `reasoning_effort` keys when thinking is not requested (API default applies)", async () => {
     const fetchMock = mockFetchOnce(
       new Response(
         JSON.stringify({ choices: [{ message: { content: "ok" } }] }),
@@ -134,6 +143,27 @@ describe("chatCompletion", () => {
     const [, init] = fetchMock.mock.calls[0]!;
     const body = JSON.parse(init?.body as string);
     expect(body).not.toHaveProperty("thinking");
+    expect(body).not.toHaveProperty("reasoning_effort");
+  });
+
+  it("uses `max_completion_tokens` (the field name the Python backend uses), not the legacy `max_tokens`", async () => {
+    // MiniMax's current API contract recommends `max_completion_tokens`
+    // over `max_tokens` (the OpenAI legacy field). The Python
+    // backend's `_client.py` sends `max_completion_tokens`; the
+    // frontend must match.
+    const fetchMock = mockFetchOnce(
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: "ok" } }] }),
+        { status: 200 },
+      ),
+    );
+
+    await chatCompletion([{ role: "user", content: "hi" }]);
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse(init?.body as string);
+    expect(body).toHaveProperty("max_completion_tokens");
+    expect(body).not.toHaveProperty("max_tokens");
   });
 
   it("honors LLM_BASE_URL and LLM_MODEL overrides", async () => {
@@ -174,7 +204,7 @@ describe("chatCompletion", () => {
     const body = JSON.parse(init?.body as string);
     expect(body.model).toBe("MiniMax-M3");
     expect(body.temperature).toBe(0);
-    expect(body.max_tokens).toBe(8192);
+    expect(body.max_completion_tokens).toBe(8192);
     expect(body.response_format).toBeUndefined();
   });
 
