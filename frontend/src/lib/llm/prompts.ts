@@ -262,7 +262,9 @@ export const ADAPT_CV_SYSTEM_PROMPT =
 "LINKS — EXTRACTION (CRITICAL): each project can have MULTIPLE external links. If the original CV lists more than one labeled link for a project (e.g. 'V12-UI | GitHub link | Storybook link | npm link'), emit EACH labeled link as a SEPARATE entry in the project's `links` array. The `label` is the verbatim link text from the original CV (e.g. 'GitHub', 'Storybook', 'npm', 'Web', 'Demo'); the `url` is the verbatim destination URL the original CV pairs with that label. Do NOT collapse multiple links into a single `url` — that is the bug this rule fixes.\n" +
 "LINKS — LEGACY FALLBACK: if the original CV only mentions ONE URL with no label, emit a single-entry `links` array: `{\"label\":\"\",\"url\":\"<the URL>\"}`. If the original CV mentions no URL at all for a project, emit `\"links\":[]`.\n" +
 "LINKS — URL RULES: include the URL VERBATIM from the original CV. Do NOT invent URLs (the no-hallucination rule still applies). Drop entries whose URL is empty or missing — a label without a URL is not a link. The parser caps `links` at 8 entries per project (more entries than 8 are dropped silently).\n" +
-"If the original CV has no projects, return an empty array [] for projects.\n" +
+  "LINKS — USE ORIGINAL URLs VERBATIM (CRITICAL):\n" +
+  "When the user message contains a HYPERLINKS — ORIGINAL URL MAP section, you MUST use the URLs from that MAP for every project link. The MAP contains the REAL URLs embedded in the original CV's PDF link annotations — those are the URLs the user wants, not URLs you invent from labels. NEVER invent a URL based on a label (e.g. do NOT synthesize `https://github.com/<project>` from a label that says 'GitHub' — that is hallucination, even when the URL looks plausible). If a label in the original CV has no matching hyperlink in the MAP, OMIT that link from `links[]` entirely (do NOT emit an entry with an empty url, do NOT emit a guessed url). Each entry in `links[]` MUST have BOTH a non-empty `label` AND a non-empty `url` that came from the MAP.\n" +
+  "If the original CV has no projects, return an empty array [] for projects.\n" +
   "\n" +
   "PROJECTS — WHAT IS NOT A PROJECT (CRITICAL):\n" +
   "The following items MUST NEVER appear in the projects array, even if they have a name + description + technologies in the original CV:\n" +
@@ -472,25 +474,87 @@ export function buildChatFilterUserMessage(
 }
 
 /**
+ * A single hyperlink extracted from the original CV PDF.
+ *
+ * Mirrors `HyperlinkEntry` in `backend/src/jobs_finder/infrastructure/cv/_parser.py`.
+ * Used to build the HYPERLINKS — ORIGINAL URL MAP section that
+ * accompanies the user message (so the LLM has the REAL URLs from
+ * the PDF's link annotations instead of inventing them from labels).
+ */
+export interface AdaptedCVHyperlink {
+  label: string;
+  url: string;
+  page: number;
+}
+
+/**
+ * Build the HYPERLINKS — ORIGINAL URL MAP section for the user message.
+ *
+ * Page-grouped, sorted ascending by page number, each entry formatted
+ * `- "<label>" -> <url>`. Returns an empty string when `hyperlinks` is
+ * empty so the caller can drop the section entirely (backward
+ * compat with CVs that have no link annotations).
+ *
+ * Per design §1.2 of `cv-link-preservation`.
+ */
+function buildHyperlinksMapSection(
+  hyperlinks: readonly AdaptedCVHyperlink[],
+): string {
+  if (hyperlinks.length === 0) {
+    return "";
+  }
+  const sorted = [...hyperlinks].sort((a, b) => a.page - b.page);
+  const byPage = new Map<number, AdaptedCVHyperlink[]>();
+  for (const h of sorted) {
+    const list = byPage.get(h.page) ?? [];
+    list.push(h);
+    byPage.set(h.page, list);
+  }
+  const lines: string[] = [
+    "HYPERLINKS — ORIGINAL URL MAP (use these URLs VERBATIM, NEVER invent):",
+  ];
+  for (const page of [...byPage.keys()].sort((a, b) => a - b)) {
+    lines.push(`Page ${page}:`);
+    for (const h of byPage.get(page) ?? []) {
+      lines.push(`- "${h.label}" -> ${h.url}`);
+    }
+  }
+  lines.push(
+    "(If a label in the original CV has no matching hyperlink in this MAP, " +
+      "OMIT it from links[].)",
+  );
+  lines.push("");
+  return lines.join("\n");
+}
+
+/**
  * Build the user message for the CV adaptation call.
  *
  * Mirrors `_cv_prompt.build_adapt_cv_user_message`: truncates the
  * CV text at 8000 chars and the job description at 4000 chars (the
  * same caps as the Python version) so the LLM context stays within
  * the configured `max_tokens` budget.
+ *
+ * When `hyperlinks` is non-empty, appends a page-grouped
+ * HYPERLINKS — ORIGINAL URL MAP section so the LLM has the REAL URLs
+ * from the PDF's link annotations. When empty, the section is omitted
+ * (backward compat — REQ-CLP-006).
  */
 export function buildAdaptCVUserMessage(
   cvText: string,
   jobTitle: string,
   jobCompany: string,
   jobDescription: string,
+  hyperlinks: readonly AdaptedCVHyperlink[] = [],
 ): string {
+  const mapSection = buildHyperlinksMapSection(hyperlinks);
   return (
     `ORIGINAL CV (source of truth — do not add anything not in here):\n${cvText.slice(0, 8000)}\n\n` +
     `TARGET JOB TITLE: ${jobTitle}\n` +
     `TARGET COMPANY: ${jobCompany}  <-- APPLYING COMPANY. ` +
     `CANDIDATE HAS NEVER WORKED AT ${jobCompany.toUpperCase()} UNLESS IN CV ABOVE.\n` +
     `JOB DESCRIPTION (keyword extraction only):\n${jobDescription.slice(0, 4000)}\n\n` +
+    `${mapSection}` +
     `Adapt this CV: rephrase descriptions, add keywords naturally. ` +
     `Keep ALL original facts. Return ONLY JSON.`
   );
