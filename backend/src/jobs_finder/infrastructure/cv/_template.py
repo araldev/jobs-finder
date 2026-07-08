@@ -75,11 +75,17 @@ class ProjectLink:
     npm) are rendered as independently-clickable chips in BOTH
     renderers (Python HTML + TS PDF).
 
+    `url` may be an empty string when the original CV's PDF has a
+    visual label (e.g. "Github link") but no real hyperlink annotation
+    pointing to a URL — in that case the renderer draws a label-only
+    chip (not clickable) so the user still SEES the link exists in
+    the original CV, even though no URL target is available.
+
     Mirrors `frontend/src/lib/llm/prompts.ts` `AdaptedCVProjectLink`.
     """
 
     label: str
-    url: str
+    url: str = ""
 
 
 @dataclass
@@ -522,9 +528,16 @@ class AdaptedCV:
             chip_html = ""
             if effective_links:
                 chip_items = "".join(
+                    # Clickable chip when URL is non-empty, label-only
+                    # span when URL is empty (the original CV had a
+                    # visual label but no real hyperlink annotation).
                     f'<a class="project-link-chip" href="{link.url}">'
                     f"{_html_escape(link.label) or _html_escape(link.url)}"
                     f"</a>"
+                    if link.url
+                    else f'<span class="project-link-chip project-link-chip--no-url">'
+                    f"{_html_escape(link.label)}"
+                    f"</span>"
                     for link in effective_links
                 )
                 chip_html = f'<div class="project-links-row">{chip_items}</div>'

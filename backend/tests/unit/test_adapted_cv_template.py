@@ -567,6 +567,79 @@ class TestRenderProjectsChipRow:
         # And no chip-row container either.
         assert 'class="project-links-row"' not in html
 
+    def test_label_only_chip_renders_as_span(self) -> None:
+        # REGRESSION (cv-link-preservation follow-up): when the LLM
+        # emits a link with `label` set but `url: ""` (because the
+        # original CV had a visual label but no real hyperlink
+        # annotation), the renderer MUST still draw a chip — as a
+        # label-only `<span>`, NOT as an empty-href `<a>` that would
+        # render as a link to the current page.
+        from jobs_finder.infrastructure.cv._template import ProjectEntry, ProjectLink
+
+        proj = ProjectEntry(
+            name="V12-UI",
+            description="React UI lib",
+            links=[
+                ProjectLink(label="Github link", url=""),
+                ProjectLink(label="Storybook link", url=""),
+            ],
+        )
+        cv = AdaptedCV(
+            name="Arturo",
+            email="a@b.c",
+            phone="+34",
+            location="M",
+            summary="S",
+            experience=[],
+            education=[],
+            projects=[proj],
+            certifications=[],
+            skills=[],
+            languages=[],
+        )
+        html = cv.to_html()
+        # Two label-only chip spans rendered (no href, no <a>).
+        assert html.count('class="project-link-chip project-link-chip--no-url"') == 2
+        assert '<a class="project-link-chip"' not in html
+        # Both labels are present in the HTML.
+        assert "Github link" in html
+        assert "Storybook link" in html
+        # Chip-row container is present.
+        assert 'class="project-links-row"' in html
+
+    def test_mixed_url_and_label_only_chips(self) -> None:
+        # A project with MIXED clickable + label-only chips renders
+        # both correctly: real URLs as `<a>` (clickable), empty URLs
+        # as `<span>` (label-only).
+        from jobs_finder.infrastructure.cv._template import ProjectEntry, ProjectLink
+
+        proj = ProjectEntry(
+            name="V12-UI",
+            description="React UI lib",
+            links=[
+                ProjectLink(label="GitHub", url="https://github.com/user/v12-ui"),
+                ProjectLink(label="Storybook link", url=""),
+            ],
+        )
+        cv = AdaptedCV(
+            name="Arturo",
+            email="a@b.c",
+            phone="+34",
+            location="M",
+            summary="S",
+            experience=[],
+            education=[],
+            projects=[proj],
+            certifications=[],
+            skills=[],
+            languages=[],
+        )
+        html = cv.to_html()
+        # 1 clickable <a> chip + 1 label-only <span> chip.
+        assert html.count('<a class="project-link-chip"') == 1
+        assert html.count('class="project-link-chip project-link-chip--no-url"') == 1
+        assert 'href="https://github.com/user/v12-ui"' in html
+
     def test_legacy_url_fallback_renders_chip_with_derived_label(self) -> None:
         # A project with ONLY a legacy `url` (no `links`) renders
         # exactly one chip with the hostname-derived label.

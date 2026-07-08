@@ -221,6 +221,71 @@ class TestSubstituteHyperlinksInCV:
         # Same URL — the post-processor produced the same instance.
         assert result.projects[0].links[0].url == "https://github.com/u/v"
 
+    def test_keeps_label_only_chip_when_no_url_match(self) -> None:
+        # REGRESSION (cv-link-preservation follow-up): when the LLM
+        # emits a chip with `label` set but `url: ""` AND no matching
+        # hyperlink exists in the MAP (the original CV had a visual
+        # label but no real hyperlink annotation), the post-processor
+        # keeps that chip as-is (label-only). The chip is NOT dropped
+        # — the label is still meaningful even without a URL target.
+        cv = _adapted_cv_with_project_links(
+            [
+                ProjectLink(label="Custom badge", url=""),
+            ],
+        )
+        # No matching hyperlinks in the MAP (Custom badge doesn't exist).
+        hyperlinks = [
+            HyperlinkEntry(label="GitHub", url="https://github.com/u/v", page=1),
+        ]
+        result = substitute_hyperlinks_in_cv(cv, hyperlinks)
+        # The chip is preserved with its empty URL — the renderer will
+        # draw it as a label-only `<span>`.
+        assert result.projects[0].links[0] == ProjectLink(label="Custom badge", url="")
+
+    def test_substitutes_empty_url_when_label_matches_map(self) -> None:
+        # Companion case to `test_keeps_label_only_chip_when_no_url_match`:
+        # when the LLM emits `url: ""` BUT the label DOES match a
+        # hyperlink in the MAP, the post-processor substitutes the
+        # empty URL with the real URL from the MAP. This is the
+        # expected behavior — the user gets a clickable chip when a
+        # real URL is available, even if the LLM forgot to emit it.
+        cv = _adapted_cv_with_project_links(
+            [ProjectLink(label="Github link", url="")],
+        )
+        hyperlinks = [
+            HyperlinkEntry(label="Github link", url="https://github.com/u/v", page=1),
+        ]
+        result = substitute_hyperlinks_in_cv(cv, hyperlinks)
+        assert result.projects[0].links[0] == ProjectLink(
+            label="Github link", url="https://github.com/u/v"
+        )
+
+    def test_substitutes_only_real_url_chips_in_mixed_input(self) -> None:
+        # Mixed input: LLM emits one chip with a real URL (correct),
+        # one chip with an empty URL (label-only, no hyperlink in PDF),
+        # and one chip with an invented URL. Post-processor:
+        #   - keeps the real URL as-is,
+        #   - keeps the empty URL as-is (no substitution),
+        #   - substitutes the invented URL with the real one.
+        cv = _adapted_cv_with_project_links(
+            [
+                ProjectLink(label="GitHub", url="https://github.com/u/v"),
+                ProjectLink(label="Storybook link", url=""),
+                ProjectLink(label="npm", url="https://wrong.com"),
+            ],
+        )
+        hyperlinks = [
+            HyperlinkEntry(label="npm", url="https://npmjs.com/u/v", page=1),
+        ]
+        result = substitute_hyperlinks_in_cv(cv, hyperlinks)
+        assert result.projects[0].links[0] == ProjectLink(
+            label="GitHub", url="https://github.com/u/v"
+        )
+        assert result.projects[0].links[1] == ProjectLink(label="Storybook link", url="")
+        assert result.projects[0].links[2] == ProjectLink(
+            label="npm", url="https://npmjs.com/u/v"
+        )
+
     def test_does_not_mutate_input(self) -> None:
         # The post-processor returns a NEW AdaptedCV (via
         # `dataclasses.replace`) — it must NOT mutate the input.
