@@ -7,16 +7,19 @@
 // Python port uses PyMuPDF — this TypeScript port uses `pdf-lib`'s
 // internal XObject traversal). Both implementations:
 //   - iterate pages in order
-//   - filter out images smaller than 10 KB (logos, favicons, icons)
+//   - filter out images smaller than 4 KB (logos, favicons, icons)
 //   - return the first match as a `data:<mime>;base64,<...>` URL
 //   - return `null` when no eligible image is found
 //
 // Verifies:
 //   - A PDF with a single large JPEG image returns its data URL.
-//   - A PDF with only tiny images (< 10 KB) returns `null`.
+//   - A PDF with only tiny images (< 4 KB) returns `null`.
 //   - A PDF with no images returns `null`.
 //   - Malformed bytes return `null` (no leak of underlying error).
-//   - The 10 KB threshold is the lower bound (exactly 10 KB is OK).
+//   - The 4 KB threshold is the lower bound (any image ≥ 4 KB is OK;
+//     the previous 10 KB threshold was too conservative for compressed
+//     CV photos at 200x250px JPEG quality 60-70%, which routinely
+//     land in the 5-15 KB range).
 
 import { describe, it, expect, vi } from "vitest";
 import { PDFDocument } from "pdf-lib";
@@ -126,11 +129,12 @@ describe("extractCvImage", () => {
     expect(decoded).toEqual(jpeg);
   });
 
-  it("filters out images smaller than 10 KB (logos, icons, not photos)", async () => {
+  it("filters out images smaller than 4 KB (logos, icons, not photos)", async () => {
     // Build a PDF with a tiny JPEG (well under the threshold).
     // The Python port uses `if len(image_bytes) < 10_000: continue`
-    // — our TypeScript port mirrors that exact threshold so we
-    // never return a logo, favicon, or social icon as the photo.
+    // — our TypeScript port uses 4_000 to also accept compressed
+    // CV photos that are commonly 5-10 KB at 200x250px JPEG
+    // quality 60-70%. Logos/icons are reliably < 2 KB.
     const tinyJpeg = buildJpegBytes(2_000);
     const bytes = await makePdfWithJpeg(tinyJpeg);
 
@@ -138,9 +142,20 @@ describe("extractCvImage", () => {
     expect(dataUrl).toBeNull();
   });
 
-  it("accepts an image exactly at the 10 KB threshold", async () => {
-    // Build a JPEG that is exactly 10 KB (≥ MIN_IMAGE_BYTES).
-    const boundaryJpeg = buildJpegBytes(10_000);
+  it("accepts a 5 KB image (the previous 10 KB threshold rejected this — a real compressed CV photo)", async () => {
+    // Regression test: this image size was rejected under the
+    // 10 KB threshold even though it's a legitimate CV photo.
+    // The 4 KB threshold now accepts it.
+    const smallJpeg = buildJpegBytes(5_000);
+    const bytes = await makePdfWithJpeg(smallJpeg);
+
+    const dataUrl = await extractCvImage(bytes.buffer.slice(0) as ArrayBuffer);
+    expect(dataUrl).not.toBeNull();
+    expect(dataUrl).toMatch(/^data:image\/jpeg;base64,/);
+  });
+
+  it("accepts an image at the 4 KB threshold boundary", async () => {
+    const boundaryJpeg = buildJpegBytes(4_000);
     const bytes = await makePdfWithJpeg(boundaryJpeg);
 
     const dataUrl = await extractCvImage(bytes.buffer.slice(0) as ArrayBuffer);

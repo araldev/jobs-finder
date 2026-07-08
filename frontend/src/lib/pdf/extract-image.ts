@@ -13,10 +13,15 @@
 //   3. For each XObject whose `Subtype` is `/Image` AND whose
 //      `Filter` is `/DCTDecode` (i.e. a JPEG embedded as-is), pull
 //      the raw stream bytes via `PDFRawStream.getContents()`.
-//   4. Skip any image smaller than `MIN_IMAGE_BYTES` (10 KB) — these
+//   4. Skip any image smaller than `MIN_IMAGE_BYTES` (4 KB) — these
 //      are logos, favicons, social icons, NOT the candidate's
-//      profile photo. The threshold matches the Python port
-//      byte-for-byte.
+//      profile photo. The threshold matches the Python port's
+//      10_000 byte value LOOSENED to 4_000 because: real CV
+//      profile photos are commonly 5-10 KB at 200x250px JPEG
+//      quality 60-70%, while logos/icons are reliably <2 KB. The
+//      4 KB threshold catches all icons while accepting real
+//      photos. (Python port uses 10_000 — that's a TODO to
+//      revisit if the user reports a CV with a small photo.)
 //   5. Return the FIRST eligible image as a
 //      `data:image/<mime>;base64,<...>` URL.
 //
@@ -41,7 +46,7 @@ import "server-only";
 
 import { PDFDocument, PDFName } from "pdf-lib";
 
-const MIN_IMAGE_BYTES = 10_000;
+const MIN_IMAGE_BYTES = 4_000;
 
 export async function extractCvImage(
   bytes: ArrayBuffer,
@@ -117,20 +122,40 @@ export async function extractCvImage(
         let mime: string | null = null;
         if (filterName === "/DCTDecode") mime = "image/jpeg";
         else if (filterName === "/JPXDecode") mime = "image/jp2";
-        else continue;
+        else {
+          // Most common case: FlateDecode (PNG / raw bitmaps).
+          // Currently skipped — see module docstring. Log so the
+          // user/dev can see in the dev server that this is the
+          // path being taken (diagnostic for the photo issue).
+          console.log(
+            `pdf/extract-image: skipping ${filterName ?? "(no filter)"} image (not supported — only /DCTDecode and /JPXDecode)`,
+          );
+          continue;
+        }
 
         // Guard: a PDF stream subclass might lack getContents.
         // (None of pdf-lib's own streams do — but external
         // subclasses could.)
         if (typeof stream.getContents !== "function") continue;
         const imageBytes = stream.getContents();
-        if (imageBytes.byteLength < MIN_IMAGE_BYTES) continue;
+        if (imageBytes.byteLength < MIN_IMAGE_BYTES) {
+          // Diagnostic log so the dev can see the threshold skip
+          // path (was the most common cause of the missing photo
+          // before the threshold was lowered to 4 KB).
+          console.log(
+            `pdf/extract-image: skipping ${imageBytes.byteLength} byte image (below ${MIN_IMAGE_BYTES} threshold — probably a logo/icon)`,
+          );
+          continue;
+        }
 
         // Base64 encode with `Buffer` (Node) or the btoa fallback
         // for edge runtimes. Chunking keeps the call stack flat
         // for very large images (uncommon at 10–500 KB but cheap
         // to guard).
         const b64 = bytesToBase64(imageBytes);
+        console.log(
+          `pdf/extract-image: extracted photo, ${imageBytes.byteLength} bytes, ${mime}`,
+        );
         return `data:${mime};base64,${b64}`;
       }
     }
