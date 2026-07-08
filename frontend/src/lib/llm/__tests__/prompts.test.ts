@@ -187,25 +187,12 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
     // describe the user's ACADEMIC EXPERIENCE during the
     // prácticas, so they belong in the experiencia at NTT DATA
     // as bullets, NOT in the projects array.
-    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "ACADEMIC MODULES, COURSEWORK, AND A RELATED TRAINING",
-    );
-    // The rule text is split across two string concatenations;
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain("ACADEMIC MODULES, COURSEWORK");
+    // The rule text is split across multiple string concatenations;
     // check for the start and the end separately.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain("may be merged into");
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "merge their descriptions into",
-    );
-    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "the experience entry as bullet points.",
-    );
-    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "user wants the DAW",
-    );
-    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "modules AND the Java SE Cert as bullets in the NTT DATA",
-    );
-    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "PRÁCTICAS experience (NOT in projects, NOT in certifications)",
+      "the experience entry's description as bullet points",
     );
   });
 
@@ -244,6 +231,25 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
     );
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
       "EXAMPLE — WRONG: the original CV has 'EXPERIENCIA: ... [DAW modules] ... Java SE Programmer Certification Preparation",
+    );
+  });
+
+  it("explicitly excludes in-progress trainings from the output (do not invent the user has the cert)", () => {
+    // Regression: the LLM was including 'Java SE Programmer
+    // Certification Preparation' as if the user has the cert,
+    // even though it's just a preparation / in-progress program.
+    // The user is studying, not obtained. The new rule says to
+    // EXCLUDE such items entirely from the output.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "IN-PROGRESS TRAININGS / CERTIFICATIONS",
+    );
+    // The text is split across multiple string concatenations;
+    // check for the start and the end separately.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "The user has",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "Simply EXCLUDE them from the output entirely",
     );
   });
 

@@ -12,11 +12,14 @@ const PAGE_HEIGHT = 842;
 const MARGIN = 50;
 const CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN;
 
-// Photo size matches the Python CSS template (28mm × 32mm ≈ 80pt × 91pt).
-// pdf-lib's `drawImage` doesn't crop, so we draw at the natural aspect
-// ratio and accept slightly non-square photos.
-const PHOTO_WIDTH = 80;
-const PHOTO_HEIGHT = 90;
+// Photo size (28mm × 32mm ≈ 80pt × 91pt) for the bounding box; the
+// renderer fits the image to this box preserving aspect ratio
+// (see photo header in renderAdaptedCvAsPdf). Sized to be
+// visibly large in the adapted CV — the previous 80x90 was
+// too small to see clearly, and a 577x845 portrait photo would
+// fit into 61x90 which was nearly invisible.
+const PHOTO_WIDTH = 120;
+const PHOTO_HEIGHT = 140;
 
 // ── Font selection ──────────────────────────────────────────────────────
 //
