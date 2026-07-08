@@ -16,6 +16,7 @@ import json
 import re
 from typing import Any
 
+from ..cv._parser import HyperlinkEntry
 from ..cv._template import (
     AdaptedCV,
     EducationEntry,
@@ -115,6 +116,8 @@ ADAPT_CV_SYSTEM_PROMPT = (
     "LINKS — EXTRACTION (CRITICAL): each project can have MULTIPLE external links. If the original CV lists more than one labeled link for a project (e.g. 'V12-UI | GitHub link | Storybook link | npm link'), emit EACH labeled link as a SEPARATE entry in the project's `links` array. The `label` is the verbatim link text from the original CV (e.g. 'GitHub', 'Storybook', 'npm', 'Web', 'Demo'); the `url` is the verbatim destination URL the original CV pairs with that label. Do NOT collapse multiple links into a single `url` — that is the bug this rule fixes.\n"
     'LINKS — LEGACY FALLBACK: if the original CV only mentions ONE URL with no label, emit a single-entry `links` array: `{"label":"","url":"<the URL>"}`. If the original CV mentions no URL at all for a project, emit `"links":[]`.\n'
     "LINKS — URL RULES: include the URL VERBATIM from the original CV. Do NOT invent URLs (the no-hallucination rule still applies). Drop entries whose URL is empty or missing — a label without a URL is not a link. The parser caps `links` at 8 entries per project (more entries than 8 are dropped silently).\n"
+    "LINKS — USE ORIGINAL URLs VERBATIM (CRITICAL):\n"
+    "When the user message contains a HYPERLINKS — ORIGINAL URL MAP section, you MUST use the URLs from that MAP for every project link. The MAP contains the REAL URLs embedded in the original CV's PDF link annotations — those are the URLs the user wants, not URLs you invent from labels. NEVER invent a URL based on a label (e.g. do NOT synthesize `https://github.com/<project>` from a label that says 'GitHub' — that is hallucination, even when the URL looks plausible). If a label in the original CV has no matching hyperlink in the MAP, OMIT that link from `links[]` entirely (do NOT emit an entry with an empty url, do NOT emit a guessed url). Each entry in `links[]` MUST have BOTH a non-empty `label` AND a non-empty `url` that came from the MAP.\n"
     "If the original CV has no projects, return an empty array [] for projects.\n"
     "\n"
     "PROJECTS — WHAT IS NOT A PROJECT (CRITICAL):\n"
@@ -225,17 +228,61 @@ def build_adapt_cv_user_message(
     job_title: str,
     job_company: str,
     job_description: str,
+    hyperlinks: list[HyperlinkEntry] | None = None,
 ) -> str:
-    """Build the user message for the CV adaptation call."""
+    """Build the user message for the CV adaptation call.
+
+    When `hyperlinks` is non-empty, appends a page-grouped HYPERLINKS —
+    ORIGINAL URL MAP section so the LLM has the REAL URLs from the PDF's
+    hyperlink annotations (instead of inventing them from labels). When
+    `hyperlinks` is empty/None, the MAP section is omitted entirely
+    (backward compat — REQ-CLP-006).
+    """
+    map_section = _build_hyperlinks_map_section(hyperlinks or [])
     return (
         f"ORIGINAL CV (source of truth — do not add anything not in here):\n{cv_text[:8000]}\n\n"
         f"TARGET JOB TITLE: {job_title}\n"
         f"TARGET COMPANY: {job_company}  <-- APPLYING COMPANY. "
         f"CANDIDATE HAS NEVER WORKED AT {job_company.upper()} UNLESS IN CV ABOVE.\n"
         f"JOB DESCRIPTION (keyword extraction only):\n{job_description[:4000]}\n\n"
+        f"{map_section}"
         f"Adapt this CV: rephrase descriptions, add keywords naturally. "
         f"Keep ALL original facts. Return ONLY JSON."
     )
+
+
+def _build_hyperlinks_map_section(hyperlinks: list[HyperlinkEntry]) -> str:
+    """Build the HYPERLINKS — ORIGINAL URL MAP section, page-grouped.
+
+    Returns an empty string when `hyperlinks` is empty so the caller
+    can drop the section entirely (backward compat). When non-empty,
+    the section lists one line per `(label, url)` triple, grouped by
+    page number, ascending. Labels are quoted with double quotes to
+    disambiguate leading/trailing whitespace and special chars.
+
+    Per design §1.2 of `cv-link-preservation`.
+    """
+    if not hyperlinks:
+        return ""
+    # Sort by page ascending (stable — preserves reading order on the
+    # same page because PyMuPDF returns links in PDF insertion order).
+    sorted_links = sorted(hyperlinks, key=lambda h: (h.page,))
+    by_page: dict[int, list[HyperlinkEntry]] = {}
+    for h in sorted_links:
+        by_page.setdefault(h.page, []).append(h)
+    lines: list[str] = [
+        "HYPERLINKS — ORIGINAL URL MAP (use these URLs VERBATIM, NEVER invent):",
+    ]
+    for page in sorted(by_page.keys()):
+        lines.append(f"Page {page}:")
+        for h in by_page[page]:
+            lines.append(f'- "{h.label}" -> {h.url}')
+    lines.append(
+        "(If a label in the original CV has no matching hyperlink in this MAP, "
+        "OMIT it from links[].)",
+    )
+    lines.append("")  # trailing newline before the trailing instruction
+    return "\n".join(lines) + "\n"
 
 
 def parse_adapted_cv_response(raw: str) -> AdaptedCV:  # noqa: PLR0912,PLR0915 (defensive parser branches per strategy)
