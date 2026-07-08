@@ -33,14 +33,29 @@ const DEFAULT_TEMPERATURE = 0.0;
 // burn the same budget.
 const DEFAULT_MAX_TOKENS = 8192;
 // cv/generate emits a 5-7KB JSON blob with 5+ experience entries,
-// education, skills, languages, and now projects. MiniMax-M3 has
-// been observed taking 25-40s for this prompt size. 30s was too
-// tight. 90s leaves headroom while still failing fast enough to
-// surface a real outage (vs. a 5-minute timeout that hangs the
-// route handler). The chat endpoint stays on the original 30s
-// since its prompts are smaller and MiniMax returns streaming
-// chunks quickly.
-const DEFAULT_TIMEOUT_MS = 90_000;
+// education, skills, languages, projects, and a photo. MiniMax-M3
+// spends a significant portion of its output budget on a long
+// "thinking" preamble (`<think>Let me analyze the original CV
+// carefully... I'm going to extract... First the name is...`)
+// before it even starts producing JSON. With 90s the abort fires
+// before the LLM emits its first JSON character (the user sees a
+// 502 "LLM provider unavailable" with a TimeoutError in the dev
+// log).
+//
+// 180s is a TEMPORARY value chosen because: (a) the observed 80-95s
+// for the LLM to finish the thinking + emit the JSON leaves only
+// 5-10s of headroom under 90s, and (b) the route handler is
+// synchronous (one request, one response) so a longer ceiling here
+// does not block other requests. The real fix is to switch the
+// `cv/generate` call to STREAMING (use `chatCompletionStream` to
+// receive chunks incrementally, accumulate the response in the
+// route handler, and only timeout the *individual chunk* gap, not
+// the full response). When streaming is implemented this constant
+// can drop back to 30s.
+//
+// The chat endpoint stays on 30s since its prompts are smaller
+// and MiniMax returns streaming chunks quickly.
+const DEFAULT_TIMEOUT_MS = 180_000;
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
