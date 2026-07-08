@@ -11,17 +11,25 @@
 //
 // Strategy:
 //   1. Use `unpdf.getDocumentProxy` to get a pdfjs document.
-//   2. For each page (in order), call `unpdf.extractImages` —
-//      this is equivalent to PyMuPDF's `page.get_images(full=True)`
-//      and finds ALL images on the page (in Resources / XObject,
-//      Form XObjects, patterns, annotations, soft masks, etc.),
-//      not just the direct page XObjects the previous pdf-lib
-//      walk could see.
-//   3. For each image: filter by size (skip logos / icons that
-//      are too small to be a headshot), then re-encode the
-//      raw pixel data (Uint8ClampedArray) to a valid PNG byte
-//      stream via pngjs.
-//   4. Return the FIRST eligible image as a
+//   2. For each page, call `unpdf.extractImages` — equivalent
+//      to PyMuPDF's `page.get_images(full=True)`. Finds ALL
+//      images on the page (in Resources / XObject, Form
+//      XObjects, patterns, annotations, soft masks, etc.).
+//   3. For each image: filter by size (skip logos / icons
+//      that are too small to be a headshot) and collect it
+//      as a candidate.
+//   4. From all candidates, pick the BEST one — most
+//      channels first (favors 3- or 4-channel color images
+//      over 1-channel grayscale SMasks), then largest by raw
+//      data size. This filter is what fixes the "photo
+//      appears as a grayscale tile" regression: pdfjs emits
+//      the SMask (alpha channel) as a separate 1-channel
+//      grayscale image with the SAME dimensions as the main
+//      image. Taking the first image returned gave us the
+//      SMask (grayscale, smaller byte count) instead of the
+//      main color image.
+//   5. Re-encode the selected image as a valid PNG byte
+//      stream via pngjs and return as a
 //      `data:image/png;base64,<...>` URL.
 //
 // Why this is more robust than the previous pdf-lib walk:
@@ -49,6 +57,15 @@ import { PNG } from "pngjs";
 
 const MIN_IMAGE_BYTES = 4_000;
 
+type Candidate = {
+  pageNum: number;
+  width: number;
+  height: number;
+  channels: 1 | 3 | 4;
+  bytes: number;
+  data: Uint8ClampedArray;
+};
+
 export async function extractCvImage(
   bytes: ArrayBuffer,
 ): Promise<string | null> {
@@ -60,9 +77,15 @@ export async function extractCvImage(
     return null;
   }
 
-  // Walk each page in order. Stop at the first eligible image
-  // (matches PyMuPDF's `for page_num in range(len(doc))`).
+  // Walk each page in order. Collect ALL eligible candidates,
+  // then pick the best one. Going best-of-all (not first-of-all)
+  // is what filters out the SMask (alpha channel) which pdfjs
+  // emits as a separate 1-channel grayscale image with the
+  // same dimensions as the main image — the SMask has fewer
+  // channels and a smaller byte count than the main image.
+  const candidates: Candidate[] = [];
   const pageCount = doc.numPages;
+
   for (let pageNum = 1; pageNum <= pageCount; pageNum++) {
     let images: Awaited<ReturnType<typeof extractImages>>;
     try {
@@ -88,41 +111,56 @@ export async function extractCvImage(
         );
         continue;
       }
-
-      // Re-encode the raw pixel data to a valid PNG byte stream
-      // via pngjs. The renderer embeds this PNG via
-      // `doc.embedPng(...)` (see `render-cv.ts`), so the photo
-      // data URL must be `data:image/png;base64,<...>`.
-      //
-      // unpdf returns `data: Uint8ClampedArray` with the
-      // channel count (1, 3, or 4) — pngjs' PNG supports all
-      // three (grayscale, RGB, RGBA) so we just copy the buffer.
-      try {
-        const png = new PNG({
-          width: img.width,
-          height: img.height,
-          channels: img.channels,
-        });
-        // `img.data` is a Uint8ClampedArray; pngjs' data field
-        // is a Uint8Array (alias for Buffer in Node). We copy
-        // into a plain Uint8Array so the TS type aligns.
-        const data = new Uint8Array(img.data);
-        png.data = data;
-        const pngBytes = PNG.sync.write(png);
-        const b64 = Buffer.from(pngBytes).toString("base64");
-        console.log(
-          `pdf/extract-image: extracted photo from page ${pageNum} — ${img.width}x${img.height} (${img.channels}ch) — ${pngBytes.byteLength} bytes`,
-        );
-        return `data:image/png;base64,${b64}`;
-      } catch (err) {
-        console.error(
-          `pdf/extract-image: pngjs re-encode failed for page ${pageNum}`,
-          err,
-        );
-        continue;
-      }
+      candidates.push({
+        pageNum,
+        width: img.width,
+        height: img.height,
+        channels: img.channels,
+        bytes: pixelBytes,
+        data: img.data,
+      });
     }
   }
 
-  return null;
+  if (candidates.length === 0) {
+    console.log("pdf/extract-image: no eligible images found");
+    return null;
+  }
+
+  // Pick the BEST candidate: most channels (favors 3-/4-channel
+  // color over 1-channel grayscale SMask), then largest by raw
+  // data size, then earliest page (first page wins when there
+  // are multiple same-size main images).
+  candidates.sort((a, b) => {
+    if (b.channels !== a.channels) return b.channels - a.channels;
+    if (b.bytes !== a.bytes) return b.bytes - a.bytes;
+    return a.pageNum - b.pageNum;
+  });
+
+  const best = candidates[0]!;
+
+  // Re-encode the raw pixel data to a valid PNG byte stream
+  // via pngjs. The renderer embeds this PNG via
+  // `doc.embedPng(...)` (see `render-cv.ts`), so the photo
+  // data URL must be `data:image/png;base64,...`.
+  try {
+    const png = new PNG({
+      width: best.width,
+      height: best.height,
+      channels: best.channels,
+    });
+    // `img.data` is a Uint8ClampedArray; pngjs' data field
+    // is a Uint8Array (alias for Buffer in Node). We copy
+    // into a plain Uint8Array so the TS type aligns.
+    png.data = new Uint8Array(best.data);
+    const pngBytes = PNG.sync.write(png);
+    const b64 = Buffer.from(pngBytes).toString("base64");
+    console.log(
+      `pdf/extract-image: extracted photo from page ${best.pageNum} — ${best.width}x${best.height} (${best.channels}ch) — ${pngBytes.byteLength} bytes (from ${candidates.length} candidate${candidates.length === 1 ? "" : "s"})`,
+    );
+    return `data:image/png;base64,${b64}`;
+  } catch (err) {
+    console.error("pdf/extract-image: pngjs re-encode failed", err);
+    return null;
+  }
 }

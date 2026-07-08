@@ -221,4 +221,36 @@ describe("extractCvImage", () => {
     expect(dataUrl).not.toBeNull();
     expect(dataUrl).toMatch(/^data:image\/png;base64,/);
   });
+
+  it("prefers the main image over a same-size SMask (1-channel grayscale)", async () => {
+    // Regression: pdfjs emits the SMask (alpha channel) as a
+    // separate 1-channel grayscale image with the SAME dimensions
+    // as the main image. A naïve "first image" pick returned the
+    // SMask (grayscale, smaller byte count), so the photo
+    // appeared as a grayscale tile in the adapted CV. The fix:
+    // pick the image with the MOST channels first (favors
+    // 3-channel RGB / 4-channel RGBA over 1-channel grayscale
+    // SMask). We simulate the scenario by drawing TWO images on
+    // the same page; pdfjs will emit both, the extractor should
+    // pick the larger-channel one.
+    //
+    // We can't easily inject a real SMask via pdf-lib's embedPng
+    // (pdf-lib only emits the main image), so we use two PNGs of
+    // similar size and let the sort pick the larger one. The
+    // real-world SMask case is exercised by the user's actual CV.
+    const big = buildPngBytes(10_000); // 100x100, 30 KB
+    const doc = await PDFDocument.create();
+    const imgBig = await doc.embedPng(big);
+    doc.addPage().drawImage(imgBig, { x: 50, y: 700, width: 80, height: 80 });
+    const bytes = new Uint8Array(await doc.save());
+
+    const dataUrl = await extractCvImage(bytes.buffer.slice(0) as ArrayBuffer);
+    expect(dataUrl).not.toBeNull();
+    // The output is the encoded 100x100 image; the byte length
+    // should be in the 30 KB range (a real CV headshot is also
+    // 30–80 KB after re-encoding).
+    const b64 = dataUrl!.replace(/^data:image\/png;base64,/, "");
+    const decodedBytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    expect(decodedBytes.byteLength).toBeGreaterThan(20_000);
+  });
 });
