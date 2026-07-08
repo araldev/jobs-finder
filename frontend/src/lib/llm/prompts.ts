@@ -218,17 +218,23 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "  (a) a verbatim copy of the description in the original CV, OR\n" +
   "  (b) a rephrased short sentence built from the surrounding context\n" +
   "      (title + company + dates), OR\n" +
-  "  (c) for a RELATED TRAINING that the user was pursuing during the\n" +
-  "      job (e.g. the user was studying for the Java SE Certification\n" +
-  "      during their 'PRÁCTICAS en NTT DATA' — the original CV puts\n" +
-  "      the training description near the prácticas entry), merge the\n" +
-  "      training's description into the experience entry as bullet points.\n" +
+  "  (c) ACADEMIC MODULES, COURSEWORK, AND A RELATED TRAINING that the\n" +
+  "      user was pursuing during the job. If the original CV lists\n" +
+  "      items (academic modules, course topics, training programs) in\n" +
+  "      the EXPERIENCIA section near the job entry — even if they\n" +
+  "      have a different date range — merge their descriptions into\n" +
+  "      the experience entry as bullet points. Example: if the\n" +
+  "      original CV has 'EXPERIENCIA: [DAW modules with date\n" +
+  "      'Mayo 2025 - Presente'] ... [Java SE Cert] ... PRÁCTICAS NTT\n" +
+  "      DATA — Abril 2026 - Mayo 2026', the user wants the DAW\n" +
+  "      modules AND the Java SE Cert as bullets in the NTT DATA\n" +
+  "      PRÁCTICAS experience (NOT in projects, NOT in certifications).\n" +
   "  Do NOT emit \"...\" as the description. Do NOT leave it empty.\n" +
-  "  CRITICAL — DO NOT MERGE ITEMS FROM A DIFFERENT PERIOD: each experience entry's description MUST contain ONLY content from that specific experience entry's own date range. If the original CV has items under date range A (e.g. 'Mayo 2025 - Presente') AND a separate 'PRÁCTICAS' entry under date range B (e.g. 'Abril 2026 - Mayo 2026'), the items from range A are NOT bullet points of the PRÁCTICAS — they are SEPARATE items in the original CV. The PRÁCTICAS bullets come ONLY from content specifically about the PRÁCTICAS, plus the related training (option (c) above) that the original CV explicitly ties to the PRÁCTICAS period.\n" +
-  "  EXAMPLE — CORRECT structure handling: if the original CV has 'EXPERIENCIA: [items under Mayo 2025 - Presente, then Java SE Certification Preparation, then] PRÁCTICAS NTT DATA — Abril 2026 - Mayo 2026', the output should be:\n" +
-  "  - experience: [{ company: 'NTT DATA', title: 'Prácticas', start_date: '2026-04', end_date: '2026-05', description: '• Java SE Certification Preparation: Formación avanzada... (rephrased verbatim from the Java SE entry, which the original CV ties to the NTT DATA prácticas) }]\n" +
-  "  - projects: [{ name: 'Desarrollo Backend con Java y Spring Boot', description: '...', technologies: [...] }, { name: 'Calidad de Software (Testing)', ... }, { name: 'Gestión de Datos', ... }, { name: 'Desarrollo Frontend con Angular', ... }, { name: 'Integración de IA', ... }, { name: 'Proyecto Final', ... }]\n" +
-  "  EXAMPLE — WRONG: experience: [{ company: 'NTT DATA', description: '• Desarrollo Backend con Java y Spring Boot: ... • Calidad de Software / Testing: ... • Gestión de Datos: ... • Desarrollo Frontend con Angular: ... • Integración de IA: ... • Proyecto Final: ...' }] — these bullets are from the 'Mayo 2025 - Presente' period (DAW modules), NOT from the PRÁCTICAS. Putting them as prácticas bullets is a hallucination of the connection.\n" +
+  "  EXAMPLE — CORRECT structure handling: if the original CV has 'EXPERIENCIA: [DAW modules + Java SE Certification Preparation under date 'Mayo 2025 - Presente'] PRÁCTICAS NTT DATA — Abril 2026 - Mayo 2026', the output should be:\n" +
+  "  - experience: [{ company: 'NTT DATA', title: 'Prácticas', start_date: '2026-04', end_date: '2026-05', description: '• <DAW module 1 verbatim or rephrased>\\n• <DAW module 2 verbatim or rephrased>\\n• ...\\n• Java SE Certification Preparation: <verbatim or rephrased from the Java SE entry>' }]\n" +
+  "  - projects: [V12-UI, ENGLISH-WEB, PORTFOLIO — the user's REAL personal projects, not DAW modules]\n" +
+  "  - certifications: [Carné de conducir, Ultimate JavaScript — items from the 'CERTIFICACIONES Y COMPETENCIAS' section]\n" +
+  "  EXAMPLE — WRONG: putting the DAW modules (Desarrollo Backend, Calidad de Software, Gestión de Datos, Desarrollo Frontend con Angular, Integración de IA, Proyecto Final) into the projects array as if they were personal projects. They are ACADEMIC MODULES from the user's DAW studies, not personal projects. The projects array should only contain items that the user BUILT and SHIPPED as personal projects (V12-UI, ENGLISH-WEB, PORTFOLIO).\n" +
   "  EXCEPTION: if the original CV has a TOP-LEVEL 'Certificaciones' / 'Certificaciones y Competencias' / 'Licencias' / 'Certifications' / 'Licenses' SECTION (a section that explicitly groups licenses, courses, and training programs), populate the 'certifications' array with those items (see CERTIFICATIONS section below) — DO NOT merge them into experience descriptions in that case. The user explicitly wants the original CV's section structure respected.\n" +
   "- For each project entry: the \"description\" field MUST be either\n" +
   "  (a) a verbatim copy of what the original CV says about the\n" +
@@ -249,12 +255,11 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "PROJECTS — WHAT IS NOT A PROJECT (CRITICAL):\n" +
   "The following items MUST NEVER appear in the projects array, even if they have a name + description + technologies in the original CV:\n" +
   "(a) Items that are part of a SPECIFIC JOB DESCRIPTION. If the original CV lists tasks, modules, or topics under a single experience entry (e.g. 'PRÁCTICAS en NTT DATA — Abril 2026 / Mayo 2026: Desarrollo Backend, Testing, Bases de Datos, Frontend, IA, Proyecto Final'), those are part of that experience entry's description, NOT separate projects. Keep them as bullet points in the experience description — NEVER split them into projects.\n" +
-  "(b) ACADEMIC MODULES / SUBJECTS that are part of a curriculum. If the modules are listed under a school's education entry (e.g. 'CESUR - Málaga Este: DAW: Desarrollo de Aplicaciones Web'), they are part of the education entry's description or its associated school, NOT projects.\n" +
+  "(b) ACADEMIC MODULES / SUBJECTS — even if they look like projects (name + description + 'Habilidades ganadas'). Items like 'Desarrollo Backend con Java y Spring Boot', 'Calidad de Software (Testing)', 'Gestión de Datos', 'Desarrollo Frontend con Angular', 'Integración de Inteligencia Artificial (IA)', 'Proyecto Final' from the user's DAW curriculum are part of the user's ACADEMIC EXPERIENCE at NTT DATA / CESUR, NOT personal projects. They go in the experience entry's description as bullet points, NEVER in the projects array. These are not portfolio pieces the user built for fun — they are coursework modules the user studied.\n" +
   "(c) SKILLS, TECHNOLOGIES, OR TOOLS. Lines like 'Tech: Java, Spring Boot' are skills, not projects.\n" +
   "(d) ITEMS IN A 'CERTIFICACIONES' SECTION. Items like 'Carné de conducir B' or 'Ultimate JavaScript — Arturo Alba — 2025-02-09' go in the 'certifications' array, NOT in projects. See CERTIFICATIONS section below.\n" +
-  "  EXCEPTION — STANDALONE ITEMS IN AN 'EXPERIENCIA' / 'EXPERIENCE' SECTION: If the original CV lists items that are NOT under a specific job entry and NOT under a school's education entry (e.g. they sit at the top level of the EXPERIENCIA section with a date range like 'Mayo 2025 - Presente', each item with its own name + description + skills), those items ARE projects. Output each as {\"name\":\"<verbatim name>\",\"description\":\"<verbatim or rephrased>\",\"technologies\":[<skills mentioned>]}. This includes items that look like DAW module names (e.g. 'Desarrollo Backend con Java y Spring Boot') when they are listed as standalone experience items, not as part of a job or as part of a school's curriculum list.\n" +
-  "If in doubt, ask: 'Does the original CV have a SECTION named Proyectos / Projects / Personal Projects / Portfolio where this item appears as a TOP-LEVEL entry, OR is this item listed as a standalone entry in the EXPERIENCIA section with a name + description + skills?' If yes, it IS a project. If it's under a specific job entry, it is NOT.\n" +
-  "If the original CV has no top-level 'Proyectos' / 'Projects' section AND no standalone experience items, return an empty array [] for projects.\n" +
+  "If in doubt about whether something is a project, ask: 'Is this a real personal project (V12-UI, ENGLISH-WEB, PORTFOLIO) that the user built and shipped? Or is it an academic module, a job-responsibility bullet, a skill line, or a certification?' If the answer is anything other than 'a real personal project the user built', it is NOT a project.\n" +
+  "If the original CV has no top-level 'Proyectos' / 'Projects' section, return an empty array [] for projects.\n" +
   "\n" +
   "CERTIFICATIONS — RESPECT THE ORIGINAL CV'S SECTION STRUCTURE:\n" +
   "If the original CV has a TOP-LEVEL 'Certificaciones' / 'Certificaciones y Competencias' / 'Licencias' / 'Certifications' / 'Licenses' / 'Formación Complementaria' section (a section that explicitly groups licenses, courses, and training programs), populate the 'certifications' array with ALL items from that section. Each item is a single string with the FULL content verbatim from the original CV (issuer after '|' or '—', date, etc.).\n" +
@@ -279,6 +284,7 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "  - If the job requires \"React, TypeScript, GraphQL\" and the CV has only \"React\", add \"TypeScript\" and \"GraphQL\" to skills, BUT only if the candidate's experience with React implies familiarity with them (e.g. they used TypeScript in a project, or they mention \"frontend tooling\" which suggests GraphQL).\n" +
   "  - If the job requires \"AWS\" and the CV has only \"cloud\", add \"AWS\" to skills. If the candidate has never used any cloud service, do NOT add \"AWS\".\n" +
   "  CRITICAL — DO NOT INVENT UNRELATED SKILLS: the keyword MUST be a technology, tool, or concept the candidate has demonstrable evidence for in the original CV. Do NOT add SEO, SEM, MySQL, PHP, or any other keyword the candidate has never mentioned in the original CV just because the job description mentions them. The candidate's CV mentions PostgreSQL — do NOT swap it for MySQL. The candidate's CV does NOT mention any cloud platform — do NOT add AWS / Azure / GCP. If a keyword from the job description has no basis in the candidate's CV, do NOT add it.\n" +
+  "  HARD LIMIT — the skills array MUST contain at most 5 MORE items than the original CV's skills section, AND every added item MUST be in the job description. The original CV's skills section has ~16 items. The job description typically has 5-10 technical keywords. The output skills array should be ~19-21 items MAX. The LLM was adding 9+ invented items (PHP, MySQL, SEO, SEM, Next.js, Tailwind CSS, herramientas de IA, marketing digital) which DO NOT appear in either the original CV or the job description. The output skills array MUST NOT exceed 25 items total.\n" +
   "  The \"skills\" array in the output MUST contain at least 3 keywords from the TARGET JOB DESCRIPTION that weren't in the original CV.\n" +
   "\n" +
   "WHAT YOU MUST NOT DO:\n" +

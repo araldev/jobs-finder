@@ -178,38 +178,34 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
     );
   });
 
-  it("allows standalone experience items (DAW module names listed as top-level experience entries) to be projects", () => {
-    // Regression: the previous rule said 'academic modules like
-    // DAW subjects are part of education, NOT projects'. That
-    // rule was too aggressive — it caused important info to
-    // disappear from the adapted CV when the user listed those
-    // items as standalone experience entries (with their own
-    // name + description + skills). The new rule allows them as
-    // projects when they are top-level items, not under a
-    // specific job or school.
+  it("explicitly allows merging DAW modules into the experiencia at NTT DATA (even with a different date range)", () => {
+    // Regression: the user wants the DAW modules (Desarrollo
+    // Backend, Calidad de Software, etc.) to be bullets in the
+    // NTT DATA PRÁCTICAS experience, even though the original
+    // CV has them under date 'Mayo 2025 - Presente' and the
+    // PRÁCTICAS is 'Abril 2026 - Mayo 2026'. The DAW modules
+    // describe the user's ACADEMIC EXPERIENCE during the
+    // prácticas, so they belong in the experiencia at NTT DATA
+    // as bullets, NOT in the projects array.
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "STANDALONE ITEMS IN AN 'EXPERIENCIA' / 'EXPERIENCE' SECTION",
+      "ACADEMIC MODULES, COURSEWORK, AND A RELATED TRAINING",
+    );
+    // The rule text is split across two string concatenations;
+    // check for the start and the end separately.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "merge their descriptions into",
     );
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "DAW module names (e.g. 'Desarrollo Backend con Java y Spring Boot') when they are listed as standalone experience items",
-    );
-  });
-
-  it("forbids merging items from a different date period into an experience entry's bullets (DAW modules vs prácticas)", () => {
-    // Regression: the LLM was putting 'Mayo 2025 - Presente'
-    // items (Desarrollo Backend, Calidad de Software, Gestión de
-    // Datos, etc.) as bullet points of the 'PRÁCTICAS NTT DATA'
-    // entry (Abril 2026 - Mayo 2026). They're SEPARATE items in
-    // the original CV — the date ranges are different, so the
-    // LLM was hallucinating the connection. The new rule makes
-    // the LLM understand that each experience entry's bullets
-    // come ONLY from that entry's own date range, plus any
-    // related training the original CV explicitly ties to it.
-    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "CRITICAL — DO NOT MERGE ITEMS FROM A DIFFERENT PERIOD",
+      "the experience entry as bullet points.",
     );
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "EXAMPLE — WRONG: experience: [{ company: 'NTT DATA', description: '• Desarrollo Backend con Java y Spring Boot",
+      "user wants the DAW",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "modules AND the Java SE Cert as bullets in the NTT DATA",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "PRÁCTICAS experience (NOT in projects, NOT in certifications)",
     );
   });
 
@@ -248,6 +244,37 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
     );
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
       "EXAMPLE — WRONG: the original CV has 'EXPERIENCIA: ... [DAW modules] ... Java SE Programmer Certification Preparation",
+    );
+  });
+
+  it("forbids treating DAW modules as personal projects", () => {
+    // Regression: the LLM was putting 'Desarrollo Backend con Java
+    // y Spring Boot', 'Calidad de Software (Testing)', 'Gestión de
+    // Datos', 'Desarrollo Frontend con Angular', 'Integración de
+    // IA', 'Proyecto Final' into the projects array because they
+    // have name + description + technologies. But these are DAW
+    // academic modules, NOT personal projects the user built and
+    // shipped. The user wants them in the experiencia at NTT DATA
+    // as bullet points.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "ACADEMIC MODULES / SUBJECTS",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "from the user's DAW curriculum are part of the user's ACADEMIC EXPERIENCE at NTT DATA / CESUR, NOT personal projects",
+    );
+  });
+
+  it("hard-caps the skills array size to prevent the LLM from inventing 9+ unrelated skills", () => {
+    // Regression: the LLM was adding 'PHP, MySQL, SEO, SEM,
+    // Next.js, Tailwind CSS, herramientas de IA, marketing
+    // digital' to the skills array even after a 'do not invent
+    // unrelated skills' rule. Adding a hard numeric cap forces
+    // the LLM to actually constrain the output.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "HARD LIMIT",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "MUST NOT exceed 25 items total",
     );
   });
 
