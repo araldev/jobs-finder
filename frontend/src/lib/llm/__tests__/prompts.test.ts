@@ -155,6 +155,28 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
     );
   });
 
+  it("forbids merging certifications into experience descriptions (separate 'certifications' array)", () => {
+    // Regression: MiniMax-M3 was putting the
+    // 'Java SE Programmer Certification Preparation | NTT DATA /
+    // Oracle Training' (a separate item in the original CV) into
+    // the 'PRÁCTICAS en NTT DATA' experience description because
+    // the schema had no place for certifications. The fix is a
+    // dedicated 'certifications' array + a rule that explicitly
+    // forbids merging them into experience descriptions.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "CERTIFICATIONS — COURSES, TRAINING PROGRAMS, PROFESSIONAL CERTIFICATIONS:",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "Java SE Programmer Certification Preparation",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "the 'certifications' array, NOT inside the experience description",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "Do NOT merge certifications into experience descriptions",
+    );
+  });
+
   it("instructs JSON-only output and source-of-truth rule", () => {
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain("Output valid JSON only");
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain("ABSOLUTE RULE");
@@ -171,9 +193,13 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
 
     // Harvard output structure: keys in this order, summary is now
     // required (was optional before the no-placeholders rewrite).
+    // 'certifications' is between 'projects' and 'skills' (added
+    // when the LLM was merging a 'Java SE Certification' into the
+    // PRÁCTICAS NTT DATA experience description — a dedicated
+    // certifications field keeps them separate).
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain("OUTPUT STRUCTURE (Harvard format):");
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "name, email, phone, location, summary, education, experience, projects, skills, languages",
+      "name, email, phone, location, summary, education, experience, projects, certifications, skills, languages",
     );
 
     // Keyword matching: MANDATORY, with explicit examples

@@ -219,6 +219,7 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "  (b) a rephrased short sentence built from the surrounding context\n" +
   "      (title + company + dates).\n" +
   "  Do NOT emit \"...\" as the description. Do NOT leave it empty.\n" +
+  "  Do NOT paste a certification, course, or training program into the experience description just because it shares the employer's name. Example: if the original CV has 'PRÁCTICAS en NTT DATA — Abril 2026 / Mayo 2026' as a separate item AND 'Java SE Programmer Certification Preparation | NTT DATA / Oracle Training' as another item, the experience description MUST be the PRÁCTICAS description (or 'No especificado' if empty), and the Java SE certification MUST go in the 'certifications' array, NOT inside the experience description.\n" +
   "- For each project entry: the \"description\" field MUST be either\n" +
   "  (a) a verbatim copy of what the original CV says about the\n" +
   "      project, OR\n" +
@@ -240,8 +241,15 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "(a) Items that are part of a JOB DESCRIPTION. If the original CV lists tasks, modules, or topics under an experience entry (e.g. 'PRÁCTICAS en NTT DATA — Abril 2026 / Mayo 2026: Desarrollo Backend, Testing, Bases de Datos, Frontend, IA, Proyecto Final'), those are part of the experience entry, NOT separate projects. Keep them as the experience entry's description, and put the technologies into the experience's skill list — NEVER split them into projects.\n" +
   "(b) ACADEMIC MODULES / SUBJECTS. Items that are part of a curriculum (e.g. DAW modules like 'Desarrollo Backend con Java y Spring Boot', 'Calidad de Software', 'Gestión de Datos', 'Desarrollo Frontend con Angular', 'Integración de IA', 'Proyecto Final') are part of the education entry's description or its associated school, NOT projects.\n" +
   "(c) SKILLS, TECHNOLOGIES, OR TOOLS. Lines like 'Tech: Java, Spring Boot' are skills, not projects.\n" +
-  "If in doubt, ask: 'Does the original CV have a SECTION named Proyectos / Projects / Personal Projects / Portfolio where this item appears as a TOP-LEVEL entry?' If no, it is NOT a project. Put it in experience, education, or skills as appropriate.\n" +
+  "(d) CERTIFICATIONS / COURSES / TRAINING PROGRAMS. Items like 'Java SE Programmer Certification Preparation | NTT DATA / Oracle Training' or 'Ultimate JavaScript — Arturo Alba — 2025-02-09' go in the 'certifications' array, NOT in projects.\n" +
+  "If in doubt, ask: 'Does the original CV have a SECTION named Proyectos / Projects / Personal Projects / Portfolio where this item appears as a TOP-LEVEL entry?' If no, it is NOT a project. Put it in experience, education, certifications, or skills as appropriate.\n" +
   "If the original CV has no top-level 'Proyectos' / 'Projects' section, return an empty array [] for projects.\n" +
+  "\n" +
+  "CERTIFICATIONS — COURSES, TRAINING PROGRAMS, PROFESSIONAL CERTIFICATIONS:\n" +
+  "If the original CV contains a course, certification, training program, or bootcamp (e.g. 'Java SE Programmer Certification Preparation | NTT DATA / Oracle Training', 'Ultimate JavaScript — Arturo Alba — 2025-02-09'), put it in the 'certifications' array as a single string with the FULL name verbatim from the original CV (including any issuer after a '|' or '—' separator, and any date).\n" +
+  "Do NOT merge certifications into experience descriptions — even if the certification is named after the same employer as a job entry (e.g. 'Java SE Programmer Certification Preparation | NTT DATA' is NOT the description of 'PRÁCTICAS en NTT DATA'). Each item stands alone.\n" +
+  "The description and 'Habilidades ganadas' of the certification in the original CV go into the 'summary' field (if relevant to the target job) or into the 'skills' array (if they are concrete technologies). The certification's NAME is the only thing that goes into 'certifications'.\n" +
+  "If the original CV has no certifications, return an empty array [] for certifications.\n" +
   "\n" +
   "WHAT YOU MAY DO (only these 4 things):\n" +
   "1. Rephrase existing descriptions using action verbs (preserve all facts from original, do NOT emit \"...\").\n" +
@@ -261,7 +269,7 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "LANGUAGE RULE: Respond in the same language as the original CV.\n" +
   "\n" +
   "OUTPUT STRUCTURE (Harvard format):\n" +
-  "Top-level keys, in this order: name, email, phone, location, summary, education, experience, projects, skills, languages. The \"summary\" field is REQUIRED — see SUMMARY RULE below. If the original CV has additional sections (awards, publications, leadership, certifications, etc.), add them between 'projects' and 'skills'.\n" +
+  "Top-level keys, in this order: name, email, phone, location, summary, education, experience, projects, certifications, skills, languages. The \"summary\" field is REQUIRED — see SUMMARY RULE below. Use 'certifications' for any course, certification, or training program in the original CV.\n" +
   "\n" +
   "SUMMARY RULE (REQUIRED):\n" +
   "The output MUST include a non-empty \"summary\" string of 2-3 sentences. Two cases:\n" +
@@ -292,7 +300,7 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "WRONG: projects=[{\"name\":\"SmartCV AI\",...}] — SmartCV AI not in original CV\n" +
   "\n" +
   "JSON SCHEMA:\n" +
-  "{\"name\":\"string|null\",\"email\":\"string|null\",\"phone\":\"string|null\",\"location\":\"string|null\",\"summary\":\"string|null\",\"experience\":[{\"company\":\"string\",\"title\":\"string\",\"start_date\":\"string\",\"end_date\":\"string\",\"description\":\"string\",\"location\":\"string|null\"}],\"education\":[{\"degree\":\"string\",\"institution\":\"string\",\"year\":\"string\",\"grade\":\"string|null\"}],\"projects\":[{\"name\":\"string\",\"description\":\"string\",\"technologies\":[\"string\"]}],\"skills\":[\"string\"],\"languages\":[\"string\"]}\n";
+  "{\"name\":\"string|null\",\"email\":\"string|null\",\"phone\":\"string|null\",\"location\":\"string|null\",\"summary\":\"string|null\",\"experience\":[{\"company\":\"string\",\"title\":\"string\",\"start_date\":\"string\",\"end_date\":\"string\",\"description\":\"string\",\"location\":\"string|null\"}],\"education\":[{\"degree\":\"string\",\"institution\":\"string\",\"year\":\"string\",\"grade\":\"string|null\"}],\"projects\":[{\"name\":\"string\",\"description\":\"string\",\"technologies\":[\"string\"]}],\"certifications\":[\"string\"],\"skills\":[\"string\"],\"languages\":[\"string\"]}\n";
 
 // ── User message builders ────────────────────────────────────────
 
@@ -333,6 +341,16 @@ export interface AdaptedCV {
   projects: AdaptedCVProject[];
   skills: string[];
   languages: string[];
+  /**
+   * Certifications, courses, and training programs extracted from
+   * the original CV. These are SEPARATE from experience entries —
+   * the LLM must NOT merge a certification into the experience
+   * entry's description just because the certification is named
+   * after the same employer (e.g. "Java SE Programmer Certification
+   * Preparation | NTT DATA / Oracle Training" is NOT the description
+   * of "PRÁCTICAS en NTT DATA — Abril 2026 / Mayo 2026").
+   */
+  certifications: string[];
   /**
    * CV profile photo as a `data:image/...;base64,<...>` URL.
    *

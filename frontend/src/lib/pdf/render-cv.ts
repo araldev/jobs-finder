@@ -81,6 +81,7 @@ const SECTION_TITLES = {
   education: "Educación",
   experience: "Experiencia Profesional",
   projects: "Proyectos",
+  certifications: "Certificaciones",
   skills: "Habilidades",
   languages: "Idiomas",
 } as const;
@@ -609,11 +610,24 @@ export async function renderAdaptedCvAsPdf(
     drawSpacer(state, SECTION_GAP);
   }
 
-  // Proyectos (personal projects, volunteer work, certifications).
+  // Proyectos (personal projects, volunteer work).
   if (cv.projects && cv.projects.length > 0) {
     drawSectionTitle(state, SECTION_TITLES.projects);
     for (const proj of cv.projects) {
       drawProjectEntry(state, proj);
+    }
+    drawSpacer(state, SECTION_GAP);
+  }
+
+  // Certificaciones (courses, training programs, professional certs).
+  if (cv.certifications && cv.certifications.length > 0) {
+    drawSectionTitle(state, SECTION_TITLES.certifications);
+    // Bullet list — each certification gets its own line. Splitting
+    // a comma-joined string would lose the issuer / date suffix
+    // that lives in the verbatim name (e.g. "... | NTT DATA / Oracle
+    // Training", "... - 2025-02-09").
+    for (const cert of cv.certifications) {
+      drawBullet(state, cert);
     }
     drawSpacer(state, SECTION_GAP);
   }
