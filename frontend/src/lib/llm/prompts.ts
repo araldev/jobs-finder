@@ -206,6 +206,7 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "5. NEVER output the target company (the company in JOB COMPANY field) as the candidate's employer.\n" +
   "6. NEVER create a new job entry not in the original CV.\n" +
   "7. NEVER treat personal projects as job positions. (Personal projects GO in the projects array, NOT in experience.)\n" +
+  "8. NEVER split a job's responsibilities / modules / academic subjects into separate 'projects'. Items listed UNDER a job entry (e.g. tasks or modules under 'PRÁCTICAS en NTT DATA') belong in the experience entry's description, NOT in projects. Academic modules (DAW, FP, university subjects) belong in education, NOT in projects.\n" +
   "\n" +
   "EXACT RULE FOR EXPERIENCE:\n" +
   "Only output experience entries where BOTH the company AND the title appear EXPLICITLY in the original CV.\n" +
@@ -233,6 +234,14 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "The description should be 1-2 sentences rephrased from the original (do NOT invent facts, do NOT emit \"...\").\n" +
   "The technologies array should only list tech EXPLICITLY mentioned in the original description (do not invent).\n" +
   "If the original CV has no projects, return an empty array [] for projects.\n" +
+  "\n" +
+  "PROJECTS — WHAT IS NOT A PROJECT (CRITICAL):\n" +
+  "The following items MUST NEVER appear in the projects array, even if they have a name + description + technologies in the original CV:\n" +
+  "(a) Items that are part of a JOB DESCRIPTION. If the original CV lists tasks, modules, or topics under an experience entry (e.g. 'PRÁCTICAS en NTT DATA — Abril 2026 / Mayo 2026: Desarrollo Backend, Testing, Bases de Datos, Frontend, IA, Proyecto Final'), those are part of the experience entry, NOT separate projects. Keep them as the experience entry's description, and put the technologies into the experience's skill list — NEVER split them into projects.\n" +
+  "(b) ACADEMIC MODULES / SUBJECTS. Items that are part of a curriculum (e.g. DAW modules like 'Desarrollo Backend con Java y Spring Boot', 'Calidad de Software', 'Gestión de Datos', 'Desarrollo Frontend con Angular', 'Integración de IA', 'Proyecto Final') are part of the education entry's description or its associated school, NOT projects.\n" +
+  "(c) SKILLS, TECHNOLOGIES, OR TOOLS. Lines like 'Tech: Java, Spring Boot' are skills, not projects.\n" +
+  "If in doubt, ask: 'Does the original CV have a SECTION named Proyectos / Projects / Personal Projects / Portfolio where this item appears as a TOP-LEVEL entry?' If no, it is NOT a project. Put it in experience, education, or skills as appropriate.\n" +
+  "If the original CV has no top-level 'Proyectos' / 'Projects' section, return an empty array [] for projects.\n" +
   "\n" +
   "WHAT YOU MAY DO (only these 4 things):\n" +
   "1. Rephrase existing descriptions using action verbs (preserve all facts from original, do NOT emit \"...\").\n" +

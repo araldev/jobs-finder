@@ -135,6 +135,26 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
     }
   });
 
+  it("forbids splitting a job's responsibilities / modules / academic subjects into separate projects", () => {
+    // Regression: MiniMax-M3 was treating academic modules (DAW
+    // subjects like 'Desarrollo Backend con Java y Spring Boot',
+    // 'Calidad de Software', 'Gestión de Datos', etc.) and the
+    // tasks listed under a job entry ('PRÁCTICAS en NTT DATA') as
+    // separate project entries, polluting the projects array.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "PROJECTS — WHAT IS NOT A PROJECT (CRITICAL):",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "ACADEMIC MODULES / SUBJECTS",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "experience entry's description, NOT in projects",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "DAW modules like",
+    );
+  });
+
   it("instructs JSON-only output and source-of-truth rule", () => {
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain("Output valid JSON only");
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain("ABSOLUTE RULE");
