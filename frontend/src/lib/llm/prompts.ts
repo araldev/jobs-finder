@@ -258,8 +258,9 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "Output each item as: {\"name\":\"<verbatim project name from the original CV>\",\"description\":\"<verbatim or rephrased from the original, NEVER \"...\">\",\"technologies\":[\"<tech mentioned in the original>\", ...]}.\n" +
   "Use the item's name VERBATIM from the original CV. Do NOT invent names.\n" +
   "The description should be 1-2 sentences rephrased from the original (do NOT invent facts, do NOT emit \"...\").\n" +
-  "The technologies array should only list tech EXPLICITLY mentioned in the original description (do not invent).\n" +
-  "If the original CV has no projects, return an empty array [] for projects.\n" +
+"The technologies array should only list tech EXPLICITLY mentioned in the original description (do not invent).\n" +
+"If a project has a URL (GitHub, demo, live site), include it verbatim in the `url` field. Do NOT invent URLs. If the original CV doesn't mention a URL for that project, set `url` to null.\n" +
+"If the original CV has no projects, return an empty array [] for projects.\n" +
   "\n" +
   "PROJECTS — WHAT IS NOT A PROJECT (CRITICAL):\n" +
   "The following items MUST NEVER appear in the projects array, even if they have a name + description + technologies in the original CV:\n" +
@@ -352,7 +353,7 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "WRONG: projects=[{\"name\":\"SmartCV AI\",...}] — SmartCV AI not in original CV\n" +
   "\n" +
   "JSON SCHEMA:\n" +
-  "{\"name\":\"string|null\",\"email\":\"string|null\",\"phone\":\"string|null\",\"location\":\"string|null\",\"summary\":\"string|null\",\"experience\":[{\"company\":\"string\",\"title\":\"string\",\"start_date\":\"string\",\"end_date\":\"string\",\"description\":\"string\",\"location\":\"string|null\"}],\"education\":[{\"degree\":\"string\",\"institution\":\"string\",\"year\":\"string\",\"grade\":\"string|null\"}],\"projects\":[{\"name\":\"string\",\"description\":\"string\",\"technologies\":[\"string\"]}],\"certifications\":[\"string\"],\"skills\":[\"string\"],\"languages\":[\"string\"]}\n";
+  "{\"name\":\"string|null\",\"email\":\"string|null\",\"phone\":\"string|null\",\"location\":\"string|null\",\"summary\":\"string|null\",\"experience\":[{\"company\":\"string\",\"title\":\"string\",\"start_date\":\"string\",\"end_date\":\"string\",\"description\":\"string\",\"location\":\"string|null\"}],\"education\":[{\"degree\":\"string\",\"institution\":\"string\",\"year\":\"string\",\"grade\":\"string|null\"}],\"projects\":[{\"name\":\"string\",\"description\":\"string\",\"technologies\":[\"string\"],\"url\":\"string|null\"}],\"certifications\":[\"string\"],\"skills\":[\"string\"],\"languages\":[\"string\"]}\n";
 
 // ── User message builders ────────────────────────────────────────
 
@@ -380,6 +381,7 @@ export interface AdaptedCVProject {
   name: string;
   description: string;
   technologies: string[];
+  url: string | null;
 }
 
 export interface AdaptedCV {

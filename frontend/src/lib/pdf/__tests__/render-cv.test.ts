@@ -139,11 +139,13 @@ const SAMPLE_CV: AdaptedCV = {
       description:
         "React-based component library used in side projects.",
       technologies: ["React", "TypeScript"],
+      url: null,
     },
     {
       name: "PORTFOLIO",
       description: "Personal website with blog and project showcase.",
       technologies: ["Next.js"],
+      url: null,
     },
   ],
   skills: ["TypeScript", "React", "Node.js", "PostgreSQL", "Kubernetes"],
@@ -185,6 +187,7 @@ const SPANISH_CV: AdaptedCV = {
       name: "V12-UI",
       description: "Librería de componentes React usada en proyectos personales.",
       technologies: ["React", "TypeScript"],
+      url: null,
     },
   ],
   skills: ["TypeScript", "React", "Node.js", "PostgreSQL"],
@@ -415,6 +418,7 @@ describe("renderAdaptedCvAsPdf", () => {
           name: "MyNakedProject",
           description: "Description only.",
           technologies: [],
+          url: null,
         },
       ],
     });
@@ -711,5 +715,93 @@ describe("splitDescriptionIntoBullets", () => {
   it("handles empty description gracefully", () => {
     expect(splitDescriptionIntoBullets("")).toEqual([]);
     expect(splitDescriptionIntoBullets("   ")).toEqual([]);
+  });
+});
+
+describe("link annotations for project URLs", () => {
+  it("creates a link annotation when project has a valid http URL", async () => {
+    const cv: AdaptedCV = {
+      ...SAMPLE_CV,
+      projects: [
+        {
+          name: "V12-UI",
+          description: "React-based component library.",
+          technologies: ["React"],
+          url: "https://github.com/user/v12-ui",
+        },
+      ],
+    };
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    const loaded = await PDFDocument.load(bytes);
+    const firstPage = loaded.getPages()[0]!;
+    const annotsObj = firstPage.node.get(PDFName.of("Annots"));
+    expect(annotsObj).toBeDefined();
+    const annots = (annotsObj as any)?.asArray() ?? [];
+    expect(annots.length).toBeGreaterThanOrEqual(1);
+    // The first annotation is a PDFRef that references the actual dict.
+    // Look it up in the document's context.
+    const annotRef = annots[0] as any;
+    const lookup = loaded.context.lookup(annotRef) as any;
+    expect(lookup).toBeDefined();
+    // Verify it's a Link annotation with URI action
+    const subtype = lookup.get(PDFName.of("Subtype"));
+    expect(subtype).toBeDefined();
+    expect(subtype?.toString()).toBe("/Link");
+    const aDict = lookup.get(PDFName.of("A"));
+    expect(aDict).toBeDefined();
+    const uri = aDict?.get(PDFName.of("URI"));
+    expect(uri).toBeDefined();
+    // pdf-lib stores URIs as PDF strings with internal escaping
+    // (e.g. `/` → `#2F`). Verify the annotation dictionary has
+    // a URI entry referencing the expected host and path.
+    expect(uri).toBeDefined();
+    const uriStr = String((uri as any)?.toString() ?? "");
+    expect(uriStr).toContain("github.com");
+    expect(uriStr).toContain("v12-ui");
+  });
+
+  it("does NOT add a link annotation when project URL is null", async () => {
+    const cv: AdaptedCV = {
+      ...SAMPLE_CV,
+      projects: [
+        {
+          name: "V12-UI",
+          description: "React-based component library.",
+          technologies: ["React"],
+          url: null,
+        },
+      ],
+    };
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    const loaded = await PDFDocument.load(bytes);
+    const firstPage = loaded.getPages()[0]!;
+    const annotsObj = firstPage.node.get(PDFName.of("Annots"));
+    // When no annotations exist, the key may be absent or the array empty
+    if (annotsObj) {
+      const annots = (annotsObj as any)?.asArray() ?? [];
+      expect(annots.length).toBe(0);
+    }
+  });
+
+  it("skips annotation gracefully when URL does not start with http (ftp:// guard)", async () => {
+    const cv: AdaptedCV = {
+      ...SAMPLE_CV,
+      projects: [
+        {
+          name: "V12-UI",
+          description: "React-based component library.",
+          technologies: ["React"],
+          url: "ftp://files.example.com/project",
+        },
+      ],
+    };
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    const loaded = await PDFDocument.load(bytes);
+    const firstPage = loaded.getPages()[0]!;
+    const annotsObj = firstPage.node.get(PDFName.of("Annots"));
+    if (annotsObj) {
+      const annots = (annotsObj as any)?.asArray() ?? [];
+      expect(annots.length).toBe(0);
+    }
   });
 });

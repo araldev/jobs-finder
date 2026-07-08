@@ -49,6 +49,7 @@ class ProjectEntry:
     name: str
     description: str = ""
     technologies: list[str] = field(default_factory=list)
+    url: str | None = None
 
 
 @dataclass
@@ -99,6 +100,15 @@ class AdaptedCV:
     box-sizing: border-box;
     margin: 0;
     padding: 0;
+  }}
+
+  a {{
+    color: inherit;
+    text-decoration: none;
+  }}
+
+  a::after {{
+    content: none;
   }}
 
   body {{
@@ -368,9 +378,12 @@ class AdaptedCV:
                 if proj.description
                 else ""
             )
+            name_html = (
+                f'<a href="{proj.url}">{proj.name}</a>' if proj.url else proj.name
+            )
             items += f"""
 <div class="project-item">
-  <div class="project-name">{proj.name}</div>
+  <div class="project-name">{name_html}</div>
   {desc_html}
   {tech_html}
 </div>"""

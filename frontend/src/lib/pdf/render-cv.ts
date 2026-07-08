@@ -1,6 +1,6 @@
 import "server-only";
 
-import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb, PDFName, PDFArray } from "pdf-lib";
 import type { AdaptedCV } from "@/lib/llm/prompts";
 
 // ── Page geometry ───────────────────────────────────────────────────────
@@ -434,6 +434,37 @@ function drawHeaderRule(state: DrawState): void {
   });
 }
 
+// ── Link annotation helper ─────────────────────────────────────────────
+
+function drawLinkAnnotation(
+  state: DrawState,
+  url: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): void {
+  if (!url.startsWith("http")) return;
+  const linkAnnotation = state.doc.context.obj({
+    Type: "Annot",
+    Subtype: "Link",
+    Rect: [x, y, x + width, y + height],
+    Border: [0, 0, 0],
+    A: {
+      Type: "Action",
+      S: "URI",
+      URI: url,
+    },
+  }) as any;
+  const linkRef = state.doc.context.register(linkAnnotation);
+  const existingAnnotsObj = state.page.node.get(PDFName.of("Annots"));
+  const existing = existingAnnotsObj instanceof PDFArray
+    ? existingAnnotsObj.asArray().slice()
+    : [];
+  existing.push(linkRef);
+  state.page.node.set(PDFName.of("Annots"), state.doc.context.obj(existing) as any);
+}
+
 // ── Per-section content helpers ────────────────────────────────────────
 
 function drawEducationEntry(
@@ -564,10 +595,23 @@ function drawProjectEntry(
   proj: AdaptedCV["projects"][number],
 ): void {
   if (proj.name) {
+    const nameStartY = state.y;
     drawWrappedText(state, proj.name, {
       size: SIZE_PROJECT_NAME,
       font: state.bold,
     });
+    const nameEndY = state.y;
+    // Draw link annotation if project has a valid URL
+    if (proj.url && proj.url.startsWith("http")) {
+      drawLinkAnnotation(
+        state,
+        proj.url,
+        MARGIN,
+        nameEndY,
+        state.bold.widthOfTextAtSize(proj.name, SIZE_PROJECT_NAME),
+        nameStartY - nameEndY,
+      );
+    }
   }
   if (proj.description) {
     drawWrappedText(state, proj.description, {
@@ -673,6 +717,7 @@ export async function renderAdaptedCvAsPdf(
       name: sanitizeForWinAnsi(p.name),
       description: sanitizeForWinAnsi(p.description),
       technologies: p.technologies.map(sanitizeForWinAnsi),
+      url: p.url ? sanitizeForWinAnsi(p.url) : null,
     })),
     certifications: cv.certifications.map(sanitizeForWinAnsi),
     skills: cv.skills.map(sanitizeForWinAnsi),

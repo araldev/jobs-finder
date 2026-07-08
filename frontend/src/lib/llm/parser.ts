@@ -112,6 +112,7 @@ function projectsOr(value: unknown): AdaptedCVProject[] {
         name: strOr(proj.name),
         description: strOr(proj.description, ""),
         technologies: listOr(proj.technologies),
+        url: strOr(proj.url),
       };
     })
     .filter((p) => p.name.length > 0);
