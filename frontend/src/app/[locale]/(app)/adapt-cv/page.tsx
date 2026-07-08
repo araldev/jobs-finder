@@ -103,29 +103,31 @@ export default function AdaptCVPage() {
     fetchSavedCV();
   }, [fetchSavedCV]);
 
+  const MAX_CLIENT_SIZE = 5 * 1024 * 1024; // 5 MB
+
+  function validateAndSetCv(f: File): boolean {
+    if (f.type && f.type !== "application/pdf") {
+      setErrorMsg("Solo se aceptan archivos PDF");
+      return false;
+    }
+    if (f.size > MAX_CLIENT_SIZE) {
+      setErrorMsg("El archivo debe ser menor a 5 MB");
+      return false;
+    }
+    setCvFile(f);
+    setErrorMsg(null);
+    return true;
+  }
+
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
-    if (f) {
-      if (f.type !== "application/pdf") {
-        setErrorMsg("Solo se aceptan archivos PDF");
-        return;
-      }
-      setCvFile(f);
-      setErrorMsg(null);
-    }
+    if (f) validateAndSetCv(f);
   }
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     const f = e.dataTransfer.files?.[0];
-    if (f) {
-      if (f.type !== "application/pdf") {
-        setErrorMsg("Solo se aceptan archivos PDF");
-        return;
-      }
-      setCvFile(f);
-      setErrorMsg(null);
-    }
+    if (f) validateAndSetCv(f);
   }
 
   function removeFile() {
