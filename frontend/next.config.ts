@@ -23,7 +23,15 @@ const nextConfig: NextConfig = {
   // instead of running them through the ESM transform pipeline.
   // The runtime code is unchanged — they still work the same once
   // loaded via the CJS path.
-  serverExternalPackages: ["pdf-lib", "unpdf"],
+  //
+  // @napi-rs/canvas is a NATIVE Node addon (skia.linux-x64-gnu.node
+  // etc.) — it can never be bundled by webpack (it's a binary,
+  // not JS). Marking it as serverExternalPackages prevents
+  // webpack from trying to walk the import graph from the
+  // CLIENT bundle. We also use a dynamic `await import(...)` in
+  // the source so even if webpack DOES see the import, it
+  // can't statically resolve it and skips the chunk.
+  serverExternalPackages: ["pdf-lib", "unpdf", "@napi-rs/canvas"],
 };
 
 export default withNextIntl(nextConfig);

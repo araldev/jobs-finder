@@ -31,7 +31,17 @@ import { PNG } from "pngjs";
 // unpdf requires the caller to pass the canvas module as a
 // `canvasImport` option in Node — it does NOT auto-resolve the
 // optional `canvas` / `@napi-rs/canvas` peer dependency.
-import * as canvas from "@napi-rs/canvas";
+//
+// CRITICAL: the import MUST be lazy (dynamic) — a static
+// `import * as canvas from "@napi-rs/canvas"` at module
+// top-level forces Next.js webpack to bundle the canvas
+// native binding (skia.linux-x64-gnu.node) into the CLIENT
+// bundle, which throws "Module parse failed: Unexpected
+// character" at build time. A dynamic `await import(...)` is
+// only resolved at runtime, so webpack skips it. The
+// `server-only` import above prevents the module from
+// executing in the browser, so the dynamic import is only
+// hit in the Node.js server runtime.
 
 const CROP_TOP_FRACTION = 0.18; // top 18% of the page (typical header area)
 const CROP_WIDTH_FRACTION = 0.30; // right 30% of the page (typical photo width)
@@ -40,6 +50,14 @@ const MIN_HEADSHOT_SIDE = 100; // px — minimum cropped region dimension
 export async function extractCvImage(
   bytes: ArrayBuffer,
 ): Promise<string | null> {
+  // Lazy-load @napi-rs/canvas — see the top-of-file comment.
+  // A static import would break the client bundle (webpack
+  // would try to bundle the canvas native binding).
+  const canvasPromise = (async () => {
+    const mod = await import("@napi-rs/canvas");
+    return mod;
+  })();
+
   let doc: Awaited<ReturnType<typeof getDocumentProxy>>;
   try {
     doc = await getDocumentProxy(new Uint8Array(bytes));
@@ -57,7 +75,10 @@ export async function extractCvImage(
   try {
     pagePngBytes = await renderPageAsImage(doc, 1, {
       scale: 2,
-      canvasImport: async () => canvas,
+      canvasImport: async () => {
+        const canvas = await canvasPromise;
+        return canvas;
+      },
     });
   } catch (err) {
     console.error("pdf/extract-image: renderPageAsImage failed", err);
