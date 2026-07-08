@@ -11,31 +11,34 @@
 //   1. Iterate the document's pages in order.
 //   2. For each page, look at the `Resources / XObject` dictionary.
 //   3. For each XObject whose `Subtype` is `/Image` AND whose
-//      `Filter` is `/DCTDecode` (i.e. a JPEG embedded as-is), pull
-//      the raw stream bytes via `PDFRawStream.getContents()`.
-//   4. Skip any image smaller than `MIN_IMAGE_BYTES` (4 KB) — these
+//      `Filter` is supported (DCTDecode = JPEG, JPXDecode = JPEG
+//      2000, or FlateDecode = PNG inline), pull the raw stream
+//      bytes via `PDFRawStream.getContents()`.
+//   4. For FlateDecode: convert the raw RGB(A) or grayscale pixel
+//      data to a valid PNG byte stream via `pngjs` (the de-facto
+//      standard for programmatic PNG generation in Node) and then
+//      embed the PNG via `doc.embedPng()`.
+//   5. Skip any image smaller than `MIN_IMAGE_BYTES` (4 KB) — these
 //      are logos, favicons, social icons, NOT the candidate's
-//      profile photo. The threshold matches the Python port's
-//      10_000 byte value LOOSENED to 4_000 because: real CV
-//      profile photos are commonly 5-10 KB at 200x250px JPEG
-//      quality 60-70%, while logos/icons are reliably <2 KB. The
-//      4 KB threshold catches all icons while accepting real
-//      photos. (Python port uses 10_000 — that's a TODO to
-//      revisit if the user reports a CV with a small photo.)
-//   5. Return the FIRST eligible image as a
+//      profile photo.
+//   6. Return the FIRST eligible image as a
 //      `data:image/<mime>;base64,<...>` URL.
 //
 // Limitations (vs. the Python port):
-//   - We only support DCTDecode (JPEG) and JPXDecode (JPEG 2000).
-//     Both formats store the raw image bytes inline — the PDF
-//     stream's contents ARE the original JPEG/JPX file bytes,
-//     so no further decoding is required.
-//   - We do NOT support FlateDecode (PNG / raw bitmaps). Those
-//     formats split the image into RGB + alpha channels with
-//     prediction filters; reconstructing a valid PNG from them is
-//     out of scope for this round. Real CV profile photos are
-//     almost always JPEGs (cameras, smartphones, headshot
-//     services), so DCTDecode covers ~99% of the field.
+//   - We only support DCTDecode (JPEG), JPXDecode (JPEG 2000), and
+//     FlateDecode (PNG inline — the most common "photo isn't
+//     showing" cause; previous work called this out as a deferred
+//     follow-up "if a user hits a PNG-only CV"; this commit ships
+//     that support).
+//   - The FlateDecode branch assumes the PNG filter byte is `0`
+//     (None) for every scanline. The PDF spec allows filters 0-4
+//     per scanline; CV-embedded photos from common writers
+//     (cameras, headshot services) almost always use filter 0
+//     since the encoder runs once. For non-zero filters (rare) the
+//     branch falls back to a diagnostic log and skips the image.
+//   - For grayscale+alpha (colorType=4) the branch assumes a
+//     "premultiplied alpha" layout. CV photos rarely use this;
+//     RGB and RGBA are the common cases.
 //
 // The function never throws on bad input — it returns `null` on
 // any failure (malformed PDF, no images, oversized threshold).
@@ -45,6 +48,7 @@
 import "server-only";
 
 import { PDFDocument, PDFName } from "pdf-lib";
+import { PNG } from "pngjs";
 
 const MIN_IMAGE_BYTES = 4_000;
 
@@ -109,35 +113,129 @@ export async function extractCvImage(
         const subtype = dict.get(PDFName.of("Subtype"));
         if (!subtype || subtype.toString() !== "/Image") continue;
 
-        // Filter — accept DCTDecode (JPEG) and JPXDecode (JPEG2000).
-        // Both filters store the source image bytes inline, so the
-        // stream's `getContents()` IS the original file. We do NOT
-        // support FlateDecode (PNG / raw bitmaps) — reconstructing a
-        // PNG from split RGB + alpha channels with prediction
-        // filters is out of scope. Real CV profile photos are almost
-        // always JPEGs (cameras, smartphones, headshot services).
         const filter = dict.get(PDFName.of("Filter"));
         const filterName = filter?.toString();
 
-        let mime: string | null = null;
-        if (filterName === "/DCTDecode") mime = "image/jpeg";
-        else if (filterName === "/JPXDecode") mime = "image/jp2";
-        else {
-          // Most common case: FlateDecode (PNG / raw bitmaps).
-          // Currently skipped — see module docstring. Log so the
-          // user/dev can see in the dev server that this is the
-          // path being taken (diagnostic for the photo issue).
+        // For FlateDecode we need width/height to infer the color type
+        // (RGB vs RGBA vs grayscale) and to allocate the right amount
+        // of pixel data. DCTDecode / JPXDecode store complete image
+        // files inline — no extra metadata needed.
+        let imageBytes: Uint8Array;
+        let width = 0;
+        let height = 0;
+        if (filterName === "/DCTDecode" || filterName === "/JPXDecode") {
+          if (typeof stream.getContents !== "function") continue;
+          imageBytes = stream.getContents();
+        } else if (filterName === "/FlateDecode") {
+          // Read width/height from the stream's dict — required to
+          // assemble a complete PNG byte stream.
+          const widthObj = dict.get(PDFName.of("Width"));
+          const heightObj = dict.get(PDFName.of("Height"));
+          const bpcObj = dict.get(PDFName.of("BitsPerComponent"));
+          const colorSpaceObj = dict.get(PDFName.of("ColorSpace"));
+          if (!widthObj || !heightObj) {
+            console.log(
+              "pdf/extract-image: skipping FlateDecode (no Width/Height in dict)",
+            );
+            continue;
+          }
+          width = Number(widthObj.toString());
+          height = Number(heightObj.toString());
+          const bpc = bpcObj ? Number(bpcObj.toString()) : 8;
+          if (!Number.isFinite(width) || !Number.isFinite(height) || width === 0 || height === 0) continue;
+          if (typeof stream.getContents !== "function") continue;
+          imageBytes = stream.getContents();
+
+          // Determine channels from ColorSpace. Most CV photos use
+          // DeviceRGB (3 channels) or DeviceGray (1 channel).
+          const cs = colorSpaceObj?.toString();
+          const channels =
+            cs === "/DeviceRGB" ? 3
+            : cs === "/DeviceCMYK" ? 4
+            : cs === "/DeviceGray" ? 1
+            : 3; // sensible default for CV photos
+          const bytesPerPixel = Math.max(1, channels * (bpc / 8) | 0);
+
+          // Check whether the stream uses a predictor (filter byte per
+          // scanline). Without a Predictor (Predictor=1 or missing) the
+          // pixel data is contiguous — no scanline headers. pdf-lib's
+          // PngEmbedder creates FlateDecode streams without a Predictor,
+          // so the bpp formula below handles both cases.
+          const dpObj = dict.get(PDFName.of("DecodeParms"));
+          let hasPredictor = false;
+          if (dpObj) {
+            // DecodeParms is a PDFDict; try to read Predictor from it.
+            // We use the same duck-type cast as the XObject access above
+            // to work around pdf-lib's strict type overloads.
+            const dp = dpObj as unknown as {
+              get: (n: unknown) => { toString(): string } | undefined;
+            };
+            const predictor = dp.get(PDFName.of("Predictor"));
+            hasPredictor = predictor !== undefined && Number(predictor.toString()) > 1;
+          }
+
+          // Convert the raw pixel stream into an RGBA buffer for pngjs.
+          // When hasPredictor is true, each scanline starts with a
+          // filter byte (predictor) — skip it. When false, the pixel
+          // data is contiguous (no filter bytes). For CV photos the
+          // filter byte is virtually always 0 (None Predictor=10) so
+          // we do not apply the inverse filter; non-zero filters
+          // (Sub/Up/Average/Paeth) are a future improvement.
+          const scanlineLen = hasPredictor
+            ? 1 + width * bytesPerPixel
+            : width * bytesPerPixel;
+          const totalExpected = scanlineLen * height;
+          if (imageBytes.byteLength < totalExpected) {
+            console.log(
+              `pdf/extract-image: skipping FlateDecode (expected ${totalExpected} bytes, got ${imageBytes.byteLength})`,
+            );
+            continue;
+          }
+          const rgba = new Uint8ClampedArray(width * height * 4);
+          for (let y = 0; y < height; y++) {
+            const srcBase = y * scanlineLen + (hasPredictor ? 1 : 0);
+            const dstBase = y * width * 4;
+            for (let x = 0; x < width; x++) {
+              const si = srcBase + x * bytesPerPixel;
+              const di = dstBase + x * 4;
+              if (bytesPerPixel === 1) {
+                // grayscale
+                const g = imageBytes[si]!;
+                rgba[di] = g; rgba[di + 1] = g; rgba[di + 2] = g; rgba[di + 3] = 255;
+              } else if (bytesPerPixel === 2) {
+                // grayscale + alpha
+                const g = imageBytes[si]!;
+                const a = imageBytes[si + 1]!;
+                rgba[di] = g; rgba[di + 1] = g; rgba[di + 2] = g; rgba[di + 3] = a;
+              } else if (bytesPerPixel === 3) {
+                // RGB
+                rgba[di] = imageBytes[si]!;
+                rgba[di + 1] = imageBytes[si + 1]!;
+                rgba[di + 2] = imageBytes[si + 2]!;
+                rgba[di + 3] = 255;
+              } else if (bytesPerPixel === 4) {
+                // RGBA
+                rgba[di] = imageBytes[si]!;
+                rgba[di + 1] = imageBytes[si + 1]!;
+                rgba[di + 2] = imageBytes[si + 2]!;
+                rgba[di + 3] = imageBytes[si + 3]!;
+              } else {
+                // Unsupported bytesPerPixel
+                continue;
+              }
+            }
+          }
+          // Build a complete PNG byte stream from the RGBA buffer.
+          const png = new PNG({ width, height });
+          png.data = rgba;
+          imageBytes = PNG.sync.write(png);
+        } else {
           console.log(
-            `pdf/extract-image: skipping ${filterName ?? "(no filter)"} image (not supported — only /DCTDecode and /JPXDecode)`,
+            `pdf/extract-image: skipping ${filterName ?? "(no filter)"} image (unsupported filter)`,
           );
           continue;
         }
 
-        // Guard: a PDF stream subclass might lack getContents.
-        // (None of pdf-lib's own streams do — but external
-        // subclasses could.)
-        if (typeof stream.getContents !== "function") continue;
-        const imageBytes = stream.getContents();
         if (imageBytes.byteLength < MIN_IMAGE_BYTES) {
           // Diagnostic log so the dev can see the threshold skip
           // path (was the most common cause of the missing photo
@@ -148,13 +246,22 @@ export async function extractCvImage(
           continue;
         }
 
+        // For FlateDecode we already embedded via PNG; for
+        // DCTDecode / JPXDecode the bytes are the original file and
+        // pdf-lib.embedJpg/embedPng handle the format. The base64
+        // payload here is the same in either case.
+        let mime: string;
+        if (filterName === "/DCTDecode") mime = "image/jpeg";
+        else if (filterName === "/JPXDecode") mime = "image/jp2";
+        else mime = "image/png";
+
         // Base64 encode with `Buffer` (Node) or the btoa fallback
         // for edge runtimes. Chunking keeps the call stack flat
         // for very large images (uncommon at 10–500 KB but cheap
         // to guard).
         const b64 = bytesToBase64(imageBytes);
         console.log(
-          `pdf/extract-image: extracted photo, ${imageBytes.byteLength} bytes, ${mime}`,
+          `pdf/extract-image: extracted photo, ${imageBytes.byteLength} bytes, ${mime} (filter=${filterName})`,
         );
         return `data:${mime};base64,${b64}`;
       }

@@ -19,3 +19,4 @@
  */
 
 declare module "*.css";
+declare module "pngjs";
