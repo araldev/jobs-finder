@@ -63,6 +63,7 @@ class AdaptedCV:
     experience: list[ExperienceEntry] = field(default_factory=list)
     education: list[EducationEntry] = field(default_factory=list)
     projects: list[ProjectEntry] = field(default_factory=list)
+    certifications: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
     languages: list[str] = field(default_factory=list)
     photo_base64: str | None = None
@@ -73,6 +74,7 @@ class AdaptedCV:
         experience_section = self._render_experience()
         education_section = self._render_education()
         projects_section = self._render_projects()
+        certifications_section = self._render_certifications()
 
         photo_html = ""
         if self.photo_base64:
@@ -305,6 +307,8 @@ class AdaptedCV:
 
 {projects_section}
 
+{certifications_section}
+
 {skills_section}
 
 </body>
@@ -373,6 +377,22 @@ class AdaptedCV:
         return (
             f'<div class="section">'
             f'<div class="section-title">Proyectos Personales</div>'
+            f"{items}</div>"
+        )
+
+    def _render_certifications(self) -> str:
+        # Mirrors the TypeScript renderer's 'Certificaciones' section.
+        # Items come from a 'Certificaciones' / 'Certificaciones y
+        # Competencias' / 'Licencias' section in the original CV —
+        # licenses, courses, and training programs.
+        if not self.certifications:
+            return ""
+        items = "".join(
+            f"<div class='cert-item'>• {cert}</div>" for cert in self.certifications
+        )
+        return (
+            f'<div class="section">'
+            f'<div class="section-title">Certificaciones</div>'
             f"{items}</div>"
         )
 

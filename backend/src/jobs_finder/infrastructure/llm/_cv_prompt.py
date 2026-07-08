@@ -187,10 +187,25 @@ def parse_adapted_cv_response(raw: str) -> AdaptedCV:  # noqa: PLR0912 (defensiv
     Raises:
         ValueError: If the response is not valid JSON or missing required fields.
     """
-    # Strip thinking blocks (M2.x models)
+    # Strip `<think>...</think>` and `<thinking>...</thinking>` blocks
+    # ENTIRELY (content + tags). The M2.x / M3 model family emits a
+    # verbose 'Let me analyze...' preamble inside the think block
+    # before the JSON, and the old 'remove tags only' approach left
+    # the preamble text mixed with the JSON. The brace-substring
+    # strategy then picked the wrong braces (from a JSON-shaped
+    # example inside the think block, not the actual JSON) and
+    # failed with 'brace: no match'.
+    #
+    # Falls back to 'open tag to end-of-string' for malformed
+    # responses (max_tokens hit mid-thinking). In that case the
+    # JSON never arrived, but at least the parser can fail with a
+    # clean error instead of trying to parse a half-thought
+    # preamble.
     cleaned = raw
-    for tag in ["<think>", "</thinking>", "</think>", "<thinking>", "</thinking>"]:
-        cleaned = cleaned.replace(tag, "")
+    cleaned = re.sub(r"<think>[\s\S]*?</think>", "", cleaned)
+    cleaned = re.sub(r"<thinking>[\s\S]*?</thinking>", "", cleaned)
+    cleaned = re.sub(r"<think>[\s\S]*$", "", cleaned)
+    cleaned = re.sub(r"<thinking>[\s\S]*$", "", cleaned)
     cleaned = cleaned.strip()
 
     # Try multiple strategies to extract JSON
@@ -296,6 +311,7 @@ def parse_adapted_cv_response(raw: str) -> AdaptedCV:  # noqa: PLR0912 (defensiv
         experience=experience,
         education=education,
         projects=projects,
+        certifications=list_or(data.get("certifications")),
         skills=list_or(data.get("skills")),
         languages=list_or(data.get("languages")),
     )

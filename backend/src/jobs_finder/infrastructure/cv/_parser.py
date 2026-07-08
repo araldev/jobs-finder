@@ -67,6 +67,13 @@ def extract_cv_image(pdf_bytes: bytes) -> str | None:
     Uses PyMuPDF (fitz) which handles more PDF image formats than
     pdfplumber.  Returns the image as a base64-encoded PNG data URL,
     or None if no image is found.
+
+    The 4 KB threshold (was 10 KB) matches the TypeScript frontend's
+    `MIN_IMAGE_BYTES` constant so a small CV photo (e.g. a 5 KB
+    passport-style headshot) is NOT silently dropped just because
+    it's smaller than a full-resolution photo. The threshold only
+    filters out genuinely tiny images (favicons, social icons,
+    inline logos).
     """
     try:
         doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")  # type: ignore[no-untyped-call]
@@ -84,7 +91,7 @@ def extract_cv_image(pdf_bytes: bytes) -> str | None:
                 image_bytes = base_image["image"]
                 image_ext = base_image["ext"]
                 # Filter out tiny images (likely icons/logos, not a photo)
-                if len(image_bytes) < 10_000:
+                if len(image_bytes) < 4_000:
                     continue
                 b64 = base64.b64encode(image_bytes).decode("utf-8")
                 mime = f"image/{image_ext}"
