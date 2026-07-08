@@ -20,24 +20,37 @@ export class AdaptedCVParseError extends Error {
   }
 }
 
-const THINKING_TAGS = [
-  "<think>",
-  "</thinking>",
-  "</think>",
-  "<thinking>",
-  "</thinking>",
-];
-
 const MARKDOWN_JSON_PATTERNS = [
   /```json\s*(\{[\s\S]*?\})\s*```/,
   /```\s*(\{[\s\S]*?\})\s*```/,
 ];
 
 function stripThinkingBlocks(raw: string): string {
+  // Strip ``...</think> and `<thinking>...</thinking>` blocks
+  // ENTIRELY (content + tags). MiniMax-M3 emits a long
+  // "Let me analyze..." preamble inside the think block before the
+  // JSON, and the old "remove tags only" approach left the preamble
+  // text mixed with the JSON, which broke the brace-substring
+  // strategy (the first `{` it found was inside the think content,
+  // not in the JSON).
+  //
+  // Falls back to "strip from `<think>` to end-of-string" when the
+  // closing tag is missing (malformed response, max_tokens hit
+  // mid-thinking). In that case the JSON never arrived, but at
+  // least the parser can fail with a clean error instead of
+  // trying to parse a half-thought preamble.
   let cleaned = raw;
-  for (const tag of THINKING_TAGS) {
-    cleaned = cleaned.split(tag).join("");
-  }
+
+  // Properly paired blocks: content + open + close tag.
+  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/g, "");
+  cleaned = cleaned.replace(/<thinking>[\s\S]*?<\/thinking>/g, "");
+
+  // Unpaired open tags (no closing tag in the response). Drop
+  // everything from the open tag to end-of-string — there's no
+  // useful content after an unclosed think block.
+  cleaned = cleaned.replace(/<think>[\s\S]*$/g, "");
+  cleaned = cleaned.replace(/<thinking>[\s\S]*$/g, "");
+
   return cleaned.trim();
 }
 

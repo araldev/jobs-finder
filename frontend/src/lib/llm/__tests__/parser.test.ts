@@ -186,6 +186,57 @@ describe("parseAdaptedCVResponse", () => {
     expect(cv.name).toBe("Ada");
   });
 
+  it("strips a verbose <think> block whose content includes JSON-like braces (MiniMax-M3 preamble)", () => {
+    // Mirrors the actual MiniMax-M3 response shape: a long thinking
+    // preamble that quotes JSON-shaped text ("the output should look
+    // like: { ... }") before the real JSON. The old "remove tags only"
+    // approach left the preamble mixed with the JSON and the
+    // brace-substring strategy picked the wrong braces. Stripping
+    // the WHOLE block (content + tags) leaves only the real JSON.
+    const raw = `<think>Let me analyze the original CV carefully and extract all information:
+
+**Personal Info:**
+- Name: ARTURO ALBA GARCÍA
+- Phone: +34 657 231 122
+
+The output should look like:
+{
+  "name": "...",
+  "experience": []
+}
+
+Now I'll generate the adapted JSON.</think>` +
+      JSON.stringify({
+        name: "Ada",
+        experience: [],
+        education: [],
+        skills: ["TS"],
+        languages: ["English"],
+      });
+
+    const cv = parseAdaptedCVResponse(raw);
+    expect(cv.name).toBe("Ada");
+    expect(cv.skills).toEqual(["TS"]);
+  });
+
+  it("strips an unclosed <think> block (no </think> in the response)", () => {
+    // Degenerate case: the LLM hit max_tokens mid-thinking and the
+    // closing tag is missing. The parser strips everything from
+    // the open tag to end-of-string (we can't trust any content
+    // after an unclosed think block) and fails with a clean
+    // AdaptedCVParseError — the caller maps this to 422.
+    const raw = "<think>Let me analyze the original CV carefully and extract all information:\n" +
+      JSON.stringify({
+        name: "Ada",
+        experience: [],
+        education: [],
+        skills: [],
+        languages: [],
+      });
+
+    expect(() => parseAdaptedCVResponse(raw)).toThrow(AdaptedCVParseError);
+  });
+
   it("defaults name to 'Sin nombre' when missing", () => {
     const cv = parseAdaptedCVResponse(
       JSON.stringify({ experience: [], education: [], skills: [], languages: [] }),
