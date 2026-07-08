@@ -11,6 +11,16 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Footer } from "@/components/layout/Footer";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { LanguageSwitcher } from "@/components/layout/LanguageSwitcher";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { Separator } from "@/components/ui/separator";
 import {
   Upload,
   FileText,
@@ -19,10 +29,13 @@ import {
   Sparkles,
   Zap,
   Shield,
+  Settings,
+  LogOut,
   ArrowRight,
   Loader2,
   X,
   Menu,
+  Search,
 } from "lucide-react";
 
 interface SavedCV {
@@ -157,36 +170,72 @@ export default function CVLandingPage() {
 
           {/* Desktop nav */}
           <div className="hidden items-center gap-6 md:flex">
-            <Link
-              href="/search"
-              prefetch={true}
-              className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-            >
-              {t("nav.searchJobs")}
-            </Link>
+            {(!user || loading) && (
+              <Link
+                href="/search"
+                prefetch={true}
+                className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {t("nav.searchJobs")}
+              </Link>
+            )}
             {!loading && (
               <>
                 {user ? (
                   <div className="flex items-center gap-3">
-                    <Link
-                      href="/settings"
-                      className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-                    >
-                      {user.email}
-                    </Link>
                     <Link href="/adapt-cv">
                       <Button size="sm">{t("nav.adaptCv")}</Button>
                     </Link>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 rounded-full"
+                          aria-label={t("nav.userMenu")}
+                        >
+                          <Avatar className="h-8 w-8">
+                            <AvatarFallback className="text-xs font-medium">
+                              {user.email!.charAt(0).toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" sideOffset={8}>
+                        <DropdownMenuLabel className="font-normal">
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium">{user.email}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {t("nav.signedIn")}
+                            </span>
+                          </div>
+                        </DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem asChild>
+                          <Link href="/search" className="flex items-center gap-2">
+                            <Search className="h-4 w-4" />
+                            {t("nav.searchJobs")}
+                          </Link>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem asChild>
+                          <Link href="/settings" className="flex items-center gap-2">
+                            <Settings className="h-4 w-4" />
+                            {t("nav.settings")}
+                          </Link>
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
+                          <LogOut className="h-4 w-4" />
+                          {t("nav.signOut")}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                    <Separator orientation="vertical" className="h-6" />
                     <ThemeToggle />
                     <LanguageSwitcher />
-                    <Button variant="ghost" size="sm" onClick={handleLogout}>
-                      {t("nav.signOut")}
-                    </Button>
                   </div>
                 ) : (
                   <div className="flex items-center gap-3">
-                    <ThemeToggle />
-                    <LanguageSwitcher />
                     <Link href="/login">
                       <Button variant="ghost" size="sm">
                         {t("nav.signIn")}
@@ -195,6 +244,9 @@ export default function CVLandingPage() {
                     <Link href="/login">
                       <Button size="sm">{t("nav.signUp")}</Button>
                     </Link>
+                    <Separator orientation="vertical" className="h-6" />
+                    <ThemeToggle />
+                    <LanguageSwitcher />
                   </div>
                 )}
               </>
@@ -222,13 +274,15 @@ export default function CVLandingPage() {
                 <ThemeToggle />
                 <LanguageSwitcher />
               </div>
-              <Link
-                href="/search"
-                className="block text-sm text-muted-foreground"
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                {t("nav.searchJobs")}
-              </Link>
+              {(!user || loading) && (
+                <Link
+                  href="/search"
+                  className="block text-sm text-muted-foreground"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  {t("nav.searchJobs")}
+                </Link>
+              )}
               {!loading && !user && (
                 <div className="flex flex-col gap-2">
                   <Link href="/login" onClick={() => setMobileMenuOpen(false)}>
@@ -243,16 +297,24 @@ export default function CVLandingPage() {
               )}
               {user && (
                 <div className="flex flex-col gap-2">
-                  <Link
-                    href="/settings"
-                    className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    {user.email}
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Avatar className="h-6 w-6">
+                      <AvatarFallback className="text-[10px] font-medium">
+                        {user.email!.charAt(0).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <span>{user.email}</span>
+                  </div>
+                  <Link href="/search" onClick={() => setMobileMenuOpen(false)}>
+                    <Button variant="outline" className="w-full">{t("nav.searchJobs")}</Button>
                   </Link>
                   <Link href="/adapt-cv" onClick={() => setMobileMenuOpen(false)}>
                     <Button className="w-full">{t("nav.adaptCv")}</Button>
                   </Link>
-                  <Button variant="ghost" onClick={handleLogout}>
+                  <Link href="/settings" onClick={() => setMobileMenuOpen(false)}>
+                    <Button variant="outline" className="w-full">{t("nav.settings")}</Button>
+                  </Link>
+                  <Button variant="ghost" onClick={() => { handleLogout(); setMobileMenuOpen(false); }}>
                     {t("nav.signOut")}
                   </Button>
                 </div>

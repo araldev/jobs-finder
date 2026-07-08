@@ -66,13 +66,15 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ back: mockBack, push: vi.fn() }),
 }));
 
-// Supabase client is needed by the auth-check useEffect.
-vi.mock("@/lib/supabase/client", () => ({
-  createClient: () => ({
-    auth: {
-      getSession: async () => ({ data: { session: null }, error: null }),
-    },
-  }),
+// The page uses the shared Header component — mock it to avoid
+// QueryClientProvider + next-intl dependencies in this test.
+vi.mock("@/components/layout/Header", () => ({
+  Header: () => null,
+}));
+
+// Mock useTranslations so the page doesn't need NextIntlClientProvider.
+vi.mock("next-intl", () => ({
+  useTranslations: () => (key: string) => key,
 }));
 
 // Import AFTER mocks are registered.
@@ -164,9 +166,9 @@ describe("PublicJobDetailPage — useJobDetail migration (REQ-CACHEUX-004)", () 
 
     // The error block renders the error message text.
     expect(screen.getByText("Job not found")).toBeInTheDocument();
-    // The "Reintentar" button is rendered (calls refetch on click).
+    // The retry button is rendered (calls refetch on click).
     expect(
-      screen.getByRole("button", { name: /reintentar/i }),
+      screen.getByRole("button", { name: /retry/i }),
     ).toBeInTheDocument();
   });
 

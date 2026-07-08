@@ -1,17 +1,22 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Search,
   Briefcase,
   Settings,
+  FileText,
   type LucideIcon,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { ThemeToggle } from "./ThemeToggle";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { AuthStatus } from "@/components/auth/AuthStatus";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { cn } from "@/lib/utils";
 
 /**
@@ -75,6 +80,7 @@ function resolveRoute(pathname: string) {
 export function Header() {
   const pathname = usePathname();
   const t = useTranslations("Navigation");
+  const { data: user } = useCurrentUser();
   const route = resolveRoute(pathname);
 
   const label = route ? t(`${route.translationKey}.label`) : t("fallback.label");
@@ -103,7 +109,16 @@ export function Header() {
         </div>
       </div>
       <div className="flex items-center gap-3">
+        {user && (
+          <Link href="/adapt-cv">
+            <Button size="sm" className="gap-2">
+              <FileText className="h-4 w-4" />
+              {t("adaptCv.label")}
+            </Button>
+          </Link>
+        )}
         <AuthStatus />
+        <Separator orientation="vertical" className="h-6" />
         <LanguageSwitcher />
         <ThemeToggle />
       </div>

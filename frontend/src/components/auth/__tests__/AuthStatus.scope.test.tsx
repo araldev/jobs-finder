@@ -15,11 +15,20 @@ vi.mock("next/navigation", () => ({
 
 // Mock useTranslations so AuthStatus doesn't need NextIntlClientProvider.
 vi.mock("next-intl", () => ({
-  useTranslations: () => (key: string) => {
-    const translations: Record<string, string> = {
-      "adaptCv.label": "Adaptar CV",
+  useTranslations: (namespace?: string) => {
+    const translations: Record<string, Record<string, string>> = {
+      Navigation: {
+        "adaptCv.label": "Adaptar CV",
+        "settings.label": "Configuración",
+      },
+      Common: {
+        signOut: "Cerrar sesión",
+        userMenu: "Menú de usuario",
+        signedInAs: "Sesión iniciada",
+      },
     };
-    return translations[key] ?? key;
+    const ns = namespace ?? "";
+    return (key: string) => translations[ns]?.[key] ?? key;
   },
 }));
 
@@ -70,8 +79,13 @@ describe("AuthStatus — scope prop (REQ-AUTH-020)", () => {
     const user = userEvent.setup();
     render(<AuthStatus />);
 
-    const logoutBtn = await screen.findByRole("button", { name: /Cerrar sesi/i });
-    await user.click(logoutBtn);
+    // The authenticated state renders an avatar trigger button.
+    const trigger = screen.getByRole("button", { name: /Menú de usuario/i });
+    await user.click(trigger);
+
+    // After opening the dropdown, find and click "Cerrar sesión".
+    const signOutItem = await screen.findByText("Cerrar sesión");
+    await user.click(signOutItem);
 
     await waitFor(() => {
       expect(mockSupabaseAuth.auth.signOut).toHaveBeenCalledTimes(1);
@@ -84,8 +98,13 @@ describe("AuthStatus — scope prop (REQ-AUTH-020)", () => {
     const user = userEvent.setup();
     render(<AuthStatus scope="global" />);
 
-    const logoutBtn = await screen.findByRole("button", { name: /Cerrar sesi/i });
-    await user.click(logoutBtn);
+    // The authenticated state renders an avatar trigger button.
+    const trigger = screen.getByRole("button", { name: /Menú de usuario/i });
+    await user.click(trigger);
+
+    // After opening the dropdown, find and click "Cerrar sesión".
+    const signOutItem = await screen.findByText("Cerrar sesión");
+    await user.click(signOutItem);
 
     await waitFor(() => {
       expect(mockSupabaseAuth.auth.signOut).toHaveBeenCalledTimes(1);
@@ -103,9 +122,14 @@ describe("AuthStatus — scope prop (REQ-AUTH-020)", () => {
  */
 describe("AuthStatus — SCN-PDPRSC-004-D (uses useCurrentUser)", () => {
   it("reads email from useCurrentUser; never calls supabase.auth.getSession", async () => {
+    const user = userEvent.setup();
     render(<AuthStatus />);
 
-    // The hook returns a user → the email link is rendered.
+    // Open the dropdown menu to reveal the email inside DropdownMenuLabel.
+    const trigger = screen.getByRole("button", { name: /Menú de usuario/i });
+    await user.click(trigger);
+
+    // The email is shown inside the dropdown label.
     expect(await screen.findByText("u@example.com")).toBeInTheDocument();
 
     // The component reads auth state from the hook's cache,

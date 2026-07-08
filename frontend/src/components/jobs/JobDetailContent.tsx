@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { MapPin, Building2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -175,6 +176,7 @@ interface JobDetailContentProps {
 }
 
 export function JobDetailContent({ job }: JobDetailContentProps) {
+  const t = useTranslations("Jobs.detail");
   return (
     <div className="space-y-6">
       {/* Title + badges */}
@@ -207,7 +209,7 @@ export function JobDetailContent({ job }: JobDetailContentProps) {
       {job.description && (
         <div>
           <h3 className="mb-2 font-display text-sm font-semibold text-muted-foreground">
-            Description
+            {t("description")}
           </h3>
           <div className="markdown-prose">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>

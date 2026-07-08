@@ -18,6 +18,10 @@
     "confirm": "Confirmar",
     "or": "o",
     "and": "y",
+    "signIn": "Iniciar sesión",
+    "signOut": "Cerrar sesión",
+    "userMenu": "Menú de usuario",
+    "signedInAs": "Sesión iniciada",
     "toggleTheme": "Cambiar tema",
     "loadingHint": "Cargando… Esto puede tardar un momento la primera vez.",
     "switcher": {
@@ -252,13 +256,27 @@
       "requirements": "Requisitos",
       "benefits": "Beneficios",
       "applyNow": "Aplicar ahora",
-      "backToList": "Volver a trabajos"
+      "backToList": "Volver a trabajos",
+      "posted": "Publicado",
+      "viewOriginal": "Ver original"
     },
     "modal": {
       "generate": "Generar CV adaptado",
       "downloading": "Generando…",
-      "consent": "Usaré este CV para generar una versión adaptada para este trabajo.",
-      "title": "Generar CV adaptado"
+      "consent": "Entiendo y acepto que mi CV sea procesado por <strong>nuestro proveedor de IA</strong> para generar el CV adaptado. <privacy>Ver Política de Privacidad</privacy>",
+      "title": "Generar CV adaptado",
+      "adaptingFor": "Adaptando CV para",
+      "successMessage": "Tu CV está listo. Descargalo y úsalo para postularte.",
+      "pdfOnly": "Solo se aceptan archivos PDF",
+      "noCV": "Subí tu CV o guardalo primero en Configuración",
+      "downloadError": "No pude descargar tu CV guardado",
+      "savedCvHint": "Tu CV guardado — click para cambiar",
+      "download": "Descargar CV (PDF)",
+      "generateAnother": "Generar otro",
+      "removeFile": "Quitar",
+      "dropReplace": "O arrastrá un PDF diferente para esta postulación",
+      "dropPrompt": "Arrastrá tu CV PDF o click para seleccionar",
+      "savedCvHelper": "Se usará tu CV guardado. Subí un PDF para usar ese temporalmente."
     },
     "favorite": {
       "add": "Guardar en favoritos",
@@ -374,8 +392,11 @@
       "searchJobs": "Buscar empleos",
       "adaptCv": "Adaptar CV",
       "signOut": "Cerrar sesión",
+      "userMenu": "Menú de usuario",
+      "signedIn": "Sesión iniciada",
       "signUp": "Registrarse",
-      "signUpFree": "Registrarse gratis"
+      "signUpFree": "Registrarse gratis",
+      "settings": "Configuración"
     },
     "hero": {
       "badge": "Potenciado por IA",

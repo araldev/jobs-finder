@@ -5,6 +5,16 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { LogOut, Settings } from "lucide-react";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 /**
@@ -32,6 +42,7 @@ export function AuthStatus({ scope = "local" }: AuthStatusProps) {
   const supabase = createClient();
   const router = useRouter();
   const t = useTranslations("Navigation");
+  const tc = useTranslations("Common");
   const { data: user, isLoading } = useCurrentUser();
 
   const email = user?.email ?? null;
@@ -49,28 +60,56 @@ export function AuthStatus({ scope = "local" }: AuthStatusProps) {
   if (isLoading) return null;
 
   if (email) {
+    const initials = email.charAt(0).toUpperCase();
+
     return (
-      <div className="flex items-center gap-3">
-        <Link
-          href="/settings"
-          className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-        >
-          {email}
-        </Link>
-        <Link href="/adapt-cv">
-          <Button size="sm">{t("adaptCv.label")}</Button>
-        </Link>
-        <Button variant="ghost" size="sm" onClick={logout}>
-          Cerrar sesión
-        </Button>
-      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 rounded-full"
+            aria-label={tc("userMenu")}
+          >
+            <Avatar className="h-8 w-8">
+              <AvatarFallback className="text-xs font-medium">
+                {initials}
+              </AvatarFallback>
+            </Avatar>
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" sideOffset={8}>
+          <DropdownMenuLabel className="font-normal">
+            <div className="flex flex-col">
+              <span className="text-sm font-medium">{email}</span>
+              <span className="text-xs text-muted-foreground">
+                {tc("signedInAs")}
+              </span>
+            </div>
+          </DropdownMenuLabel>
+          <DropdownMenuItem asChild>
+            <Link href="/settings" className="flex items-center gap-2">
+              <Settings className="h-4 w-4" />
+              {t("settings.label")}
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onClick={logout}
+            className="text-destructive focus:text-destructive"
+          >
+            <LogOut className="h-4 w-4" />
+            {tc("signOut")}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     );
   }
 
   return (
     <Link href="/login">
       <Button variant="outline" size="sm">
-        Iniciar sesión
+        {tc("signIn")}
       </Button>
     </Link>
   );

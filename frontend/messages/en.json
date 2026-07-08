@@ -18,6 +18,10 @@
     "confirm": "Confirm",
     "or": "or",
     "and": "and",
+    "signIn": "Sign in",
+    "signOut": "Sign out",
+    "userMenu": "User menu",
+    "signedInAs": "Signed in",
     "toggleTheme": "Toggle theme",
     "loadingHint": "Loading… This may take a moment on first load.",
     "switcher": {
@@ -252,13 +256,27 @@
       "requirements": "Requirements",
       "benefits": "Benefits",
       "applyNow": "Apply now",
-      "backToList": "Back to jobs"
+      "backToList": "Back to jobs",
+      "posted": "Posted",
+      "viewOriginal": "View original"
     },
     "modal": {
       "generate": "Generate adapted CV",
       "downloading": "Generating…",
-      "consent": "I'll use this CV to generate an adapted version for this job.",
-      "title": "Generate adapted CV"
+      "consent": "I understand and accept that my CV will be processed by <strong>our AI provider</strong> to generate the adapted CV. <privacy>View Privacy Policy</privacy>",
+      "title": "Generate adapted CV",
+      "adaptingFor": "Adapting CV for",
+      "successMessage": "Your CV is ready. Download it and use it to apply.",
+      "pdfOnly": "Only PDF files are accepted",
+      "noCV": "Upload your CV or save it first in Settings",
+      "downloadError": "Could not download your saved CV",
+      "savedCvHint": "Your saved CV — click to change",
+      "download": "Download CV (PDF)",
+      "generateAnother": "Generate another",
+      "removeFile": "Remove",
+      "dropReplace": "Or drag a different PDF for this application",
+      "dropPrompt": "Drag your CV PDF or click to select",
+      "savedCvHelper": "Your saved CV will be used. Upload a PDF to use it temporarily."
     },
     "favorite": {
       "add": "Save to favorites",
@@ -374,8 +392,11 @@
       "searchJobs": "Search jobs",
       "adaptCv": "Adapt CV",
       "signOut": "Sign out",
+      "userMenu": "User menu",
+      "signedIn": "Signed in",
       "signUp": "Sign up",
-      "signUpFree": "Sign up free"
+      "signUpFree": "Sign up free",
+      "settings": "Settings"
     },
     "hero": {
       "badge": "AI-powered",

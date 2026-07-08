@@ -65,13 +65,15 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ back: vi.fn(), push: vi.fn() }),
 }));
 
-// Supabase client is needed by the auth-check useEffect in page.tsx.
-vi.mock("@/lib/supabase/client", () => ({
-  createClient: () => ({
-    auth: {
-      getSession: async () => ({ data: { session: null }, error: null }),
-    },
-  }),
+// The page uses the shared Header component — mock it to avoid
+// next/navigation + React Query dependencies in this test.
+vi.mock("@/components/layout/Header", () => ({
+  Header: () => null,
+}));
+
+// Mock useTranslations so the page doesn't need NextIntlClientProvider.
+vi.mock("next-intl", () => ({
+  useTranslations: () => (key: string) => key,
 }));
 
 // NOTE: @/hooks/useJobDetail is INTENTIONALLY NOT mocked here. The

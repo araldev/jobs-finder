@@ -21,6 +21,10 @@ vi.mock("@/components/auth/AuthStatus", () => ({
   AuthStatus: () => null,
 }));
 
+vi.mock("@/hooks/useCurrentUser", () => ({
+  useCurrentUser: () => ({ data: null }),
+}));
+
 // Import after the mocks are registered.
 import { Header } from "../Header";
 
