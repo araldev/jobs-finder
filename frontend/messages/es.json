@@ -483,7 +483,7 @@
     "urlOrDescription": "Completá al menos la URL o la descripción",
     "savedCvLabel": "CV guardado",
     "changeCv": "Click para cambiar",
-    "consent": "Entiendo y acepto que mi CV sea procesado por nuestro proveedor de IA para generar el CV adaptado.",
+    "consent": "Entiendo y acepto que mi CV sea procesado por <strong>nuestro proveedor de IA</strong> para generar el CV adaptado. <privacy>Ver Política de Privacidad</privacy>",
     "submit": "Generar CV adaptado",
     "downloading": "Generando CV...",
     "download": "Descargar CV (PDF)",
