@@ -392,8 +392,15 @@ describe("POST /api/cv/generate-custom — LLM + engagement flow", () => {
     expect(messages[0]?.role).toBe("system");
     expect(messages[0]?.content).toBe("stub-system-prompt");
 
-    const opts = mockLLMCompletion.mock.calls[0]![1] as { jsonMode: boolean };
+    const opts = mockLLMCompletion.mock.calls[0]![1] as {
+      jsonMode: boolean;
+      thinking: { type: string };
+    };
     expect(opts.jsonMode).toBe(true);
+    // thinking is disabled so MiniMax-M3 emits a direct (non-
+    // thinking) JSON response — otherwise the model's verbose
+    // preamble consumes the entire max_tokens budget.
+    expect(opts.thinking).toEqual({ type: "disabled" });
 
     // Engagement event was recorded with metadata including job_url.
     expect(mockFrom).toHaveBeenCalledWith("user_engagement");

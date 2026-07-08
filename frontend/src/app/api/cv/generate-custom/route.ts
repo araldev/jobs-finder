@@ -163,7 +163,7 @@ export async function POST(request: NextRequest) {
         { role: "system", content: ADAPT_CV_SYSTEM_PROMPT },
         { role: "user", content: userMessage },
       ],
-      { jsonMode: true },
+      { jsonMode: true, thinking: { type: "disabled" } },
     );
   } catch (err) {
     if (err instanceof LLMUnavailableError) {

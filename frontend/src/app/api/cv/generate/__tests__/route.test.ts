@@ -373,8 +373,16 @@ describe("POST /api/cv/generate — LLM + engagement flow", () => {
     expect(messages[1]?.content).toContain("Senior Engineer");
     expect(messages[1]?.content).toContain("Acme");
     // jsonMode was passed so the LLM client requested JSON output.
-    const opts = mockLLMCompletion.mock.calls[0]![1] as { jsonMode: boolean };
+    // thinking is also disabled so the model emits a direct (non-
+    // thinking) response — otherwise MiniMax-M3 burns the entire
+    // max_tokens budget on a 'Let me analyze...' preamble and the
+    // JSON never lands.
+    const opts = mockLLMCompletion.mock.calls[0]![1] as {
+      jsonMode: boolean;
+      thinking: { type: string };
+    };
     expect(opts.jsonMode).toBe(true);
+    expect(opts.thinking).toEqual({ type: "disabled" });
 
     // Engagement event was recorded with the right event_type and metadata.
     expect(mockFrom).toHaveBeenCalledWith("user_engagement");

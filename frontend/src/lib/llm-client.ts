@@ -66,6 +66,22 @@ export interface ChatCompletionOptions {
   temperature?: number;
   maxTokens?: number;
   jsonMode?: boolean;
+  /**
+   * MiniMax-M3 thinking control. When omitted, the API default
+   * applies (adaptive thinking is enabled). Set to
+   * `{ type: "disabled" }` to force a direct, non-thinking
+   * response — required for strict JSON output calls like
+   * `cv/generate`, where the model's verbose "Let me analyze..."
+   * preamble otherwise burns the entire max_tokens budget and the
+   * real JSON never lands.
+   *
+   * NOTE: For M2.x models, the MiniMax API ignores this parameter
+   * (thinking cannot be disabled). The default model in this
+   * client is `MiniMax-M3` (see `DEFAULT_MODEL`), so disabling
+   * works as expected; if a deployment switches to an M2.x model
+   * the route will fall back to the parse-tolerant parser.
+   */
+  thinking?: { type: "disabled" | "adaptive" };
 }
 
 /**
@@ -129,6 +145,13 @@ function buildRequestBody(
   };
   if (options.jsonMode) {
     body.response_format = { type: "json_object" };
+  }
+  if (options.thinking) {
+    // MiniMax-M3 only — see the JSDoc on `ChatCompletionOptions.thinking`.
+    // When set, the API emits a direct response (no <think> preamble),
+    // which is the only way to fit a 5-7KB JSON blob inside the
+    // 8192-token budget for `cv/generate`.
+    body.thinking = options.thinking;
   }
   return body;
 }

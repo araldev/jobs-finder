@@ -99,6 +99,43 @@ describe("chatCompletion", () => {
     expect(body.response_format).toEqual({ type: "json_object" });
   });
 
+  it("passes `thinking: { type: 'disabled' }` through to the request body when requested", async () => {
+    // MiniMax-M3 burns the entire max_tokens budget on a verbose
+    // 'Let me analyze...' preamble unless we opt out via
+    // `thinking: { type: 'disabled' }`. The cv/generate route uses
+    // this to fit the 5-7KB JSON blob inside the 8192-token budget.
+    const fetchMock = mockFetchOnce(
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: "{}" } }] }),
+        { status: 200 },
+      ),
+    );
+
+    await chatCompletion(
+      [{ role: "user", content: "hi" }],
+      { jsonMode: true, thinking: { type: "disabled" } },
+    );
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse(init?.body as string);
+    expect(body.thinking).toEqual({ type: "disabled" });
+  });
+
+  it("omits the `thinking` key from the request body when not requested (API default applies)", async () => {
+    const fetchMock = mockFetchOnce(
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: "ok" } }] }),
+        { status: 200 },
+      ),
+    );
+
+    await chatCompletion([{ role: "user", content: "hi" }]);
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse(init?.body as string);
+    expect(body).not.toHaveProperty("thinking");
+  });
+
   it("honors LLM_BASE_URL and LLM_MODEL overrides", async () => {
     process.env.LLM_BASE_URL = "https://custom.example.com/";
     process.env.LLM_MODEL = "custom-model";
