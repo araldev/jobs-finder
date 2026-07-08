@@ -122,6 +122,7 @@ ignore = [
 "src/jobs_finder/infrastructure/scheduler.py" = ["PLR0912"]  # scheduler lifecycle has 13 branches by design (start/stop/wait/cancel); refactoring would scatter the FSM
 "src/jobs_finder/infrastructure/cv/_parser.py" = ["PLR2004"]  # magic numbers (10_000 byte floor, 60 char name cap) are pixel-thresholds documented inline
 "src/jobs_finder/presentation/routes/cv.py" = ["B008"]  # File(...) default is the FastAPI Form(...) idiom; the file is only opened on actual upload
+"src/jobs_finder/infrastructure/llm/_cv_prompt.py" = ["E501"]  # the ADAPT_CV_SYSTEM_PROMPT string concatenation contains intentionally long lines (verbatim rule text); the closing-paren noqa doesn't propagate to inner string literals under ruff 0.15+
 # The LLM client's complete() method has many branches + statements by
 # necessity: the selective retry policy distinguishes 5 failure modes
 # (401/403, 429, 5xx, transient MiniMax codes, permanent MiniMax codes)

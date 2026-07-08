@@ -13,6 +13,73 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from html import escape as _html_escape
+from urllib.parse import urlparse
+
+
+def derive_chip_label(url: str) -> str:
+    """Derive a short, human-readable chip label from a URL.
+
+    Algorithm (per design §1.1):
+      1. If the URL is unparseable, return "" (never raise).
+      2. Lowercase the hostname; strip a leading "www.".
+      3. Look the hostname up in a KNOWN platform map.
+      4. If not in the map, return the first label of the hostname,
+         capitalized (e.g. "user.example.com" → "User").
+      5. http:// and https:// are equivalent — the scheme doesn't
+         change the label.
+
+    Used by the parser (legacy `url` → synthesized single-link) and
+    the renderer (chip fallback when the LLM emits an empty label).
+    """
+    if not url:
+        return ""
+    try:
+        host = (urlparse(url).netloc or "").lower()
+    except (ValueError, TypeError):
+        return ""
+    if host.startswith("www."):
+        host = host[4:]
+    if not host:
+        return ""
+    # Map of well-known code-forge / package-registry / media hosts to
+    # their brand-spelling label. Hostname is matched after the www.
+    # strip so https://www.github.com and https://github.com both
+    # resolve to "GitHub".
+    known = {
+        "github.com": "GitHub",
+        "gitlab.com": "GitLab",
+        "bitbucket.org": "Bitbucket",
+        "npmjs.com": "npm",
+        "npmjs.org": "npm",
+        "storybook.js.org": "Storybook",
+        "youtube.com": "YouTube",
+        "youtu.be": "YouTube",
+        "linkedin.com": "LinkedIn",
+        "medium.com": "Medium",
+        "dev.to": "DEV",
+    }
+    if host in known:
+        return known[host]
+    # First label of the hostname, capitalized. Handles
+    # "user.example.com" → "User" and "docs.example.com" → "Docs".
+    first_label = host.split(".")[0]
+    return first_label.capitalize() if first_label else ""
+
+
+@dataclass
+class ProjectLink:
+    """A single labeled external link attached to a project.
+
+    Multiple `ProjectLink`s per project (e.g. GitHub + Storybook +
+    npm) are rendered as independently-clickable chips in BOTH
+    renderers (Python HTML + TS PDF).
+
+    Mirrors `frontend/src/lib/llm/prompts.ts` `AdaptedCVProjectLink`.
+    """
+
+    label: str
+    url: str
 
 
 @dataclass
@@ -45,12 +112,20 @@ class ProjectEntry:
     uses this to surface items from the original CV that don't fit the
     `ExperienceEntry` shape (personal projects, open-source contributions,
     certifications, etc.).
+
+    The `links` field holds the multi-link chip data the renderer
+    iterates over (one `<a>` / `drawLinkAnnotation` per link). The
+    legacy `url` field is retained for backward compatibility with
+    any LLM output that still emits the singular URL shape — the
+    parser synthesizes a one-entry `links` from it on the way in
+    (see `parse_adapted_cv_response`).
     """
 
     name: str
     description: str = ""
     technologies: list[str] = field(default_factory=list)
     url: str | None = None
+    links: list[ProjectLink] = field(default_factory=list)
 
 
 @dataclass
@@ -110,6 +185,40 @@ class AdaptedCV:
 
   a::after {{
     content: none;
+  }}
+
+  /* Project-name anchor: scoped so chip anchors below can keep
+     their own visible affordance (border + fill). Without scoping,
+     the bare `a` selector at the top of the stylesheet would also
+     match `.project-link-chip` and hide the chip's border. */
+  .project-name a {{
+    color: inherit;
+    text-decoration: none;
+  }}
+
+  /* Project link chips — one per `ProjectLink` in the project's
+     `links[]` array. Each chip is its own clickable region in the
+     rendered PDF/HTML (REQ-PJL-003). The border + subtle fill is
+     the visual affordance that says "this is clickable"; the chip
+     text is the link label. */
+  .project-links-row {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4pt;
+    margin: 3pt 0 4pt 0;
+  }}
+
+  .project-link-chip {{
+    display: inline-block;
+    padding: 1pt 6pt;
+    border: 0.5pt solid #888;
+    background-color: #f4f4f4;
+    border-radius: 8pt;
+    font-size: 8pt;
+    font-style: italic;
+    color: #000;
+    text-decoration: none;
+    line-height: 1.4;
   }}
 
   body {{
@@ -336,7 +445,7 @@ class AdaptedCV:
             exp_desc_html = exp.description
             if exp.description:
                 exp_desc_html = re.sub(
-                    r'(https?://[^\s]+)',
+                    r"(https?://[^\s]+)",
                     r'<a href="\1">\1</a>',
                     exp.description,
                 )
@@ -384,18 +493,46 @@ class AdaptedCV:
             desc_html = ""
             if proj.description:
                 # Auto-link any HTTP/HTTPS URLs in the description text
+                # (preserved per spec REQ-PJL-007 — handles accidental
+                # bare URLs in the body that the LLM copies verbatim).
                 linked_desc = re.sub(
-                    r'(https?://[^\s]+)',
+                    r"(https?://[^\s]+)",
                     r'<a href="\1">\1</a>',
                     proj.description,
                 )
                 desc_html = f"<div class='project-description'>{linked_desc}</div>"
-            name_html = (
-                f'<a href="{proj.url}">{proj.name}</a>' if proj.url else proj.name
-            )
+
+            # Resolve the per-project link set, in priority order:
+            #   1. `proj.links[]` if non-empty (the new shape).
+            #   2. Synthesize a single link from legacy `proj.url`
+            #      (so a `ProjectEntry` constructed without going
+            #      through the parser still renders a chip).
+            #   3. Empty list — no chip row.
+            effective_links: list[ProjectLink] = list(proj.links)
+            if not effective_links and proj.url:
+                effective_links = [ProjectLink(label=derive_chip_label(proj.url), url=proj.url)]
+
+            # Project-name anchor uses the first link's URL (or
+            # legacy `url`) — the "primary" link. The chip row
+            # below carries every link as its own clickable region
+            # (REQ-PJL-003).
+            primary_url = effective_links[0].url if effective_links else None
+            name_html = f'<a href="{primary_url}">{proj.name}</a>' if primary_url else proj.name
+
+            chip_html = ""
+            if effective_links:
+                chip_items = "".join(
+                    f'<a class="project-link-chip" href="{link.url}">'
+                    f"{_html_escape(link.label) or _html_escape(link.url)}"
+                    f"</a>"
+                    for link in effective_links
+                )
+                chip_html = f'<div class="project-links-row">{chip_items}</div>'
+
             items += f"""
 <div class="project-item">
   <div class="project-name">{name_html}</div>
+  {chip_html}
   {desc_html}
   {tech_html}
 </div>"""
@@ -412,14 +549,8 @@ class AdaptedCV:
         # licenses, courses, and training programs.
         if not self.certifications:
             return ""
-        items = "".join(
-            f"<div class='cert-item'>• {cert}</div>" for cert in self.certifications
-        )
-        return (
-            f'<div class="section">'
-            f'<div class="section-title">Certificaciones</div>'
-            f"{items}</div>"
-        )
+        items = "".join(f"<div class='cert-item'>• {cert}</div>" for cert in self.certifications)
+        return f'<div class="section"><div class="section-title">Certificaciones</div>{items}</div>'
 
     def _render_skills(self) -> str:
         if not self.skills and not self.languages:
