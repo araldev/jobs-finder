@@ -521,7 +521,11 @@ function splitDescriptionIntoBullets(
     // with the bullet text instead of starting the next bullet.
     const sentences = line.split(/(?<=\.)\s+/);
     for (const sentence of sentences) {
-      const t = sentence.trim();
+      // Strip leading markdown bullet markers the LLM copied
+      // verbatim from the original CV ("* ", "- ", "• ", "· ").
+      // The renderer adds its own bullet character; the LLM
+      // shouldn't include one in the text.
+      const t = sentence.trim().replace(/^[*\-•·]\s+/, "").trim();
       if (t.length >= MIN_BULLET_LENGTH) bullets.push(t);
     }
   }
@@ -666,7 +670,15 @@ export async function renderAdaptedCvAsPdf(
   };
 
   // Photo header — drawn FIRST so the text doesn't overlap it.
+  // We size the photo by its natural aspect ratio (clamped to the
+  // PHOTO_WIDTH × PHOTO_HEIGHT bounding box) so a portrait photo
+  // doesn't get stretched horizontally. The previous code used
+  // fixed PHOTO_WIDTH × PHOTO_HEIGHT which stretched any photo
+  // whose aspect ratio didn't match 80:90 (e.g. the user's
+  // 577×845 portrait photo).
   let hasPhoto = false;
+  let photoWidth = PHOTO_WIDTH;
+  let photoHeight = PHOTO_HEIGHT;
   if (sanitized.photo) {
     const decoded = await decodePhotoDataUrl(sanitized.photo).catch(() => null);
     if (decoded) {
@@ -674,13 +686,26 @@ export async function renderAdaptedCvAsPdf(
         const embedded = decoded.isJpeg
           ? await doc.embedJpg(decoded.bytes)
           : await doc.embedPng(decoded.bytes);
-        const photoX = PAGE_WIDTH - MARGIN - PHOTO_WIDTH;
-        const photoY = PAGE_HEIGHT - MARGIN - PHOTO_HEIGHT;
+        // Fit the embedded image's natural dimensions into the
+        // PHOTO_WIDTH × PHOTO_HEIGHT box while preserving the
+        // aspect ratio. The intrinsic dimensions come from
+        // pdf-lib after decoding the PNG/JPEG.
+        const intr = embedded.size();
+        if (intr.width > 0 && intr.height > 0) {
+          const scale = Math.min(
+            PHOTO_WIDTH / intr.width,
+            PHOTO_HEIGHT / intr.height,
+          );
+          photoWidth = Math.round(intr.width * scale);
+          photoHeight = Math.round(intr.height * scale);
+        }
+        const photoX = PAGE_WIDTH - MARGIN - photoWidth;
+        const photoY = PAGE_HEIGHT - MARGIN - photoHeight;
         state.page.drawImage(embedded, {
           x: photoX,
           y: photoY,
-          width: PHOTO_WIDTH,
-          height: PHOTO_HEIGHT,
+          width: photoWidth,
+          height: photoHeight,
         });
         hasPhoto = true;
       } catch (err) {

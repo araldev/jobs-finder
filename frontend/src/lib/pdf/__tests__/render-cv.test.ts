@@ -595,4 +595,61 @@ describe("renderAdaptedCvAsPdf", () => {
     expect(text).toContain("->"); // ⟶ → ->
     expect(text).toContain("Arturo Alba");
   });
+
+  it("strips leading markdown bullet markers from description bullets", async () => {
+    // Regression: the LLM copies the original CV's markdown-like
+    // structure verbatim — topic lines prefixed with "* ", and
+    // sub-bullets like "Habilidades ganadas: ..." with no
+    // marker. When the renderer adds its own "• " bullet
+    // character, the topic lines end up as "• * Desarrollo
+    // Backend con Java y Spring Boot: ..." and the sub-bullets
+    // end up as "• Habilidades ganadas: ...". The asterisk is
+    // the only difference between the two — the LLM is using it
+    // as a markdown-style bullet marker.
+    const cv: AdaptedCV = {
+      name: "Arturo",
+      email: "a@b.com",
+      phone: "+34 600",
+      location: "M",
+      summary: "",
+      experience: [
+        {
+          company: "NTT DATA",
+          title: "Prácticas",
+          start_date: "2026-04",
+          end_date: "2026-05",
+          description:
+            "* Desarrollo Backend con Java y Spring Boot: Implementación de servicios RESTful robustos.\n" +
+            "Habilidades ganadas: Dominio profundo del ecosistema Spring.\n" +
+            "* Calidad de Software (Testing): Creación de suites de pruebas unitarias.\n" +
+            "Habilidades ganadas: Mentalidad Testing-First y depuración eficiente.\n" +
+            "- Gestión de Datos: Modelado y administración de esquemas en PostgreSQL.\n" +
+            "Habilidades ganadas: Optimización de bases de datos relacionales.",
+          location: null,
+        },
+      ],
+      education: [],
+      projects: [],
+      certifications: [],
+      skills: [],
+      languages: [],
+      photo: null,
+    };
+
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    expect(bytes.byteLength).toBeGreaterThan(0);
+
+    const pdf = await getDocumentProxy(new Uint8Array(bytes));
+    const { text } = await extractText(pdf, { mergePages: true });
+    // The bullets should NOT have leading "* " or "- " in the
+    // rendered text (the renderer adds its own "• ").
+    expect(text).not.toMatch(/•\s*\*\s+Desarrollo/);
+    expect(text).not.toMatch(/•\s*\*\s+Calidad/);
+    expect(text).not.toMatch(/•\s*-\s+Gestión/);
+    // But the actual content should still be there.
+    expect(text).toContain("Desarrollo Backend con Java y Spring Boot");
+    expect(text).toContain("Calidad de Software (Testing)");
+    expect(text).toContain("Gestión de Datos");
+    expect(text).toContain("Habilidades ganadas");
+  });
 });
