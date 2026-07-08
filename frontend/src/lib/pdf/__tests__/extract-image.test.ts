@@ -1,15 +1,22 @@
+// @vitest-environment node
+// (The default vitest environment is jsdom, which does NOT
+// implement the HTMLCanvasElement APIs that unpdf's
+// renderPageAsImage needs. This file declares node so the
+// @napi-rs/canvas dependency provides the real canvas impl.)
+
 // Tests for `extractCvImage` — the photo extractor for CV PDFs.
 //
-// The current implementation uses `unpdf.extractImages` (pdfjs
-// under the hood) to get all painted images, then filters out
-// Form XObjects / patterns (key starts with "g_"), grayscale
-// SMasks, and images outside the 200x200..2000x2000 size
-// range. The best candidate (most channels, largest size,
-// earliest page) is re-encoded as a PNG data URL via pngjs.
+// The current implementation renders the FIRST page of the PDF
+// as a canvas image via `unpdf.renderPageAsImage` and crops
+// the top-right region (where CV headshots typically live).
+// This bypasses the per-image complexity of unpdf.extractImages
+// (Form XObjects, patterns, SMasks, tile units) that caused
+// a "tiled headshot" regression with the user's CV — the photo
+// in the original PDF is a tiling pattern that the per-image
+// route kept returning as a tile unit.
 //
 // Tests cover the contract: returns a valid PNG data URL for a
-// well-formed PDF, returns null for bad input (no leak of
-// internal exception details, AGENTS.md rule #24).
+// well-formed PDF, returns null for bad input.
 
 import { describe, it, expect, vi } from "vitest";
 import { PDFDocument } from "pdf-lib";
@@ -19,71 +26,43 @@ vi.mock("server-only", () => ({}));
 
 import { extractCvImage } from "../extract-image";
 
-// Build a real PNG byte array. The minimum acceptable size
-// for the new extractor is 200x200 (a real CV headshot). Smaller
-// images are filtered out (tile units, icons, logos).
-function buildPngBytes(width: number, height: number): Uint8Array {
-  const png = new PNG({ width, height });
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = (y * width + x) * 4;
-      png.data[idx] = (x * 7) & 0xff;
-      png.data[idx + 1] = (y * 11) & 0xff;
-      png.data[idx + 2] = ((x + y) * 13) & 0xff;
-      png.data[idx + 3] = 0xff;
-    }
-  }
-  return new Uint8Array(PNG.sync.write(png));
-}
-
-async function makePdfWithPng(png: Uint8Array): Promise<Uint8Array> {
-  const doc = await PDFDocument.create();
-  const image = await doc.embedPng(png);
-  doc.addPage().drawImage(image, { x: 50, y: 600, width: 200, height: 200 });
-  return new Uint8Array(await doc.save());
-}
-
-async function makePdfWithoutImages(): Promise<Uint8Array> {
-  const doc = await PDFDocument.create();
-  doc.addPage();
-  return new Uint8Array(await doc.save());
-}
-
 describe("extractCvImage", () => {
-  it("returns a PNG data URL when the PDF contains a large embedded image (>= 200x200)", async () => {
-    // 250x250 = 62_500 pixels, 4-channel RGBA = 250_000 bytes.
-    // Well above the 4 KB threshold and the 200x200 minimum.
-    const png = buildPngBytes(250, 250);
-    const bytes = await makePdfWithPng(png);
+  it("renders the first page of a valid PDF and crops the top-right region for the headshot", async () => {
+    const doc = await PDFDocument.create();
+    // Add a text element in the top portion of the page so the
+    // cropped region has SOMETHING to capture (not just white).
+    doc.addPage().drawText("Hello CV", { x: 50, y: 700, size: 12 });
+    const bytes = new Uint8Array(await doc.save());
 
     const dataUrl = await extractCvImage(bytes.buffer.slice(0) as ArrayBuffer);
 
     expect(dataUrl).not.toBeNull();
     expect(dataUrl).toMatch(/^data:image\/png;base64,/);
-    // Verify it's a valid PNG.
+    // Verify it's a valid PNG (89 50 4E 47 0D 0A 1A 0A).
     const b64 = dataUrl!.replace(/^data:image\/png;base64,/, "");
     const decoded = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
     expect(Array.from(decoded.slice(0, 8))).toEqual([
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
     ]);
+    // The cropped region is at least MIN_HEADSHOT_SIDE in
+    // each dimension (so a real headshot is always big enough
+    // to be visible).
+    const png = PNG.sync.read(Buffer.from(decoded));
+    expect(png.width).toBeGreaterThanOrEqual(100);
+    expect(png.height).toBeGreaterThanOrEqual(100);
   });
 
-  it("filters out images smaller than 200x200 (tile units, icons, logos)", async () => {
-    // 50x50 = 2_500 pixels — well above the 4 KB threshold
-    // but well below the 200x200 minimum. This is the "tile
-    // unit" / "icon" / "logo" size that the user's CV was
-    // returning (causing the tiled-headshot regression).
-    const smallPng = buildPngBytes(50, 50);
-    const bytes = await makePdfWithPng(smallPng);
+  it("returns a PNG data URL for a PDF with a blank page (no images / no text)", async () => {
+    // The page-render approach doesn't fail for empty / blank
+    // pages — it just returns a white PNG. The contract is
+    // "returns a valid PNG for any well-formed PDF".
+    const doc = await PDFDocument.create();
+    doc.addPage();
+    const bytes = new Uint8Array(await doc.save());
 
     const dataUrl = await extractCvImage(bytes.buffer.slice(0) as ArrayBuffer);
-    expect(dataUrl).toBeNull();
-  });
-
-  it("returns null when the PDF has no images", async () => {
-    const bytes = await makePdfWithoutImages();
-    const dataUrl = await extractCvImage(bytes.buffer.slice(0) as ArrayBuffer);
-    expect(dataUrl).toBeNull();
+    expect(dataUrl).not.toBeNull();
+    expect(dataUrl).toMatch(/^data:image\/png;base64,/);
   });
 
   it("returns null for malformed bytes (no leak of underlying error)", async () => {

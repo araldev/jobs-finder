@@ -1,60 +1,41 @@
 // Photo extractor for CV PDFs.
 //
-// Mirrors `extract_cv_image` in
-// `backend/src/jobs_finder/infrastructure/cv/_parser.py`. The
-// Python port uses PyMuPDF; this TypeScript port uses
-// `unpdf.extractImages` (which wraps pdfjs-dist) so we get
-// PyMuPDF-quality image detection without the PyMuPDF native
-// dependency. We then re-encode the raw pixel data to a PNG
-// byte stream via `pngjs`.
+// Strategy: render the FIRST page of the PDF as a canvas image
+// and crop the top portion. This is the most reliable approach
+// for the user's specific case where the original PDF has the
+// photo as a tiling pattern (the unpdf per-image route keeps
+// returning the tile unit, which when drawn shows a "tiled
+// headshot" pattern in the adapted CV).
 //
-// Strategy:
-//   1. Use `unpdf.getDocumentProxy` to get a pdfjs document.
-//   2. For each page, call `unpdf.extractImages` — equivalent
-//      to PyMuPDF's `page.get_images(full=True)`.
-//   3. For each image: apply a stack of filters:
-//      - Must NOT be a Form XObject / pattern (key starts
-//        with "g_").
-//      - Must be at least 200x200 pixels (a real CV headshot;
-//        smaller images are tile units, icons, or logos).
-//      - Must be at most 2000x2000 pixels (a real CV headshot;
-//        larger images are page backgrounds).
-//      - Must be RGB or RGBA (3 or 4 channels; grayscale = SMask).
-//      - Pixel data must be at least 4 KB.
-//   4. Pick the BEST candidate: most channels, then largest
-//      by raw data size, then earliest page.
-//   5. Re-encode the selected image as a valid PNG byte stream
-//      via pngjs. Force the alpha channel to 255 (opaque) so
-//      any residual transparency doesn't cause the renderer
-//      to composite the image weirdly.
+// The page-render approach bypasses the per-image complexity:
+// the first page already contains the photo in its correct
+// position, and cropping the top-right region captures the
+// photo as the user sees it in the original CV — without any
+// tiling artifacts.
+//
+// We use `unpdf.renderPageAsImage` (which uses canvas under
+// the hood) to render the first page at 2x scale. The cropped
+// region is then re-encoded as a PNG data URL.
 //
 // The function never throws on bad input — it returns `null`
-// on any failure. This matches `extractPdfText`'s contract
-// and AGENTS.md rule #24 (no leaking of internal exception
-// details).
+// on any failure (malformed PDF, no canvas, render error).
+// This matches `extractPdfText`'s contract and AGENTS.md
+// rule #24 (no leaking of internal exception details).
 
 import "server-only";
 
-import { extractImages, getDocumentProxy } from "unpdf";
+import { getDocumentProxy, renderPageAsImage } from "unpdf";
 import { PNG } from "pngjs";
+// @napi-rs/canvas provides a real Canvas implementation for
+// Node.js (the runtime we run in for the Next.js server).
+// unpdf requires the caller to pass the canvas module as a
+// `canvasImport` option in Node — it does NOT auto-resolve the
+// optional `canvas` / `@napi-rs/canvas` peer dependency.
+import * as canvas from "@napi-rs/canvas";
 
-const MIN_IMAGE_BYTES = 4_000;
-// Real CV headshots are typically at least 200x200. Anything
-// smaller is likely a tile unit, an icon, a logo, or a
-// thumbnail.
-const MIN_WIDTH = 200;
-const MIN_HEIGHT = 200;
-const MAX_WIDTH = 2000;
-const MAX_HEIGHT = 2000;
-
-type Candidate = {
-  pageNum: number;
-  width: number;
-  height: number;
-  channels: 1 | 3 | 4;
-  bytes: number;
-  data: Uint8ClampedArray;
-};
+const CROP_TOP_FRACTION = 0.18; // top 18% of the page (typical header area)
+const CROP_WIDTH_FRACTION = 0.30; // right 30% of the page (typical photo width)
+const MIN_HEADSHOT_SIDE = 100; // px — minimum cropped region dimension
 
 export async function extractCvImage(
   bytes: ArrayBuffer,
@@ -67,108 +48,78 @@ export async function extractCvImage(
     return null;
   }
 
-  const candidates: Candidate[] = [];
-  const pageCount = doc.numPages;
-
-  for (let pageNum = 1; pageNum <= pageCount; pageNum++) {
-    let images: Awaited<ReturnType<typeof extractImages>>;
-    try {
-      images = await extractImages(doc, pageNum);
-    } catch (err) {
-      console.error(
-        `pdf/extract-image: extractImages failed for page ${pageNum}`,
-        err,
-      );
-      continue;
-    }
-
-    for (const img of images) {
-      // The `key` property from unpdf comes from pdfjs's
-      // operator list args. Image keys from the page's
-      // resource table start with "img_"; Form XObjects and
-      // patterns start with "g_". The "g_" prefix was the root
-      // cause of the "tiled headshot" regression — unpdf was
-      // returning the tile unit of a pattern.
-      if (img.key?.startsWith("g_")) {
-        console.log(
-          `pdf/extract-image: skipping ${img.width}x${img.height} (${img.channels}ch) key=${img.key} — Form XObject / pattern`,
-        );
-        continue;
-      }
-
-      if (img.width < MIN_WIDTH || img.height < MIN_HEIGHT) {
-        console.log(
-          `pdf/extract-image: skipping ${img.width}x${img.height} (${img.channels}ch) — too small (< ${MIN_WIDTH}x${MIN_HEIGHT})`,
-        );
-        continue;
-      }
-      if (img.width > MAX_WIDTH || img.height > MAX_HEIGHT) {
-        console.log(
-          `pdf/extract-image: skipping ${img.width}x${img.height} (${img.channels}ch) — too large (> ${MAX_WIDTH}x${MAX_HEIGHT})`,
-        );
-        continue;
-      }
-
-      if (img.channels < 3) {
-        console.log(
-          `pdf/extract-image: skipping ${img.width}x${img.height} (${img.channels}ch) — grayscale (likely SMask)`,
-        );
-        continue;
-      }
-
-      const pixelBytes = img.width * img.height * img.channels;
-      if (pixelBytes < MIN_IMAGE_BYTES) {
-        console.log(
-          `pdf/extract-image: skipping ${img.width}x${img.height} (${img.channels}ch) — ${pixelBytes} bytes (< ${MIN_IMAGE_BYTES} threshold)`,
-        );
-        continue;
-      }
-
-      candidates.push({
-        pageNum,
-        width: img.width,
-        height: img.height,
-        channels: img.channels,
-        bytes: pixelBytes,
-        data: img.data,
-      });
-    }
-  }
-
-  if (candidates.length === 0) {
-    console.log("pdf/extract-image: no eligible images found");
-    return null;
-  }
-
-  // Most channels first, then largest size, then earliest page.
-  candidates.sort((a, b) => {
-    if (b.channels !== a.channels) return b.channels - a.channels;
-    if (b.bytes !== a.bytes) return b.bytes - a.bytes;
-    return a.pageNum - b.pageNum;
-  });
-
-  const best = candidates[0]!;
-
+  // Render the first page at 2x scale (so the headshot crop
+  // is high-resolution). unpdf's renderPageAsImage returns an
+  // ArrayBuffer of PNG bytes. The page is rendered as a
+  // single image with the photo in its correct position —
+  // we just crop the top-right region.
+  let pagePngBytes: ArrayBuffer;
   try {
-    const png = new PNG({
-      width: best.width,
-      height: best.height,
-      channels: best.channels,
+    pagePngBytes = await renderPageAsImage(doc, 1, {
+      scale: 2,
+      canvasImport: async () => canvas,
     });
-    png.data = new Uint8Array(best.data);
-    if (best.channels === 4) {
-      for (let i = 3; i < png.data.length; i += 4) {
-        png.data[i] = 0xff;
-      }
-    }
-    const pngBytes = PNG.sync.write(png);
-    const b64 = Buffer.from(pngBytes).toString("base64");
-    console.log(
-      `pdf/extract-image: extracted photo from page ${best.pageNum} — ${best.width}x${best.height} (${best.channels}ch) — ${pngBytes.byteLength} bytes (from ${candidates.length} candidate${candidates.length === 1 ? "" : "s"})`,
-    );
-    return `data:image/png;base64,${b64}`;
   } catch (err) {
-    console.error("pdf/extract-image: pngjs re-encode failed", err);
+    console.error("pdf/extract-image: renderPageAsImage failed", err);
     return null;
   }
+
+  // Decode the rendered page PNG so we can crop it.
+  let decoded: ReturnType<typeof PNG.sync.read>;
+  try {
+    decoded = PNG.sync.read(Buffer.from(pagePngBytes));
+  } catch (err) {
+    console.error("pdf/extract-image: PNG decode of rendered page failed", err);
+    return null;
+  }
+
+  const { width: pageW, height: pageH, data: pageData } = decoded;
+
+  // Crop the top-right region of the page (where CV headshots
+  // typically live). For a typical A4 portrait CV rendered at
+  // 2x (~1190x1684 px), the crop is the top 18% × right 30%
+  // of the page (~215 px tall, ~357 px wide). The crop
+  // dimensions scale proportionally for non-A4 pages.
+  const cropHeight = Math.max(
+    MIN_HEADSHOT_SIDE,
+    Math.floor(pageH * CROP_TOP_FRACTION),
+  );
+  // Use a portrait-ish aspect ratio for the cropped headshot
+  // (4:5, similar to a typical CV headshot).
+  const cropWidth = Math.max(
+    MIN_HEADSHOT_SIDE,
+    Math.floor(cropHeight * 0.8),
+  );
+  // Anchor the crop to the top-right corner with a small
+  // margin from the right edge.
+  const cropRightMargin = Math.floor(pageW * 0.02);
+  const cropLeft = Math.max(0, pageW - cropWidth - cropRightMargin);
+  const cropTop = 0;
+
+  if (cropLeft + cropWidth > pageW || cropHeight > pageH) {
+    console.error(
+      `pdf/extract-image: crop bounds out of range (page ${pageW}x${pageH}, crop ${cropWidth}x${cropHeight} at (${cropLeft}, ${cropTop}))`,
+    );
+    return null;
+  }
+
+  // Extract the crop region from the page pixels.
+  const cropped = new PNG({ width: cropWidth, height: cropHeight });
+  for (let y = 0; y < cropHeight; y++) {
+    for (let x = 0; x < cropWidth; x++) {
+      const srcIdx = ((cropTop + y) * pageW + (cropLeft + x)) * 4;
+      const dstIdx = (y * cropWidth + x) * 4;
+      cropped.data[dstIdx] = pageData[srcIdx]!;
+      cropped.data[dstIdx + 1] = pageData[srcIdx + 1]!;
+      cropped.data[dstIdx + 2] = pageData[srcIdx + 2]!;
+      cropped.data[dstIdx + 3] = 0xff; // force opaque
+    }
+  }
+
+  const croppedPngBytes = PNG.sync.write(cropped);
+  const b64 = Buffer.from(croppedPngBytes).toString("base64");
+  console.log(
+    `pdf/extract-image: rendered page 1 (${pageW}x${pageH}) and cropped headshot (${cropWidth}x${cropHeight}) at (${cropLeft}, ${cropTop}) — ${croppedPngBytes.byteLength} bytes`,
+  );
+  return `data:image/png;base64,${b64}`;
 }
