@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 
@@ -30,6 +31,7 @@ export interface AuthStatusProps {
 export function AuthStatus({ scope = "local" }: AuthStatusProps) {
   const supabase = createClient();
   const router = useRouter();
+  const t = useTranslations("Navigation");
   const { data: user, isLoading } = useCurrentUser();
 
   const email = user?.email ?? null;
@@ -55,7 +57,10 @@ export function AuthStatus({ scope = "local" }: AuthStatusProps) {
         >
           {email}
         </Link>
-        <Button variant="outline" size="sm" onClick={logout}>
+        <Link href="/adapt-cv">
+          <Button size="sm">{t("adaptCv.label")}</Button>
+        </Link>
+        <Button variant="ghost" size="sm" onClick={logout}>
           Cerrar sesión
         </Button>
       </div>
@@ -63,11 +68,10 @@ export function AuthStatus({ scope = "local" }: AuthStatusProps) {
   }
 
   return (
-    <Link
-      href="/login"
-      className="rounded-lg bg-foreground px-3 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90"
-    >
-      Iniciar sesión
+    <Link href="/login">
+      <Button variant="outline" size="sm">
+        Iniciar sesión
+      </Button>
     </Link>
   );
 }

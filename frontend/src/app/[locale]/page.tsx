@@ -165,14 +165,17 @@ export default function CVLandingPage() {
             {!loading && (
               <>
                 {user ? (
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-3">
                     <Link
                       href="/settings"
                       className="text-sm text-muted-foreground transition-colors hover:text-foreground"
                     >
                       {user.email}
                     </Link>
-                    <Button variant="outline" size="sm" onClick={handleLogout}>
+                    <Link href="/adapt-cv">
+                      <Button size="sm">Adaptar CV</Button>
+                    </Link>
+                    <Button variant="ghost" size="sm" onClick={handleLogout}>
                       Cerrar sesión
                     </Button>
                   </div>
@@ -236,7 +239,10 @@ export default function CVLandingPage() {
                   >
                     {user.email}
                   </Link>
-                  <Button variant="outline" onClick={handleLogout}>
+                  <Link href="/adapt-cv" onClick={() => setMobileMenuOpen(false)}>
+                    <Button className="w-full">Adaptar CV</Button>
+                  </Link>
+                  <Button variant="ghost" onClick={handleLogout}>
                     Cerrar sesión
                   </Button>
                 </div>
@@ -293,6 +299,14 @@ export default function CVLandingPage() {
                     </Link>{" "}
                     para generar tu CV adaptado
                   </p>
+                  <div className="mt-4">
+                    <Link href="/adapt-cv">
+                      <Button size="lg" className="gap-2">
+                        Ir a Adaptar CV
+                        <ArrowRight className="h-4 w-4" />
+                      </Button>
+                    </Link>
+                  </div>
                 </div>
               ) : (
                 <div className="flex flex-col gap-3 w-full max-w-md">
@@ -571,13 +585,21 @@ export default function CVLandingPage() {
 
             <div className="mt-8 flex flex-col items-center gap-4">
               {user ? (
-                <UploadCVSection
-                  savedCV={savedCV}
-                  uploading={uploading}
-                  uploadSuccess={uploadSuccess}
-                  error={error}
-                  onUpload={handleUpload}
-                />
+                <div className="flex flex-col items-center gap-4">
+                  <UploadCVSection
+                    savedCV={savedCV}
+                    uploading={uploading}
+                    uploadSuccess={uploadSuccess}
+                    error={error}
+                    onUpload={handleUpload}
+                  />
+                  <Link href="/adapt-cv">
+                    <Button size="lg" className="gap-2 text-base">
+                      Ir a Adaptar CV
+                      <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  </Link>
+                </div>
               ) : (
                 <Link href="/login">
                   <Button size="lg" className="gap-2 text-base">

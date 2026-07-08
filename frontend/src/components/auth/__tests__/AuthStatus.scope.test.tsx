@@ -13,6 +13,16 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: routerPush, replace: vi.fn(), refresh: routerRefresh }),
 }));
 
+// Mock useTranslations so AuthStatus doesn't need NextIntlClientProvider.
+vi.mock("next-intl", () => ({
+  useTranslations: () => (key: string) => {
+    const translations: Record<string, string> = {
+      "adaptCv.label": "Adaptar CV",
+    };
+    return translations[key] ?? key;
+  },
+}));
+
 // Mock useCurrentUser so the AuthStatus component reads auth state
 // from the React Query cache instead of calling supabase.auth directly.
 const mockUseCurrentUser = vi.fn();
