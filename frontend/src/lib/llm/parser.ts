@@ -11,13 +11,68 @@
 // Thinking-block stripping (the M2.x model family emits
 // `<think>...</think>` tags) is also mirrored here.
 
-import type { AdaptedCV, AdaptedCVProject } from "./prompts";
+import type { AdaptedCV, AdaptedCVProject, AdaptedCVProjectLink } from "./prompts";
 
 export class AdaptedCVParseError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "AdaptedCVParseError";
   }
+}
+
+/**
+ * Maximum number of links accepted per project, per REQ-PJL-001
+ * scenario "over-cap is capped". Real LLM output is usually 3-5
+ * links per project; the cap protects the renderer layout from
+ * pathological inputs.
+ */
+const MAX_LINKS_PER_PROJECT = 8;
+
+const KNOWN_PLATFORMS: Record<string, string> = {
+  "github.com": "GitHub",
+  "gitlab.com": "GitLab",
+  "bitbucket.org": "Bitbucket",
+  "npmjs.com": "npm",
+  "npmjs.org": "npm",
+  "storybook.js.org": "Storybook",
+  "youtube.com": "YouTube",
+  "youtu.be": "YouTube",
+  "linkedin.com": "LinkedIn",
+  "medium.com": "Medium",
+  "dev.to": "DEV",
+};
+
+/**
+ * Derive a short, human-readable chip label from a URL.
+ *
+ * Mirrors the Python `derive_chip_label` helper in
+ * `backend/.../cv/_template.py` byte-for-byte. Algorithm:
+ *   1. Empty / unparseable URL → "" (never throw).
+ *   2. Lowercase the hostname; strip a leading "www.".
+ *   3. Look the hostname up in `KNOWN_PLATFORMS`.
+ *   4. Fall back to the first label of the hostname, capitalized
+ *      (e.g. "user.example.com" → "User").
+ *
+ * Used by the parser (legacy `url` → synthesized single-link) and
+ * the renderer (chip fallback when the LLM emits an empty label).
+ */
+export function deriveChipLabel(url: string): string {
+  if (!url) return "";
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+  if (host.startsWith("www.")) {
+    host = host.slice(4);
+  }
+  if (!host) return "";
+  if (host in KNOWN_PLATFORMS) {
+    return KNOWN_PLATFORMS[host]!;
+  }
+  const firstLabel = host.split(".")[0];
+  return firstLabel ? firstLabel.charAt(0).toUpperCase() + firstLabel.slice(1) : "";
 }
 
 const MARKDOWN_JSON_PATTERNS = [
@@ -103,16 +158,57 @@ function listOr(value: unknown): string[] {
   return [];
 }
 
+function linksOr(value: unknown): AdaptedCVProjectLink[] {
+  // Parse a `links` array from the LLM JSON, dropping invalid
+  // entries (empty URL, non-http(s) scheme) and capping at
+  // MAX_LINKS_PER_PROJECT per REQ-PJL-001.
+  //
+  // Returns an empty list for missing or non-array input — the
+  // caller decides whether to synthesize from the legacy `url`.
+  if (!value || !Array.isArray(value)) return [];
+  const out: AdaptedCVProjectLink[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+    const url = e.url;
+    if (typeof url !== "string" || !url) continue;
+    // Only http:// and https:// survive WinAnsi + the browser's
+    // "open this link" behavior. Drop ftp://, javascript:,
+    // file://, etc. — they'd either crash the renderer or open
+    // the wrong thing in the browser.
+    if (!url.startsWith("http://") && !url.startsWith("https://")) continue;
+    const label = e.label;
+    const labelStr = typeof label === "string" ? label : "";
+    out.push({ label: labelStr, url });
+    if (out.length >= MAX_LINKS_PER_PROJECT) break;
+  }
+  return out;
+}
+
 function projectsOr(value: unknown): AdaptedCVProject[] {
   if (!Array.isArray(value)) return [];
   return value
     .map((p) => {
       const proj = (p ?? {}) as Record<string, unknown>;
+      // Per REQ-PJL-001 + REQ-PJL-002: prefer the new `links[]`
+      // shape when present; fall back to synthesizing a one-entry
+      // list from the legacy `url` field (backward compat — any
+      // cached LLM output that still uses the singular URL shape
+      // keeps working).
+      const links = linksOr(proj.links);
+      const legacyUrl =
+        typeof proj.url === "string" && proj.url.length > 0 ? proj.url : null;
+      const effectiveLinks =
+        links.length > 0
+          ? links
+          : legacyUrl
+            ? [{ label: deriveChipLabel(legacyUrl), url: legacyUrl }]
+            : [];
       return {
         name: strOr(proj.name),
         description: strOr(proj.description, ""),
         technologies: listOr(proj.technologies),
-        url: strOr(proj.url),
+        links: effectiveLinks,
       };
     })
     .filter((p) => p.name.length > 0);

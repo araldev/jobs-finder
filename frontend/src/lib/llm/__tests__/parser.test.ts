@@ -11,6 +11,7 @@ import { describe, it, expect } from "vitest";
 import {
   parseAdaptedCVResponse,
   parseChatFilterResponse,
+  deriveChipLabel,
   AdaptedCVParseError,
   ChatFilterParseError,
 } from "../parser";
@@ -68,6 +69,7 @@ describe("parseAdaptedCVResponse", () => {
     expect(cv.projects[0]?.technologies).toEqual(["React", "TypeScript"]);
     expect(cv.projects[1]?.name).toBe("PORTFOLIO");
     expect(cv.projects[1]?.technologies).toEqual([]);
+    expect(cv.projects[0]?.links).toEqual([]);
     expect(cv.skills).toEqual(["TypeScript", "React", "Node.js"]);
   });
 
@@ -370,6 +372,219 @@ Now I'll generate the adapted JSON.</think>` +
       expect(msg.length).toBeLessThan(500);
       expect(msg).not.toContain("x".repeat(200));
     }
+  });
+});
+
+// ===========================================================================
+// REQ-PJL-001 + REQ-PJL-002: project links[] parsing
+// ===========================================================================
+
+describe("parseAdaptedCVResponse project links", () => {
+  it("parses a project with a multi-link links[] array (new shape)", () => {
+    const raw = JSON.stringify({
+      name: "Arturo",
+      projects: [
+        {
+          name: "V12-UI",
+          description: "React UI lib",
+          technologies: ["React"],
+          links: [
+            { label: "GitHub", url: "https://github.com/user/v12-ui" },
+            { label: "Storybook", url: "https://storybook.js.org/v12-ui" },
+            { label: "npm", url: "https://www.npmjs.com/package/v12-ui" },
+          ],
+        },
+      ],
+    });
+    const cv = parseAdaptedCVResponse(raw);
+    expect(cv.projects).toHaveLength(1);
+    expect(cv.projects[0]?.links).toHaveLength(3);
+    expect(cv.projects[0]?.links[0]).toEqual({
+      label: "GitHub",
+      url: "https://github.com/user/v12-ui",
+    });
+    expect(cv.projects[0]?.links[1]?.label).toBe("Storybook");
+    expect(cv.projects[0]?.links[2]?.label).toBe("npm");
+  });
+
+  it("synthesizes a one-link links[] from legacy url (backward compat)", () => {
+    // A cached LLM response that still emits the singular `url` field
+    // must keep working — the parser derives a hostname-based label
+    // and synthesizes a single-entry links array.
+    const raw = JSON.stringify({
+      name: "Arturo",
+      projects: [
+        {
+          name: "V12-UI",
+          description: "React UI lib",
+          technologies: ["React"],
+          url: "https://github.com/user/v12-ui",
+        },
+      ],
+    });
+    const cv = parseAdaptedCVResponse(raw);
+    expect(cv.projects[0]?.links).toHaveLength(1);
+    expect(cv.projects[0]?.links[0]).toEqual({
+      label: "GitHub",
+      url: "https://github.com/user/v12-ui",
+    });
+  });
+
+  it("prefers links[] over legacy url when both are present", () => {
+    // REQ-PJL-002 scenario: when both shapes are present, links is
+    // authoritative and the legacy url is ignored.
+    const raw = JSON.stringify({
+      name: "Arturo",
+      projects: [
+        {
+          name: "V12-UI",
+          description: "React UI lib",
+          technologies: ["React"],
+          url: "https://example.com/should-be-ignored",
+          links: [
+            { label: "GitHub", url: "https://github.com/user/v12-ui" },
+            { label: "Storybook", url: "https://storybook.js.org/v12-ui" },
+          ],
+        },
+      ],
+    });
+    const cv = parseAdaptedCVResponse(raw);
+    expect(cv.projects[0]?.links).toHaveLength(2);
+    for (const link of cv.projects[0]?.links ?? []) {
+      expect(link.url).not.toContain("should-be-ignored");
+    }
+  });
+
+  it("yields an empty links array when neither links nor url is present", () => {
+    const raw = JSON.stringify({
+      name: "Arturo",
+      projects: [
+        {
+          name: "V12-UI",
+          description: "React UI lib",
+          technologies: ["React"],
+        },
+      ],
+    });
+    const cv = parseAdaptedCVResponse(raw);
+    expect(cv.projects[0]?.links).toEqual([]);
+  });
+
+  it("drops link entries with empty url", () => {
+    const raw = JSON.stringify({
+      name: "Arturo",
+      projects: [
+        {
+          name: "V12-UI",
+          description: "React UI lib",
+          technologies: ["React"],
+          links: [
+            { label: "GitHub", url: "https://github.com/user/v12-ui" },
+            { label: "", url: "" },
+          ],
+        },
+      ],
+    });
+    const cv = parseAdaptedCVResponse(raw);
+    expect(cv.projects[0]?.links).toHaveLength(1);
+    expect(cv.projects[0]?.links[0]?.label).toBe("GitHub");
+  });
+
+  it("drops link entries with non-http scheme (ftp:// guard)", () => {
+    const raw = JSON.stringify({
+      name: "Arturo",
+      projects: [
+        {
+          name: "V12-UI",
+          description: "React UI lib",
+          technologies: ["React"],
+          links: [
+            { label: "GitHub", url: "https://github.com/user/v12-ui" },
+            { label: "FTP", url: "ftp://files.example.com/v12-ui" },
+          ],
+        },
+      ],
+    });
+    const cv = parseAdaptedCVResponse(raw);
+    expect(cv.projects[0]?.links).toHaveLength(1);
+    expect(cv.projects[0]?.links[0]?.label).toBe("GitHub");
+  });
+
+  it("caps links at 8 entries per project (REQ-PJL-001 over-cap scenario)", () => {
+    const links = Array.from({ length: 9 }, (_, i) => ({
+      label: `L${i}`,
+      url: `https://example.com/${i}`,
+    }));
+    const raw = JSON.stringify({
+      name: "Arturo",
+      projects: [
+        {
+          name: "V12-UI",
+          description: "React UI lib",
+          technologies: ["React"],
+          links,
+        },
+      ],
+    });
+    const cv = parseAdaptedCVResponse(raw);
+    expect(cv.projects[0]?.links).toHaveLength(8);
+  });
+});
+
+// ===========================================================================
+// deriveChipLabel — port of the Python `derive_chip_label` helper
+// ===========================================================================
+
+describe("deriveChipLabel", () => {
+  it("returns 'GitHub' for github.com URLs", () => {
+    expect(deriveChipLabel("https://github.com/user/v12-ui")).toBe("GitHub");
+  });
+  it("returns 'GitLab' for gitlab.com URLs", () => {
+    expect(deriveChipLabel("https://gitlab.com/user/project")).toBe("GitLab");
+  });
+  it("returns 'Bitbucket' for bitbucket.org URLs", () => {
+    expect(deriveChipLabel("https://bitbucket.org/user/repo")).toBe("Bitbucket");
+  });
+  it("returns 'npm' for www.npmjs.com URLs", () => {
+    expect(deriveChipLabel("https://www.npmjs.com/package/react")).toBe("npm");
+  });
+  it("returns 'Storybook' for storybook.js.org URLs", () => {
+    expect(
+      deriveChipLabel("https://storybook.js.org/?path=/story/welcome"),
+    ).toBe("Storybook");
+  });
+  it("returns 'YouTube' for youtube.com URLs", () => {
+    expect(deriveChipLabel("https://www.youtube.com/watch?v=abc")).toBe(
+      "YouTube",
+    );
+  });
+  it("returns 'YouTube' for youtu.be short URLs", () => {
+    expect(deriveChipLabel("https://youtu.be/abc123")).toBe("YouTube");
+  });
+  it("returns 'LinkedIn' for linkedin.com URLs", () => {
+    expect(deriveChipLabel("https://www.linkedin.com/in/arturo-alba")).toBe(
+      "LinkedIn",
+    );
+  });
+  it("strips www. prefix before the KNOWN map lookup", () => {
+    expect(deriveChipLabel("https://www.github.com/x/y")).toBe("GitHub");
+  });
+  it("capitalizes the first label of an unknown hostname", () => {
+    expect(deriveChipLabel("https://user.ar2d2.dev/blog")).toBe("User");
+    expect(deriveChipLabel("https://docs.example.com/path")).toBe("Docs");
+  });
+  it("returns '' for an empty URL", () => {
+    expect(deriveChipLabel("")).toBe("");
+  });
+  it("returns '' for an invalid URL (no scheme)", () => {
+    expect(deriveChipLabel("not a url")).toBe("");
+  });
+  it("produces the same label for http:// and https://", () => {
+    expect(deriveChipLabel("http://github.com/x/y")).toBe("GitHub");
+    expect(deriveChipLabel("https://github.com/x/y")).toBe("GitHub");
+  });
+  it("ignores the URL port when computing the label", () => {
+    expect(deriveChipLabel("https://example.com:8080/path")).toBe("Example");
   });
 });
 

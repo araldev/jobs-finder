@@ -1,7 +1,8 @@
 import "server-only";
 
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb, PDFName, PDFArray } from "pdf-lib";
-import type { AdaptedCV } from "@/lib/llm/prompts";
+import type { AdaptedCV, AdaptedCVProjectLink } from "@/lib/llm/prompts";
+import { deriveChipLabel } from "@/lib/llm/parser";
 
 // ── Page geometry ───────────────────────────────────────────────────────
 //
@@ -49,6 +50,7 @@ const SIZE_EXP_BULLET = 10;
 const SIZE_PROJECT_NAME = 10;
 const SIZE_PROJECT_DESC = 10;
 const SIZE_PROJECT_TECH = 9;
+const SIZE_PROJECT_LINK = 8;
 const SIZE_EDU_DEGREE = 10;
 const SIZE_EDU_YEAR = 9;
 const SIZE_EDU_INSTITUTION = 9;
@@ -73,6 +75,20 @@ const HIGHLIGHT_COLOR = rgb(1, 0.949, 0.804);
 
 const DIVIDER_COLOR = rgb(0.55, 0.55, 0.55);
 const DIVIDER_THICKNESS = 0.4;
+
+// Project link chip geometry (REQ-PJL-004). The chip is a small
+// bordered rectangle with subtle fill, matching the Python
+// template's `.project-link-chip` style (gray border, light gray
+// fill, italic small text). Each chip is its own clickable region
+// (REQ-PJL-003) — the `drawLinkAnnotation` call below covers the
+// WHOLE chip rectangle, not just the text.
+const CHIP_FILL_COLOR = rgb(0.957, 0.957, 0.957); // #f4f4f4
+const CHIP_BORDER_COLOR = rgb(0.533, 0.533, 0.533); // #888
+const CHIP_BORDER_THICKNESS = 0.5;
+const CHIP_PADDING_X = 4;
+const CHIP_PADDING_Y = 2;
+const CHIP_GAP_X = 4;
+const CHIP_GAP_Y = 3;
 
 // Section titles — Spanish to match the user's CV reference image AND
 // the backend Python template (`backend/.../cv/_template.py`), which
@@ -465,6 +481,121 @@ function drawLinkAnnotation(
   state.page.node.set(PDFName.of("Annots"), state.doc.context.obj(existing) as any);
 }
 
+// ── Chip row (per-link clickable rectangles, REQ-PJL-003 / REQ-PJL-004)
+// ────────────────────────────────────────────────────────────────
+
+interface ChipPlacement {
+  link: AdaptedCVProjectLink;
+  width: number;
+  x: number;
+  y: number;
+  height: number;
+  label: string;
+}
+
+/**
+ * Draw a row of clickable link chips, wrapping to the next line
+ * when the cumulative width exceeds `CONTENT_WIDTH`.
+ *
+ * Each chip:
+ *   1. is rendered as a bordered rectangle (border + subtle fill),
+ *   2. carries the link label as italic text centered horizontally,
+ *   3. has its own `drawLinkAnnotation` over the WHOLE chip
+ *      rectangle — distinct from every other chip's region.
+ *
+ * Per design §1.5 the helper:
+ *   - uses `state.italic.widthOfTextAtSize` to measure labels,
+ *   - greedy-wraps across `CONTENT_WIDTH` (cumulative width),
+ *   - falls back to `deriveChipLabel(l.url)` for empty labels.
+ */
+function drawChipRow(
+  state: DrawState,
+  links: readonly AdaptedCVProjectLink[],
+): void {
+  if (links.length === 0) return;
+
+  // Pre-measure each chip's width (label + horizontal padding).
+  const chipHeight = SIZE_PROJECT_LINK + 2 * CHIP_PADDING_Y;
+  const widths: number[] = links.map((l) => {
+    const label = l.label || deriveChipLabel(l.url);
+    const labelWidth = state.italic.widthOfTextAtSize(label, SIZE_PROJECT_LINK);
+    return Math.ceil(labelWidth) + 2 * CHIP_PADDING_X;
+  });
+
+  // Greedy-wrap into placements. Each row is a list of placements
+  // (x-positioned greedily from MARGIN). When the next chip
+  // wouldn't fit, we start a new row.
+  const placements: ChipPlacement[] = [];
+  let rowStartY = state.y;
+  let cursorX = MARGIN;
+  let rowMaxHeight = chipHeight;
+  for (let i = 0; i < links.length; i++) {
+    const link = links[i]!;
+    const width = widths[i]!;
+    // If this chip would overflow CONTENT_WIDTH AND we're not at
+    // the start of a row, wrap to the next line.
+    if (cursorX + width > MARGIN + CONTENT_WIDTH && cursorX > MARGIN) {
+      rowStartY -= rowMaxHeight + CHIP_GAP_Y;
+      cursorX = MARGIN;
+      rowMaxHeight = chipHeight;
+    }
+    placements.push({
+      link,
+      width,
+      x: cursorX,
+      y: rowStartY - chipHeight,
+      height: chipHeight,
+      label: link.label || deriveChipLabel(link.url),
+    });
+    cursorX += width + CHIP_GAP_X;
+    // rowMaxHeight tracks the tallest chip on this row (all chips
+    // are the same size today, but the structure leaves room for
+    // variable-size chips in the future).
+    if (chipHeight > rowMaxHeight) rowMaxHeight = chipHeight;
+  }
+
+  // Each chip = bordered rectangle + centered italic label +
+  // independent link annotation covering the whole rectangle.
+  for (const chip of placements) {
+    state.page.drawRectangle({
+      x: chip.x,
+      y: chip.y,
+      width: chip.width,
+      height: chip.height,
+      color: CHIP_FILL_COLOR,
+      borderColor: CHIP_BORDER_COLOR,
+      borderWidth: CHIP_BORDER_THICKNESS,
+    });
+    const labelWidth = state.italic.widthOfTextAtSize(
+      chip.label,
+      SIZE_PROJECT_LINK,
+    );
+    const labelX = chip.x + (chip.width - labelWidth) / 2;
+    state.page.drawText(chip.label, {
+      x: labelX,
+      y: chip.y + CHIP_PADDING_Y,
+      font: state.italic,
+      size: SIZE_PROJECT_LINK,
+      color: rgb(0, 0, 0),
+    });
+    // Each chip gets its own link annotation over the WHOLE
+    // rectangle — REQ-PJL-003 requires each entry in `links` to be
+    // an independently clickable region.
+    drawLinkAnnotation(
+      state,
+      chip.link.url,
+      chip.x,
+      chip.y,
+      chip.width,
+      chip.height,
+    );
+  }
+
+  // Advance past the chip row(s) + a small gap before the next
+  // section (description, technologies, or next project).
+  state.y = rowStartY - rowMaxHeight - 2;
+}
+
 // ── Per-section content helpers ────────────────────────────────────────
 
 function drawEducationEntry(
@@ -595,23 +726,20 @@ function drawProjectEntry(
   proj: AdaptedCV["projects"][number],
 ): void {
   if (proj.name) {
-    const nameStartY = state.y;
+    // Project name is plain bold text — the chip row below carries
+    // the link targets. (The legacy code wrapped the name in a
+    // single `<a href>` over the singular `url` field; with the
+    // new shape each link is its own chip, so the name doesn't
+    // need its own clickable region.)
     drawWrappedText(state, proj.name, {
       size: SIZE_PROJECT_NAME,
       font: state.bold,
     });
-    const nameEndY = state.y;
-    // Draw link annotation if project has a valid URL
-    if (proj.url && proj.url.startsWith("http")) {
-      drawLinkAnnotation(
-        state,
-        proj.url,
-        MARGIN,
-        nameEndY,
-        state.bold.widthOfTextAtSize(proj.name, SIZE_PROJECT_NAME),
-        nameStartY - nameEndY,
-      );
-    }
+  }
+  // Per-link chip row (REQ-PJL-003 + REQ-PJL-004). One
+  // independently-clickable chip per entry in `proj.links`.
+  if (proj.links && proj.links.length > 0) {
+    drawChipRow(state, proj.links);
   }
   if (proj.description) {
     const descStartY = state.y;
@@ -620,7 +748,10 @@ function drawProjectEntry(
       font: state.font,
     });
     const descEndY = state.y;
-    // Auto-detect HTTP URLs in description text and make them clickable
+    // Auto-detect HTTP URLs in description text and make them
+    // clickable (preserved per spec REQ-PJL-007 — handles
+    // accidental bare URLs in the body that the LLM copies
+    // verbatim from the original CV).
     if (/https?:\/\/\S+/.test(proj.description)) {
       const urls = proj.description.match(/https?:\/\/\S+/g);
       if (urls) {
@@ -729,7 +860,10 @@ export async function renderAdaptedCvAsPdf(
       name: sanitizeForWinAnsi(p.name),
       description: sanitizeForWinAnsi(p.description),
       technologies: p.technologies.map(sanitizeForWinAnsi),
-      url: p.url ? sanitizeForWinAnsi(p.url) : null,
+      links: p.links.map((l) => ({
+        label: sanitizeForWinAnsi(l.label),
+        url: sanitizeForWinAnsi(l.url),
+      })),
     })),
     certifications: cv.certifications.map(sanitizeForWinAnsi),
     skills: cv.skills.map(sanitizeForWinAnsi),

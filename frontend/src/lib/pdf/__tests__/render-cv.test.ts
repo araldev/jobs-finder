@@ -139,13 +139,13 @@ const SAMPLE_CV: AdaptedCV = {
       description:
         "React-based component library used in side projects.",
       technologies: ["React", "TypeScript"],
-      url: null,
+      links: [],
     },
     {
       name: "PORTFOLIO",
       description: "Personal website with blog and project showcase.",
       technologies: ["Next.js"],
-      url: null,
+      links: [],
     },
   ],
   skills: ["TypeScript", "React", "Node.js", "PostgreSQL", "Kubernetes"],
@@ -187,7 +187,7 @@ const SPANISH_CV: AdaptedCV = {
       name: "V12-UI",
       description: "Librería de componentes React usada en proyectos personales.",
       technologies: ["React", "TypeScript"],
-      url: null,
+      links: [],
     },
   ],
   skills: ["TypeScript", "React", "Node.js", "PostgreSQL"],
@@ -418,7 +418,7 @@ describe("renderAdaptedCvAsPdf", () => {
           name: "MyNakedProject",
           description: "Description only.",
           technologies: [],
-          url: null,
+          links: [],
         },
       ],
     });
@@ -727,7 +727,9 @@ describe("link annotations for project URLs", () => {
           name: "V12-UI",
           description: "React-based component library.",
           technologies: ["React"],
-          url: "https://github.com/user/v12-ui",
+          links: [
+            { label: "GitHub", url: "https://github.com/user/v12-ui" },
+          ],
         },
       ],
     };
@@ -760,7 +762,7 @@ describe("link annotations for project URLs", () => {
     expect(uriStr).toContain("v12-ui");
   });
 
-  it("does NOT add a link annotation when project URL is null", async () => {
+  it("does NOT add a link annotation when project has no links", async () => {
     const cv: AdaptedCV = {
       ...SAMPLE_CV,
       projects: [
@@ -768,7 +770,7 @@ describe("link annotations for project URLs", () => {
           name: "V12-UI",
           description: "React-based component library.",
           technologies: ["React"],
-          url: null,
+          links: [],
         },
       ],
     };
@@ -783,7 +785,12 @@ describe("link annotations for project URLs", () => {
     }
   });
 
-  it("skips annotation gracefully when URL does not start with http (ftp:// guard)", async () => {
+  it("skips non-http links gracefully (ftp:// guard, no chip drawn)", async () => {
+    // Per the parser contract, ftp:// links are dropped on the way
+    // in, so they never reach the renderer. We test the chip-row
+    // level too — passing a non-http URL through the chip row
+    // should still produce no annotation (drawLinkAnnotation
+    // guards on `url.startsWith("http")`).
     const cv: AdaptedCV = {
       ...SAMPLE_CV,
       projects: [
@@ -791,7 +798,262 @@ describe("link annotations for project URLs", () => {
           name: "V12-UI",
           description: "React-based component library.",
           technologies: ["React"],
-          url: "ftp://files.example.com/project",
+          links: [
+            // The parser would have dropped this; we pass it through
+            // directly here to verify the renderer's safety net.
+            { label: "FTP", url: "ftp://files.example.com/project" },
+          ],
+        },
+      ],
+    };
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    const loaded = await PDFDocument.load(bytes);
+    const firstPage = loaded.getPages()[0]!;
+    const annotsObj = firstPage.node.get(PDFName.of("Annots"));
+    if (annotsObj) {
+      const annots = (annotsObj as any)?.asArray() ?? [];
+      expect(annots.length).toBe(0);
+    }
+  });
+});
+
+// ===========================================================================
+// REQ-PJL-003 + REQ-PJL-004: per-link chip row rendering
+// ===========================================================================
+
+describe("project link chip row", () => {
+  it("renders a single chip with one link and one annotation", async () => {
+    const cv: AdaptedCV = {
+      ...SAMPLE_CV,
+      projects: [
+        {
+          name: "V12-UI",
+          description: "React-based component library.",
+          technologies: ["React"],
+          links: [
+            { label: "GitHub", url: "https://github.com/user/v12-ui" },
+          ],
+        },
+      ],
+    };
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    // Load via pdf-lib FIRST (it consumes the buffer); THEN extract
+    // text via unpdf on the loaded doc. Order matters — `getDocumentProxy`
+    // mutates the buffer it receives, which breaks subsequent
+    // `PDFDocument.load(bytes)` calls.
+    const loaded = await PDFDocument.load(bytes);
+    const firstPage = loaded.getPages()[0]!;
+    const annotsObj = firstPage.node.get(PDFName.of("Annots"));
+    const annots = (annotsObj as any)?.asArray() ?? [];
+    expect(annots.length).toBe(1);
+    const lookup = loaded.context.lookup(annots[0]) as any;
+    const uri = lookup.get(PDFName.of("A"))?.get(PDFName.of("URI"));
+    const uriStr = String((uri as any)?.toString() ?? "");
+    expect(uriStr).toContain("github.com");
+
+    // Now extract text via unpdf on a fresh copy of the bytes.
+    const pdf = await getDocumentProxy(new Uint8Array(bytes));
+    const { text } = await extractText(pdf, { mergePages: true });
+    expect(text).toContain("GitHub");
+    expect(text).toContain("V12-UI");
+  });
+
+  it("renders three distinct chips on the same row with three distinct annotations", async () => {
+    const cv: AdaptedCV = {
+      ...SAMPLE_CV,
+      projects: [
+        {
+          name: "V12-UI",
+          description: "React-based component library.",
+          technologies: ["React"],
+          links: [
+            { label: "GitHub", url: "https://github.com/user/v12-ui" },
+            {
+              label: "Storybook",
+              url: "https://storybook.js.org/?path=/story/v12-ui",
+            },
+            { label: "npm", url: "https://www.npmjs.com/package/v12-ui" },
+          ],
+        },
+      ],
+    };
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    const loaded = await PDFDocument.load(bytes);
+    const firstPage = loaded.getPages()[0]!;
+    const annotsObj = firstPage.node.get(PDFName.of("Annots"));
+    const annots = (annotsObj as any)?.asArray() ?? [];
+    expect(annots.length).toBe(3);
+    const uris = new Set<string>();
+    for (const ref of annots) {
+      const lookup = loaded.context.lookup(ref) as any;
+      const uri = lookup.get(PDFName.of("A"))?.get(PDFName.of("URI"));
+      const uriStr = String((uri as any)?.toString() ?? "");
+      uris.add(uriStr);
+    }
+    expect(uris.size).toBe(3);
+    // Each chip's Rect is independent (no two chips share a bbox).
+    const rects: string[] = [];
+    for (const ref of annots) {
+      const lookup = loaded.context.lookup(ref) as any;
+      const rectPdfArr = lookup.get(PDFName.of("Rect"));
+      const arr = rectPdfArr.asArray() as Array<{ toString(): string }>;
+      rects.push(arr.map((n) => n.toString()).join(","));
+    }
+    // All 3 rects are unique.
+    expect(new Set(rects).size).toBe(3);
+
+    const pdf = await getDocumentProxy(new Uint8Array(bytes));
+    const { text } = await extractText(pdf, { mergePages: true });
+    expect(text).toContain("GitHub");
+    expect(text).toContain("Storybook");
+    expect(text).toContain("npm");
+  });
+
+  it("wraps chips to a second row when total width exceeds CONTENT_WIDTH", async () => {
+    // 8 long-label chips that overflow CONTENT_WIDTH (495pt at 8pt
+    // italic). At least one chip MUST land on a different y coordinate
+    // than the first chip.
+    const links = Array.from({ length: 8 }, (_, i) => ({
+      label: `LongLabel-${i}-extra-padding`,
+      url: `https://example.com/${i}`,
+    }));
+    const cv: AdaptedCV = {
+      ...SAMPLE_CV,
+      projects: [
+        {
+          name: "OVERFLOW",
+          description: "",
+          technologies: [],
+          links,
+        },
+      ],
+    };
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    const loaded = await PDFDocument.load(bytes);
+    const firstPage = loaded.getPages()[0]!;
+    const annotsObj = firstPage.node.get(PDFName.of("Annots"));
+    const annots = (annotsObj as any)?.asArray() ?? [];
+    // 8 annotations.
+    expect(annots.length).toBe(8);
+    // Extract the y-coordinates from each chip's Rect (a PDFArray
+    // with shape [x1, y1, x2, y2]). For chips on the same row the
+    // y values match; across rows they differ. We expect at least
+    // 2 distinct y-bottoms (the chips wrapped).
+    const yBottoms = new Set<number>();
+    for (const ref of annots) {
+      const lookup = loaded.context.lookup(ref) as any;
+      const rectPdfArr = lookup.get(PDFName.of("Rect"));
+      const rect = rectPdfArr.asArray() as Array<{ toString(): string }>;
+      // y1 is the bottom edge; use it as the row marker.
+      yBottoms.add(Math.round(Number(rect[1]!.toString()) * 10) / 10);
+    }
+    expect(yBottoms.size).toBeGreaterThanOrEqual(2);
+  });
+
+  it("sanitizer covers link.label and link.url (non-WinAnsi chars do not crash the renderer)", async () => {
+    // Regression: the sanitizer previously walked only `p.url`. If
+    // a link label contained a non-WinAnsi char (e.g. "Demo → Live"),
+    // the chip rendering would crash on the label's `drawText` call.
+    // The sanitizer extension in `renderAdaptedCvAsPdf` walks every
+    // link's label AND url, so the chip text round-trips safely.
+    const cv: AdaptedCV = {
+      ...SAMPLE_CV,
+      projects: [
+        {
+          name: "V12-UI",
+          description: "React-based component library.",
+          technologies: ["React"],
+          links: [
+            { label: "Demo → Live", url: "https://example.com/live" },
+            { label: "GitHub ⟶ Source", url: "https://github.com/x/y" },
+          ],
+        },
+      ],
+    };
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    expect(bytes.byteLength).toBeGreaterThan(0);
+    const pdf = await getDocumentProxy(new Uint8Array(bytes));
+    const { text } = await extractText(pdf, { mergePages: true });
+    // The long arrows (U+27F6, U+2192) are NOT in WinAnsi and are
+    // replaced with "->" by the sanitizer. The labels round-trip
+    // without crashing.
+    expect(text).toContain("Demo -> Live");
+    expect(text).toContain("GitHub -> Source");
+  });
+
+  it("draws the project name as plain bold text (no longer a clickable anchor)", async () => {
+    // With the chip row, the project name is plain bold text — not
+    // a clickable anchor. The legacy code wrapped the name in an
+    // `<a href>` that absorbed the singular `url`; with the new
+    // shape the chips are the only clickable regions, so the name
+    // shows up as plain text.
+    const cv: AdaptedCV = {
+      ...SAMPLE_CV,
+      projects: [
+        {
+          name: "V12-UI",
+          description: "",
+          technologies: [],
+          links: [
+            { label: "GitHub", url: "https://github.com/user/v12-ui" },
+          ],
+        },
+      ],
+    };
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    const loaded = await PDFDocument.load(bytes);
+    const firstPage = loaded.getPages()[0]!;
+    const annotsObj = firstPage.node.get(PDFName.of("Annots"));
+    const annots = (annotsObj as any)?.asArray() ?? [];
+    // Exactly ONE annotation (the chip) — the name is not a link.
+    expect(annots.length).toBe(1);
+  });
+});
+
+// ===========================================================================
+// REQ-PJL-007: regression — description URL auto-detect still works
+// ===========================================================================
+
+describe("project description URL auto-detect (regression)", () => {
+  it("still auto-detects bare https:// URLs in the project description", async () => {
+    // The description auto-detect (the regex at
+    // render-cv.ts ~line 623) is preserved per spec §1.2 — it
+    // handles accidental bare URLs the LLM copies into the
+    // description body. The chip row carries the first-class
+    // links; auto-detect covers body URLs.
+    const cv: AdaptedCV = {
+      ...SAMPLE_CV,
+      projects: [
+        {
+          name: "V12-UI",
+          description: "Live demo at https://v12-ui.example.com",
+          technologies: ["React"],
+          links: [],
+        },
+      ],
+    };
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    const loaded = await PDFDocument.load(bytes);
+    const firstPage = loaded.getPages()[0]!;
+    const annotsObj = firstPage.node.get(PDFName.of("Annots"));
+    const annots = (annotsObj as any)?.asArray() ?? [];
+    // Exactly one annotation — the body URL auto-detect.
+    expect(annots.length).toBe(1);
+    const lookup = loaded.context.lookup(annots[0]) as any;
+    const uri = lookup.get(PDFName.of("A"))?.get(PDFName.of("URI"));
+    const uriStr = String((uri as any)?.toString() ?? "");
+    expect(uriStr).toContain("v12-ui.example.com");
+  });
+
+  it("does NOT auto-detect when the description has no URLs", async () => {
+    const cv: AdaptedCV = {
+      ...SAMPLE_CV,
+      projects: [
+        {
+          name: "V12-UI",
+          description: "Pure prose, no URLs here.",
+          technologies: ["React"],
+          links: [],
         },
       ],
     };

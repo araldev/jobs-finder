@@ -327,7 +327,7 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
 
     // JSON SCHEMA includes the projects array shape.
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      '"projects":[{"name":"string","description":"string","technologies":["string"],"url":"string|null"}]',
+      '"projects":[{"name":"string","description":"string","technologies":["string"],"links":[{"label":"string","url":"string|null"}]}]',
     );
   });
 });

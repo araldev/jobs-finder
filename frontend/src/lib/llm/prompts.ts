@@ -255,11 +255,13 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "\n" +
   "PROJECTS — INCLUDE PERSONAL PROJECTS, VOLUNTEER WORK, PUBLICATIONS, CERTIFICATIONS:\n" +
   "If the original CV contains a personal project, volunteer work, publication, certification, or similar item, INCLUDE it in the output.\n" +
-  "Output each item as: {\"name\":\"<verbatim project name from the original CV>\",\"description\":\"<verbatim or rephrased from the original, NEVER \"...\">\",\"technologies\":[\"<tech mentioned in the original>\", ...],\"url\":\"<GitHub/demo URL if mentioned in the original CV, else null>\"}.\n" +
+  "Output each item as: {\"name\":\"<verbatim project name from the original CV>\",\"description\":\"<verbatim or rephrased from the original, NEVER \"...\">\",\"technologies\":[\"<tech mentioned in the original>\", ...],\"links\":[{\"label\":\"<short label such as GitHub/Storybook/npm/Web/Demo, taken verbatim from the original CV's link label>\",\"url\":\"<verbatim URL from the original CV, or null if the original CV only listed a label with no URL>\"}, ...]}.\n" +
   "Use the item's name VERBATIM from the original CV. Do NOT invent names.\n" +
   "The description should be 1-2 sentences rephrased from the original (do NOT invent facts, do NOT emit \"...\").\n" +
 "The technologies array should only list tech EXPLICITLY mentioned in the original description (do not invent).\n" +
-"If a project has a URL (GitHub, demo, live site), include it verbatim in the `url` field. Do NOT invent URLs. If the original CV doesn't mention a URL for that project, set `url` to null.\n" +
+"LINKS — EXTRACTION (CRITICAL): each project can have MULTIPLE external links. If the original CV lists more than one labeled link for a project (e.g. 'V12-UI | GitHub link | Storybook link | npm link'), emit EACH labeled link as a SEPARATE entry in the project's `links` array. The `label` is the verbatim link text from the original CV (e.g. 'GitHub', 'Storybook', 'npm', 'Web', 'Demo'); the `url` is the verbatim destination URL the original CV pairs with that label. Do NOT collapse multiple links into a single `url` — that is the bug this rule fixes.\n" +
+"LINKS — LEGACY FALLBACK: if the original CV only mentions ONE URL with no label, emit a single-entry `links` array: `{\"label\":\"\",\"url\":\"<the URL>\"}`. If the original CV mentions no URL at all for a project, emit `\"links\":[]`.\n" +
+"LINKS — URL RULES: include the URL VERBATIM from the original CV. Do NOT invent URLs (the no-hallucination rule still applies). Drop entries whose URL is empty or missing — a label without a URL is not a link. The parser caps `links` at 8 entries per project (more entries than 8 are dropped silently).\n" +
 "If the original CV has no projects, return an empty array [] for projects.\n" +
   "\n" +
   "PROJECTS — WHAT IS NOT A PROJECT (CRITICAL):\n" +
@@ -342,9 +344,9 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "Use commas, semicolons, periods, or single hyphens instead. Em dashes are an obvious AI writing tell and must be avoided.\n" +
   "\n" +
   "EXAMPLE — CORRECT:\n" +
-  "Original CV: \"NTT DATA Abril 2026 — Mayo 2026, Desarrollador Backend\" and \"V12-UI (2025): React-based UI library\"\n" +
+  "Original CV: \"NTT DATA Abril 2026 — Mayo 2026, Desarrollador Backend\" and \"V12-UI (2025): React-based UI library with GitHub link, Storybook link, and npm link\"\n" +
   "Target: \"Google\"\n" +
-  "Output: experience=[{\"company\":\"NTT DATA\",\"title\":\"Desarrollador Backend\",...}], projects=[{\"name\":\"V12-UI\",\"description\":\"React-based UI library used as a personal project.\",\"technologies\":[\"React\"],\"url\":\"https://github.com/user/v12-ui\"}]\n" +
+  "Output: experience=[{\"company\":\"NTT DATA\",\"title\":\"Desarrollador Backend\",...}], projects=[{\"name\":\"V12-UI\",\"description\":\"React-based UI library used as a personal project.\",\"technologies\":[\"React\"],\"links\":[{\"label\":\"GitHub\",\"url\":\"https://github.com/user/v12-ui\"},{\"label\":\"Storybook\",\"url\":\"https://storybook.js.org/?path=/story/v12-ui\"},{\"label\":\"npm\",\"url\":\"https://www.npmjs.com/package/v12-ui\"}]}]\n" +
   "\n" +
   "EXAMPLE — WRONG (hallucination):\n" +
   "Original CV: mentions \"V12-UI\" as a project, not an employer. Target: \"knowmad mood\"\n" +
@@ -353,7 +355,7 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "WRONG: projects=[{\"name\":\"SmartCV AI\",...}] — SmartCV AI not in original CV\n" +
   "\n" +
   "JSON SCHEMA:\n" +
-  "{\"name\":\"string|null\",\"email\":\"string|null\",\"phone\":\"string|null\",\"location\":\"string|null\",\"summary\":\"string|null\",\"experience\":[{\"company\":\"string\",\"title\":\"string\",\"start_date\":\"string\",\"end_date\":\"string\",\"description\":\"string\",\"location\":\"string|null\"}],\"education\":[{\"degree\":\"string\",\"institution\":\"string\",\"year\":\"string\",\"grade\":\"string|null\"}],\"projects\":[{\"name\":\"string\",\"description\":\"string\",\"technologies\":[\"string\"],\"url\":\"string|null\"}],\"certifications\":[\"string\"],\"skills\":[\"string\"],\"languages\":[\"string\"]}\n";
+  "{\"name\":\"string|null\",\"email\":\"string|null\",\"phone\":\"string|null\",\"location\":\"string|null\",\"summary\":\"string|null\",\"experience\":[{\"company\":\"string\",\"title\":\"string\",\"start_date\":\"string\",\"end_date\":\"string\",\"description\":\"string\",\"location\":\"string|null\"}],\"education\":[{\"degree\":\"string\",\"institution\":\"string\",\"year\":\"string\",\"grade\":\"string|null\"}],\"projects\":[{\"name\":\"string\",\"description\":\"string\",\"technologies\":[\"string\"],\"links\":[{\"label\":\"string\",\"url\":\"string|null\"}]}],\"certifications\":[\"string\"],\"skills\":[\"string\"],\"languages\":[\"string\"]}\n";
 
 // ── User message builders ────────────────────────────────────────
 
@@ -377,11 +379,32 @@ export interface AdaptedCVEducation {
   grade: string | null;
 }
 
+/**
+ * A single labeled external link attached to a project. Multiple
+ * `AdaptedCVProjectLink`s per project (e.g. GitHub + Storybook + npm)
+ * are rendered as independently-clickable chips in BOTH renderers
+ * (Python HTML + TS PDF).
+ *
+ * Mirrors `ProjectLink` in `backend/.../cv/_template.py`.
+ */
+export interface AdaptedCVProjectLink {
+  label: string;
+  url: string;
+}
+
 export interface AdaptedCVProject {
   name: string;
   description: string;
   technologies: string[];
-  url: string | null;
+  /**
+   * Multi-link chip data the renderer iterates over (one `<a>` /
+   * `drawLinkAnnotation` per link). The legacy `url` field is NOT
+   * in the type — the parser synthesizes a one-entry `links` from
+   * it on the way in (see `projectsOr` in `parser.ts`). Renderers
+   * should iterate `links` and treat the first entry as the
+   * "primary" link if they want a single-link region per project.
+   */
+  links: AdaptedCVProjectLink[];
 }
 
 export interface AdaptedCV {
