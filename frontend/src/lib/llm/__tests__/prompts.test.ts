@@ -155,25 +155,22 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
     );
   });
 
-  it("forbids merging certifications into experience descriptions (separate 'certifications' array)", () => {
-    // Regression: MiniMax-M3 was putting the
-    // 'Java SE Programmer Certification Preparation | NTT DATA /
-    // Oracle Training' (a separate item in the original CV) into
-    // the 'PRÁCTICAS en NTT DATA' experience description because
-    // the schema had no place for certifications. The fix is a
-    // dedicated 'certifications' array + a rule that explicitly
-    // forbids merging them into experience descriptions.
+  it("forbids merging in-progress certifications / training into projects, requires merging into experience or education instead", () => {
+    // Regression: 'Java SE Programmer Certification Preparation |
+    // NTT DATA / Oracle Training' is a training PREPARATION, not
+    // an obtained cert. The user does not have that cert. The
+    // rule forces the LLM to merge such content into the
+    // experience or education entry's description (whichever is
+    // contextually closer in the original CV) — NOT to invent a
+    // 'certifications' array the user does not actually have.
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "CERTIFICATIONS — COURSES, TRAINING PROGRAMS, PROFESSIONAL CERTIFICATIONS:",
+      "IN-PROGRESS TRAININGS / CERTIFICATIONS",
     );
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "Java SE Programmer Certification Preparation",
+      "training / certification PREPARATION, not obtained certifications",
     );
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "the 'certifications' array, NOT inside the experience description",
-    );
-    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "Do NOT merge certifications into experience descriptions",
+      "NEVER be presented as obtained certifications",
     );
   });
 
@@ -193,13 +190,9 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
 
     // Harvard output structure: keys in this order, summary is now
     // required (was optional before the no-placeholders rewrite).
-    // 'certifications' is between 'projects' and 'skills' (added
-    // when the LLM was merging a 'Java SE Certification' into the
-    // PRÁCTICAS NTT DATA experience description — a dedicated
-    // certifications field keeps them separate).
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain("OUTPUT STRUCTURE (Harvard format):");
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "name, email, phone, location, summary, education, experience, projects, certifications, skills, languages",
+      "name, email, phone, location, summary, education, experience, projects, skills, languages",
     );
 
     // Keyword matching: MANDATORY, with explicit examples

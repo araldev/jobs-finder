@@ -112,45 +112,6 @@ describe("parseAdaptedCVResponse", () => {
     expect(cv.projects[0]?.name).toBe("V12-UI");
   });
 
-  it("extracts certifications as a string array (separate from experience)", () => {
-    // Regression: MiniMax-M3 was putting the Java SE certification
-    // (a separate item in the original CV) into the PRÁCTICAS NTT
-    // DATA experience description because the schema had no place
-    // for it. The certifications field is a dedicated array.
-    const raw = JSON.stringify({
-      name: "Arturo",
-      experience: [
-        {
-          company: "NTT DATA",
-          title: "Prácticas",
-          start_date: "2026-04",
-          end_date: "2026-05",
-          description: "Prácticas en NTT DATA.",
-          location: null,
-        },
-      ],
-      certifications: [
-        "Java SE Programmer Certification Preparation | NTT DATA / Oracle Training",
-        "Ultimate JavaScript - Arturo Alba - 2025-02-09",
-      ],
-    });
-    const cv = parseAdaptedCVResponse(raw);
-    expect(cv.certifications).toEqual([
-      "Java SE Programmer Certification Preparation | NTT DATA / Oracle Training",
-      "Ultimate JavaScript - Arturo Alba - 2025-02-09",
-    ]);
-  });
-
-  it("defaults certifications to [] when missing or not an array", () => {
-    const missing = parseAdaptedCVResponse(JSON.stringify({ name: "Ada" }));
-    expect(missing.certifications).toEqual([]);
-
-    const wrongType = parseAdaptedCVResponse(
-      JSON.stringify({ name: "Ada", certifications: "not-an-array" }),
-    );
-    expect(wrongType.certifications).toEqual([]);
-  });
-
   it("extracts JSON from a markdown ```json``` block (strategy 2)", () => {
     const raw = "Here is the result:\n\n```json\n" +
       JSON.stringify({

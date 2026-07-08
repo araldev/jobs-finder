@@ -210,7 +210,6 @@ export function parseAdaptedCVResponse(raw: string): AdaptedCV {
     experience,
     education,
     projects,
-    certifications: listOr(obj.certifications),
     skills: listOr(obj.skills),
     languages: listOr(obj.languages),
     photo: photoOr(obj.photo),
