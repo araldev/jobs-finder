@@ -266,6 +266,11 @@ export const ADAPT_CV_SYSTEM_PROMPT =
   "Do NOT invent certifications that are not in the original CV.\n" +
   "If the original CV has NO certifications / licenses / courses section, return an empty array [] for certifications.\n" +
   "\n" +
+  "CRITICAL — 'CERTIFICATION' IN THE NAME DOES NOT MAKE IT A CERT:\n" +
+  "An item that contains the words 'Certification' / 'Certificación' / 'Preparation' / 'Curso' in its name is NOT automatically a 'certifications'-array entry. The 'certifications' array is reserved for items that come from a TOP-LEVEL 'Certificaciones' / 'Certificaciones y Competencias' / 'Licencias' / 'Formación Complementaria' SECTION in the original CV. If the item is in the EXPERIENCIA / EXPERIENCE section (even with 'Certification' in its name), it is part of the experiencia — put its description in the experience entry's bullets, NOT in the 'certifications' array.\n" +
+  "EXAMPLE — WRONG: the original CV has 'EXPERIENCIA: ... [DAW modules] ... Java SE Programmer Certification Preparation | NTT DATA / Oracle Training [description] ... PRÁCTICAS NTT DATA'. Output: certifications: ['Java SE Programmer Certification Preparation | NTT DATA / Oracle Training', ...] — WRONG. The Java SE entry is in the EXPERIENCIA section, NOT in a top-level certifications section. Putting it in 'certifications' invents a separation that does not exist in the original CV.\n" +
+  "EXAMPLE — CORRECT: the same original CV. Output: experience: [{ company: 'NTT DATA', title: 'Prácticas', description: '• Java SE Certification Preparation: <rephrased verbatim from the original entry, which the CV puts near the prácticas>' }], certifications: ['Carné de conducir B y vehículo propio.', 'Ultimate JavaScript — Arturo Alba — 2025-02-09'] — the Carné and Ultimate JavaScript come from the 'CERTIFICACIONES Y COMPETENCIAS' subsection of INFORMACIÓN ADICIONAL. The Java SE Cert is part of the NTT DATA experiencia.\n" +
+  "\n" +
   "WHAT YOU MAY DO (only these 4 things):\n" +
   "1. Rephrase existing descriptions using action verbs (preserve all facts from original, do NOT emit \"...\").\n" +
   "2. Inject relevant keywords from the job description INTO the existing descriptions (only words that already exist in the original CV are allowed as skills).\n" +

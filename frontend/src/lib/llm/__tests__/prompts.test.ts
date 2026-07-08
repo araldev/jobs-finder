@@ -230,6 +230,27 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
     );
   });
 
+  it("forbids putting items with 'Certification' in the name into the certifications array when they live in the EXPERIENCIA section", () => {
+    // Regression: the LLM was putting 'Java SE Programmer
+    // Certification Preparation | NTT DATA / Oracle Training' into
+    // the 'certifications' array because the name contains the
+    // word 'Certification'. But in the user's original CV, the
+    // entry sits in the EXPERIENCIA section (between DAW modules
+    // and the PRÁCTICAS), not in a top-level 'Certificaciones' /
+    // 'Certificaciones y Competencias' section. Putting it in
+    // 'certifications' invents a separation that does not exist
+    // in the original CV.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "CRITICAL — 'CERTIFICATION' IN THE NAME DOES NOT MAKE IT A CERT",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "The 'certifications' array is reserved for items that come from a TOP-LEVEL",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "EXAMPLE — WRONG: the original CV has 'EXPERIENCIA: ... [DAW modules] ... Java SE Programmer Certification Preparation",
+    );
+  });
+
   it("instructs JSON-only output and source-of-truth rule", () => {
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain("Output valid JSON only");
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain("ABSOLUTE RULE");

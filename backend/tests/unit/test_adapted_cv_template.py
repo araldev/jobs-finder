@@ -54,6 +54,29 @@ class TestParseAdaptedCVResponseCertifications:
         assert cv.certifications == []
 
 
+class TestPromptCertificationsScopeRule:
+    """The Python prompt must include the "CERTIFICATION in the name
+    does not make it a cert" rule, mirroring the TypeScript side.
+    A regression here would let the LLM put 'Java SE Programmer
+    Certification Preparation' (which lives in the EXPERIENCIA
+    section of the original CV, not in a top-level
+    'Certificaciones' section) into the 'certifications' array."""
+
+    def test_prompt_contains_certification_in_name_rule(self) -> None:
+        from jobs_finder.infrastructure.llm._cv_prompt import (
+            ADAPT_CV_SYSTEM_PROMPT,
+        )
+
+        assert (
+            "CRITICAL — 'CERTIFICATION' IN THE NAME DOES NOT MAKE IT A CERT"
+            in ADAPT_CV_SYSTEM_PROMPT
+        )
+        assert (
+            "The 'certifications' array is reserved for items that come from a TOP-LEVEL"
+            in ADAPT_CV_SYSTEM_PROMPT
+        )
+
+
 class TestParseAdaptedCVResponseThinkingStrip:
     """The M2.x / M3 model family emits a verbose `<think>...</think>`
     preamble before the JSON. The parser must strip the entire
