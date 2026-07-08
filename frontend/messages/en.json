@@ -63,6 +63,11 @@
       "description": "Full posting information",
       "screenReader": "Job detail, current page"
     },
+    "adaptCv": {
+      "label": "Adapt CV",
+      "description": "Adapt your CV to a job",
+      "screenReader": "Adapt CV"
+    },
     "settings": {
       "label": "Settings",
       "description": "Platform configuration and preferences",
@@ -370,7 +375,7 @@
     "hero": {
       "badge": "AI-powered job discovery",
       "title": "Adapt your CV to every job in <highlight>30 seconds</highlight>.",
-      "subtitle": "Stop sending the same CV everywhere. Generate tailored versions for LinkedIn, InfoJobs and Tecnoempleo. Optimized for Spanish ATS. Free to start.",
+      "subtitle": "Stop sending the same CV everywhere. Generate tailored versions for LinkedIn, Indeed and InfoJobs. Optimized for Spanish ATS. Free to start.",
       "ctaPrimary": "Get started — it's free",
       "ctaSecondary": "See how it works",
       "guestUploadTitle": "Upload your CV (PDF)",
@@ -463,6 +468,32 @@
         "question": "How is this different from ChatGPT?",
         "answer": "ChatGPT rewrites text, but it doesn't know which keywords the InfoJobs or LinkedIn ATS is looking for. This tool cross-references your CV with the actual job posting and highlights what the automated system is searching for."
       }
+    }
+  },
+  "AdaptCV": {
+    "nav": "Adapt CV",
+    "title": "Adapt CV to a job",
+    "subtitle": "Paste a job offer link or its description to generate a tailored CV.",
+    "url": "Job URL",
+    "urlPlaceholder": "https://www.linkedin.com/jobs/...",
+    "description": "Job description",
+    "descriptionPlaceholder": "Paste the full job description...",
+    "titleLabel": "Job title (optional)",
+    "company": "Company (optional)",
+    "urlOrDescription": "Provide at least a URL or a description",
+    "savedCvLabel": "Saved CV",
+    "changeCv": "Click to change",
+    "consent": "I understand and accept that my CV will be processed by our AI provider to generate the adapted CV.",
+    "submit": "Generate adapted CV",
+    "downloading": "Generating CV...",
+    "download": "Download CV (PDF)",
+    "generateAnother": "Generate another",
+    "successMessage": "Your adapted CV is ready to download.",
+    "errors": {
+      "noCV": "Upload your CV or save it first in Settings",
+      "noInput": "Provide a job URL or paste the description",
+      "urlFetchFailed": "Could not fetch the job from that URL. Paste the description manually.",
+      "generic": "An error occurred while generating the CV. Please try again."
     }
   },
   "Footer": {

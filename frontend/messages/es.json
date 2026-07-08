@@ -63,6 +63,11 @@
       "description": "Información completa de la oferta",
       "screenReader": "Detalle de empleo, página actual"
     },
+    "adaptCv": {
+      "label": "Adaptar CV",
+      "description": "Adaptá tu CV a una oferta",
+      "screenReader": "Adaptar CV"
+    },
     "settings": {
       "label": "Configuración",
       "description": "Configuración de plataformas y preferencias",
@@ -370,7 +375,7 @@
     "hero": {
       "badge": "Búsqueda de empleo con IA",
       "title": "Adapta tu CV a cada oferta en <highlight>30 segundos</highlight>.",
-      "subtitle": "Deja de enviar CVs iguales. Genera versiones a medida para LinkedIn, InfoJobs y Tecnoempleo. Optimizado para ATS españoles. Gratis para empezar.",
+      "subtitle": "Deja de enviar CVs iguales. Genera versiones a medida para LinkedIn, Indeed e InfoJobs. Optimizado para ATS españoles. Gratis para empezar.",
       "ctaPrimary": "Empezar — es gratis",
       "ctaSecondary": "Ver cómo funciona",
       "guestUploadTitle": "Sube tu CV (PDF)",
@@ -463,6 +468,32 @@
         "question": "¿En qué se diferencia de ChatGPT?",
         "answer": "ChatGPT adapta texto pero no sabe qué palabras clave busca el ATS de InfoJobs o LinkedIn. Esta herramienta cruza tu CV con la oferta real y resalta lo que el sistema automático está buscando."
       }
+    }
+  },
+  "AdaptCV": {
+    "nav": "Adaptar CV",
+    "title": "Adaptar CV a una oferta",
+    "subtitle": "Pegá el enlace de una oferta de empleo o su descripción para generar un CV adaptado.",
+    "url": "URL de la oferta",
+    "urlPlaceholder": "https://www.linkedin.com/jobs/...",
+    "description": "Descripción de la oferta",
+    "descriptionPlaceholder": "Pegá la descripción completa de la oferta...",
+    "titleLabel": "Título del puesto (opcional)",
+    "company": "Empresa (opcional)",
+    "urlOrDescription": "Completá al menos la URL o la descripción",
+    "savedCvLabel": "CV guardado",
+    "changeCv": "Click para cambiar",
+    "consent": "Entiendo y acepto que mi CV sea procesado por nuestro proveedor de IA para generar el CV adaptado.",
+    "submit": "Generar CV adaptado",
+    "downloading": "Generando CV...",
+    "download": "Descargar CV (PDF)",
+    "generateAnother": "Generar otro",
+    "successMessage": "Tu CV adaptado está listo para descargar.",
+    "errors": {
+      "noCV": "Subí tu CV o guardalo primero en Configuración",
+      "noInput": "Proporcioná una URL de la oferta o pegá la descripción",
+      "urlFetchFailed": "No pudimos obtener la oferta desde esa URL. Pegá la descripción manualmente.",
+      "generic": "Ocurrió un error al generar el CV. Intentalo de nuevo."
     }
   },
   "Footer": {
