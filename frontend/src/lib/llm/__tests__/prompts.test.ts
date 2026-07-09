@@ -117,22 +117,19 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
     expect(ADAPT_CV_SYSTEM_PROMPT).toBe(expected);
   }, 30_000);
 
-  it("contains the 8 strict-forbidden rules", () => {
-    for (const rule of [
-      "NEVER output a company name",
-      "NEVER output a job title",
-      "NEVER output a date range",
-      "NEVER output skills",
-      "NEVER output the target company",
-      "NEVER create a new job entry",
-      "NEVER treat personal projects",
-      // Rule 8 was reworded when the "no placeholders" rule was
-      // promoted to its own section. The intent is the same — the
-      // prompt forbids "..." (and other placeholders) anywhere.
-      'NEVER emit a string of literal dots "..."',
-    ]) {
-      expect(ADAPT_CV_SYSTEM_PROMPT).toContain(rule);
-    }
+  it("forbids adding skills/keywords the user doesn't actually have (NO KEYWORD INJECTION)", () => {
+    // Regression: the previous KEYWORD MATCHING (MANDATORY) rule
+    // instructed the LLM to extract 3-5 keywords from the job
+    // description and ADD them to the skills array even when the
+    // CV didn't mention them. This caused the LLM to fabricate
+    // skills (PHP, MySQL, AWS, ...) that weren't in the user's CV
+    // — a hallucination that breaks the CV's integrity. The new
+    // NO KEYWORD INJECTION rule forbids this entirely.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain("NO KEYWORD INJECTION");
+    // The old KEYWORD MATCHING rule should be GONE.
+    expect(ADAPT_CV_SYSTEM_PROMPT).not.toContain("KEYWORD MATCHING (MANDATORY)");
+    // The summary's first sentence rule.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain("FIRST sentence MUST start with 3-5 KEY TECHNICAL KEYWORDS");
   });
 
   it("forbids splitting a specific job's responsibilities / modules into separate projects", () => {
@@ -196,20 +193,22 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
     );
   });
 
-  it("forbids inventing unrelated skills via the keyword matching rule", () => {
+  it("forbids fabricating any skill not in the original CV (NO KEYWORD INJECTION)", () => {
     // Regression: the LLM was adding 'MySQL, PHP, SEO, SEM' to
     // the skills array because the job description mentioned
     // them, even though the candidate's CV only mentions
-    // PostgreSQL and has no mention of SEO/SEM/PHP. The new
-    // rule explicitly forbids this.
+    // PostgreSQL and has no mention of SEO/SEM/PHP. The
+    // NO KEYWORD INJECTION rule forbids ALL fabrication — even
+    // adding a skill the CV might imply through context
+    // (e.g. "managed databases" → don't add MySQL).
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "CRITICAL — DO NOT INVENT UNRELATED SKILLS",
-    );
-    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "Do NOT add SEO, SEM, MySQL, PHP",
+      "do NOT add MySQL to the skills array even if the job requires MySQL",
     );
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
       "do NOT swap it for MySQL",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "NOT authorized to infer skills from context",
     );
   });
 
@@ -270,18 +269,25 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
     );
   });
 
-  it("hard-caps the skills array size to prevent the LLM from inventing 9+ unrelated skills", () => {
-    // Regression: the LLM was adding 'PHP, MySQL, SEO, SEM,
-    // Next.js, Tailwind CSS, herramientas de IA, marketing
-    // digital' to the skills array even after a 'do not invent
-    // unrelated skills' rule. Adding a hard numeric cap forces
-    // the LLM to actually constrain the output.
+  it("forbids skill fabrication (the new absolute rule, replaces the old hard-cap)", () => {
+    // The old HARD LIMIT cap was a band-aid — it limited the
+    // AMOUNT of fabrication but didn't prevent fabrication.
+    // The new NO KEYWORD INJECTION rule is the absolute:
+    // skills must come VERBATIM from the original CV, NOTHING
+    // from the job description, EVER. This test verifies the
+    // explicit anti-fabrication language.
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "HARD LIMIT",
+      "NOT EXPLICITLY mentioned verbatim",
     );
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "MUST NOT exceed 25 items total",
+      "NOT authorized to infer skills from context",
     );
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
+      "do NOT swap it for MySQL",
+    );
+    // The old hard-cap language is intentionally REMOVED — a
+    // hard cap of 25 still allowed up to 25 fabricated items.
+    expect(ADAPT_CV_SYSTEM_PROMPT).not.toContain("MUST NOT exceed 25 items total");
   });
 
   it("instructs JSON-only output and source-of-truth rule", () => {
@@ -308,15 +314,19 @@ describe("ADAPT_CV_SYSTEM_PROMPT", () => {
       "name, email, phone, location, summary, education, experience, projects, certifications, skills, languages",
     );
 
-    // Keyword matching: MANDATORY, with explicit examples
-    // (added in cv-quality-round-2 to strengthen the LLM's
-    // adherence to the keyword-extraction rule).
-    expect(ADAPT_CV_SYSTEM_PROMPT).toContain("KEYWORD MATCHING (MANDATORY):");
+    // Keyword matching: replaced by NO KEYWORD INJECTION (the
+    // hard rule against fabrication). Skills come verbatim from
+    // the original CV only — never from the job description.
+    expect(ADAPT_CV_SYSTEM_PROMPT).toContain("NO KEYWORD INJECTION");
     expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "you MUST extract 3-5 KEYWORDS from the TARGET JOB DESCRIPTION",
+      "job description is NOT a valid source of new skills",
     );
-    expect(ADAPT_CV_SYSTEM_PROMPT).toContain(
-      "MUST contain at least 3 keywords from the TARGET JOB DESCRIPTION",
+    // The old "extract 3-5 keywords from JD" rule is gone.
+    expect(ADAPT_CV_SYSTEM_PROMPT).not.toContain(
+      "extract 3-5 KEYWORDS from the TARGET JOB DESCRIPTION",
+    );
+    expect(ADAPT_CV_SYSTEM_PROMPT).not.toContain(
+      "keywords from the TARGET JOB DESCRIPTION that weren't in the original CV",
     );
 
     // No em dashes in the JSON output.

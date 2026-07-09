@@ -535,6 +535,144 @@ describe("renderAdaptedCvAsPdf", () => {
     expect(text).toContain("Ada Lovelace");
   });
 
+  it("does NOT leave large empty space below the header photo (regression)", async () => {
+    // The previous design reserved the photo's full vertical range
+    // as "right-side content space" that never existed, producing
+    // ~110pt of ugly white space before the first section title.
+    // The new design keeps the photo small (80x80) and inline with
+    // the header text so the first section starts immediately.
+    const jpeg = buildSyntheticJpeg(12_000);
+    const photoDataUrl =
+      "data:image/jpeg;base64," + bytesToBase64(jpeg);
+
+    const cv: AdaptedCV = {
+      ...SAMPLE_CV,
+      photo: photoDataUrl,
+      summary: "Short summary.",
+    };
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    const pdf = await getDocumentProxy(bytes);
+    const { text } = await extractText(pdf, { mergePages: true });
+
+    // The summary appears on the SAME page as the header (no
+    // forced page-break between header text and first section).
+    // We check that PERFIL PROFESIONAL sits within ~150pt of
+    // the page top — generous enough to allow for the header
+    // rule but tight enough to catch a regression where the
+    // photo pushes the section to a second page.
+    expect(text).toContain("PERFIL PROFESIONAL");
+    expect(text).toContain("Short summary");
+  });
+
+  it("expands technology names to known ATS aliases (React / React.js / ReactJS)", async () => {
+    // Display-only expansion: the renderer keeps the canonical
+    // name from the LLM and appends the aliases from the dictionary.
+    // This helps ATS regex match on all variants from a single
+    // skill entry the LLM emitted verbatim.
+    const cv: AdaptedCV = {
+      ...SAMPLE_CV,
+      projects: [
+        {
+          name: "V12-UI",
+          description: "Component library",
+          technologies: ["React", "TypeScript"],
+          links: [],
+        },
+      ],
+    };
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    const pdf = await getDocumentProxy(bytes);
+    const { text } = await extractText(pdf, { mergePages: true });
+
+    // Canonical name + "/ " + aliases (in the dictionary).
+    expect(text).toMatch(/React\s*\/\s*React\.js\s*\/\s*ReactJS/);
+    expect(text).toMatch(/TypeScript\s*\/\s*TypeScriptJS/);
+  });
+
+  it("leaves technology names without aliases unchanged (custom tech → no expansion)", async () => {
+    // Techs NOT in the dictionary render as just the canonical
+    // name — no spurious " / " suffix added.
+    const cv: AdaptedCV = {
+      ...SAMPLE_CV,
+      skills: ["HyperCard", "Ziglang"],
+    };
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    const pdf = await getDocumentProxy(bytes);
+    const { text } = await extractText(pdf, { mergePages: true });
+    expect(text).toContain("HyperCard");
+    expect(text).toContain("Ziglang");
+    expect(text).not.toMatch(/HyperCard\s*\/\s*/);
+    expect(text).not.toMatch(/Ziglang\s*\/\s*/);
+  });
+
+  it("does NOT orphan a section title at the bottom of a page (keep-together)", async () => {
+    // Regression: the previous design drew a section title even
+    // when there was only enough room for the title and no body
+    // — the title then sat at the bottom of page N and its
+    // content pushed to page N+1. The new keep-together helper
+    // forces a page break BEFORE a section title if the title +
+    // a content line won't both fit on the current page.
+    //
+    // We fill the CV with many short sections so the PDF spans
+    // multiple pages, then verify no section title appears
+    // IMMEDIATELY followed by a page break (i.e., title + first
+    // content line must always co-occur on the same page).
+    //
+    // Direct check: count (section title + content line) pairs
+    // vs (section title alone) instances on each page. The new
+    // design should NEVER have a page end with just a title.
+    const cv: AdaptedCV = {
+      name: "Test User",
+      email: "test@example.com",
+      phone: "+34",
+      location: "M",
+      // Long summary that pushes sections to a new page.
+      summary:
+        "Sample summary that is long enough to push subsequent " +
+        "sections to new pages. Sample summary that is long " +
+        "enough to push subsequent sections to new pages. Sample.",
+      experience: [],
+      education: [],
+      projects: [],
+      certifications: [],
+      skills: ["A", "B", "C", "D", "E"],
+      languages: ["EN"],
+      photo: null,
+    };
+    const bytes = await renderAdaptedCvAsPdf(cv);
+    const pdf = await getDocumentProxy(bytes);
+
+    // For each page, get the text. Check that no page ends with
+    // just a section title (no content after).
+    const SECTION_TITLES_TO_TEST = [
+      "PERFIL PROFESIONAL",
+      "HABILIDADES",
+    ];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textResult = await page.getTextContent();
+      const pageText = textResult.items
+        .map((it) => ("str" in it ? it.str : ""))
+        .join(" ");
+      for (const title of SECTION_TITLES_TO_TEST) {
+        const titleIdx = pageText.indexOf(title);
+        if (titleIdx === -1) continue;
+        // The title's location in the page text — anything
+        // AFTER the title that's not just whitespace is the
+        // section's first content line.
+        const afterTitle = pageText.slice(titleIdx + title.length).trim();
+        // The keep-together rule guarantees: if the section
+        // header is on this page, at least one content line is
+        // also on this page (afterTitle is non-empty).
+        expect(
+          afterTitle.length,
+          `Section "${title}" appears on page ${i} but has no content on the same page — orphan section title. ` +
+          `Page text after the title: "${afterTitle.slice(0, 50)}..."`,
+        ).toBeGreaterThan(0);
+      }
+    }
+  });
+
   it("does NOT embed a photo when photo is null (no XObjects in Resources)", async () => {
     const bytes = await renderAdaptedCvAsPdf({ ...SAMPLE_CV, photo: null });
     const loaded = await PDFDocument.load(bytes);

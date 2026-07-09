@@ -1,6 +1,6 @@
 import "server-only";
 
-import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb, PDFName, PDFArray } from "pdf-lib";
+import { PDFDocument, PDFFont, PDFPage, PDFImage, StandardFonts, rgb, PDFName, PDFArray, PDFOperator } from "pdf-lib";
 import type { AdaptedCV, AdaptedCVProjectLink } from "@/lib/llm/prompts";
 import { deriveChipLabel } from "@/lib/llm/parser";
 
@@ -13,14 +13,19 @@ const PAGE_HEIGHT = 842;
 const MARGIN = 50;
 const CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN;
 
-// Photo size (28mm × 32mm ≈ 80pt × 91pt) for the bounding box; the
-// renderer fits the image to this box preserving aspect ratio
-// (see photo header in renderAdaptedCvAsPdf). Sized to be
-// visibly large in the adapted CV — the previous 80x90 was
-// too small to see clearly, and a 577x845 portrait photo would
-// fit into 61x90 which was nearly invisible.
-const PHOTO_WIDTH = 120;
-const PHOTO_HEIGHT = 140;
+// Photo bounding box (was 120×140 — too tall, caused ~110pt of
+// empty white space below the header because the renderer reserved
+// the right-column vertical range for "photo-side" content that
+// never actually existed). Sized to fit alongside the two-line
+// header text (name + contact), matching its vertical extent so
+// the photo doesn't push the first section down.
+const PHOTO_BOX_WIDTH = 80;
+const PHOTO_BOX_HEIGHT = 80;
+// Visual radius for the rounded-photo effect (pdf-lib's drawImage
+// has no built-in mask; we use SVG path clipping via raw PDF
+// operators — see drawRoundedImage below). ~32pt = Harvard/ATS
+// standard for a circular profile photo.
+const PHOTO_RADIUS = 40;
 
 // ── Font selection ──────────────────────────────────────────────────────
 //
@@ -66,8 +71,18 @@ const SECTION_TITLE_HEIGHT = 16;
 const SECTION_TITLE_TEXT_PADDING = 6;
 const SECTION_TITLE_BORDER_THICKNESS = 0.4;
 
-// Inter-section vertical gap.
-const SECTION_GAP = 4;
+// Inter-section vertical gap. Bumped from 4 → 10 for visible
+// breathing room between sections (ATS scanners don't care;
+// humans do — a CV without gaps looks like a wall of text).
+const SECTION_GAP = 10;
+
+// Minimum vertical room we keep together when starting a new
+// section: the section's highlight bar + its FIRST content line
+// must both fit on the same page. If not, we move to the next
+// page instead of orphaning the title at the bottom (the
+// worst-case PDF layout bug — a section title on page N with
+// its content on page N+1 breaks the reader's flow).
+const SECTION_KEEP_TOGETHER_HEIGHT = SECTION_TITLE_HEIGHT + 18;
 
 // Yellow highlight color (pastel — matches the Harvard reference image,
 // approximated as #fff3cd / rgb(255, 242, 205)).
@@ -113,6 +128,70 @@ const MAX_BULLETS_PER_ENTRY = 8;
 // Minimum bullet length (after trimming). Drops empty strings and
 // residual fragments like "." or "ok." that survive the sentence split.
 const MIN_BULLET_LENGTH = 5;
+
+// ── ATS keyword expansion (display-only, no fabrication) ─────────────
+//
+// Many ATS systems index by exact-string match on different aliases
+// of the same technology (e.g. "React", "React.js", "ReactJS" all
+// match the same job description). When the LLM emits the canonical
+// name (e.g. "React"), the renderer expands it to all known aliases
+// joined by " / " so a single ATS scan picks up all variants.
+//
+// CRITICAL: this dictionary is for DISPLAY expansion only. The LLM
+// is forbidden from adding technologies not in the original CV (see
+// the NO KEYWORD INJECTION rule in the prompt); this dictionary
+// does not introduce new tech, only renders more keywords for techs
+// already in the CV.
+const TECH_VARIANTS: Record<string, string> = {
+  "React": "React.js / ReactJS",
+  "Node": "Node.js / NodeJS",
+  "Vue": "Vue.js / VueJS",
+  "Angular": "AngularJS / Angular 2+",
+  "Next": "Next.js / NextJS",
+  "Nuxt": "Nuxt.js / NuxtJS",
+  "Express": "Express.js / ExpressJS",
+  "TypeScript": "TypeScriptJS / TS",
+  "JavaScript": "JS / ECMAScript",
+  "Java": "Java SE / JDK",
+  "Python": "Python 3 / Python3",
+  "TypeScriptScript": "TS", // safety fallback in case LLM emits "TypeScriptScript"
+  "Postgres": "PostgreSQL / Postgres",
+  "MySQL": "MySQL / My SQL",
+  "MongoDB": "Mongo / Mongo DB",
+  "GraphQL": "GraphQL / Graph QL",
+  "HTML": "HTML5",
+  "CSS": "CSS3",
+  "Sass": "SCSS / Sass",
+  "Tailwind": "Tailwind CSS",
+  "Docker": "Docker Engine / Docker Hub",
+  "Kubernetes": "K8s / Kube",
+  "AWS": "Amazon Web Services / AWS Cloud",
+  "GCP": "Google Cloud Platform / Google Cloud",
+  "Azure": "Microsoft Azure",
+  "CI/CD": "Continuous Integration / Continuous Deployment",
+  "REST": "REST API / RESTful",
+  "GraphQLAPI": "GraphQL API", // safety
+};
+
+/**
+ * Expand a canonical technology name to all known ATS-friendly
+ * aliases. Returns the input unchanged when no aliases are known.
+ *
+ * The LLM emits the canonical name (e.g. "React"); we expand it
+ * for display so the rendered text covers more alias variants
+ * that ATS systems index by. The expanded form is joined by " / "
+ * (e.g. "React / React.js / ReactJS") — readable in the PDF and
+ * easily grep-able by ATS regex matchers.
+ *
+ * Sanity rule: capitalization of the canonical name is preserved
+ * EXACTLY as the LLM emitted it. Aliases are not modified.
+ */
+function expandTech(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return trimmed;
+  const variants = TECH_VARIANTS[trimmed];
+  return variants ? `${trimmed} / ${variants}` : trimmed;
+}
 
 // Sanitize text for the built-in PDF fonts (Times Roman family
 // uses WinAnsi encoding). The LLM often copies special chars
@@ -259,6 +338,98 @@ function ensureSpace(state: DrawState, neededHeight: number): void {
   }
 }
 
+/**
+ * Ensure room for an entire section block — the section title bar
+ * PLUS its first content line — on the current page. If the room
+ * isn't there, move the WHOLE section to the next page
+ * (eliminates the "title at bottom of page N, content on page N+1"
+ * orphan that the previous version produced). Section titles are
+ * small enough that bumping them to the next page is always the
+ * better UX.
+ */
+function ensureSectionRoom(
+  state: DrawState,
+  firstContentHeight: number,
+): void {
+  const totalNeeded = SECTION_KEEP_TOGETHER_HEIGHT + firstContentHeight;
+  ensureSpace(state, totalNeeded);
+}
+
+/**
+ * Draw an image masked to a circle (rounded profile photo). pdf-lib
+ * doesn't expose a `clip` for images, so we push raw PDF operators:
+ * the arc operator defines a circular clipping path, drawImage
+ * respects the clip, then we pop the graphics state. The result is
+ * a perfectly circular photo — common for Harvard-style CV templates
+ * and never crops the face because we fit the natural image into the
+ * bounding box and clip AFTER drawing.
+ *
+ * `PDFOperator.of` is the safe way to push raw operators — it
+ * registers any PDF objects we reference and ensures they're
+ * tracked for serialization. The constants `cx`, `cy`, `r` are
+ * intentionally inlined into the operator strings (PDF arc syntax
+ * requires positional numeric args).
+ */
+/**
+ * Draw an image masked to a circle (rounded profile photo). pdf-lib
+ * doesn't expose a `clip` for images, so we push raw PDF operators:
+ * the arc operator defines a circular clipping path, drawImage
+ * respects the clip, then we pop the graphics state. The result is
+ * a perfectly circular photo — common for Harvard-style CV templates
+ * and never crops the face because we fit the natural image into the
+ * bounding box and clip AFTER drawing.
+ *
+ * `PDFOperator.of` is the safe way to push raw operators — it
+ * registers any PDF objects we reference and ensures they're
+ * tracked for serialization. The constants are intentionally
+ * inlined into the operator strings (PDF arc syntax requires
+ * positional numeric args).
+ */
+function drawCircularImage(
+  state: DrawState,
+  image: PDFImage,
+  cx: number,
+  cy: number,
+  r: number,
+): void {
+  // Operator sequence:
+  //   q                 % push graphics state
+  //   x1 y1 x2 y2 ...   % arc operator (PDF spec §8.5.3)
+  //   W                 % set clipping path (intersect with current)
+  //   n                 % end path (no-fill, no-stroke)
+  //   <draw image>
+  //   Q                 % pop graphics state
+  // For a circle at (cx, cy) with radius r, the bounding box
+  // arc parameters are (cx-r, cy-r, cx+r, cy+r) and the start/end
+  // point is the right edge of the circle, full sweep.
+  const x1 = cx - r;
+  const y1 = cy - r;
+  const x2 = cx + r;
+  const y2 = cy + r;
+  const startX = cx + r;
+  const startY = cy;
+  const endX = cx + r;
+  const endY = cy;
+  state.page.pushOperators(
+    PDFOperator.of("q"),
+    PDFOperator.of(
+      `${x1} ${y1} ${x2} ${y2} ${startX} ${startY} ${endX} ${endY} arc`,
+    ),
+    PDFOperator.of("W"),
+    PDFOperator.of("n"),
+  );
+  // Draw the image inside the clip. Origin is the bounding-box
+  // bottom-left (PDF Y-up); we want the image's BOTTOM at cy - r.
+  state.page.drawImage(image, {
+    x: cx - r,
+    y: cy - r,
+    width: r * 2,
+    height: r * 2,
+  });
+  // Pop the clip so subsequent draws aren't restricted.
+  state.page.pushOperators(PDFOperator.of("Q"));
+}
+
 function drawSpacer(state: DrawState, height: number): void {
   ensureSpace(state, height);
   state.y -= height;
@@ -266,9 +437,24 @@ function drawSpacer(state: DrawState, height: number): void {
 
 // ── Section title (yellow highlight + uppercase bold text) ─────────────
 
-function drawSectionTitle(state: DrawState, text: string): void {
+/**
+ * Draw a section title bar.
+ *
+ * When `firstContentHeight` is provided, ensure the room for the
+ * bar PLUS that content line exists on the current page. If not,
+ * move the WHOLE section (title + content) to the next page —
+ * eliminates the "title at the bottom of one page, content at the
+ * top of the next" orphan that destroys reading flow. Default is
+ * the title-only size (backward-compatible).
+ */
+function drawSectionTitle(
+  state: DrawState,
+  text: string,
+  firstContentHeight: number = 0,
+): void {
   const size = SIZE_SECTION_TITLE;
-  ensureSpace(state, SECTION_TITLE_HEIGHT + SECTION_GAP);
+  const titleTotal = SECTION_TITLE_HEIGHT + SECTION_GAP + firstContentHeight;
+  ensureSpace(state, titleTotal);
 
   // Background rectangle (full content width).
   const rectBottom = state.y - SECTION_TITLE_HEIGHT;
@@ -790,9 +976,14 @@ function drawProjectEntry(
     }
   }
   if (proj.technologies && proj.technologies.length > 0) {
+    // Expand each technology to its known aliases for ATS matchers
+    // (canonical / alias1 / alias2 joined by " / "). Display-only
+    // expansion — the LLM is forbidden from adding techs not in
+    // the original CV; we just render more keyword variants per
+    // tech that's already there.
     drawWrappedText(
       state,
-      `Tecnologías: ${proj.technologies.join(", ")}`,
+      `Tecnologías: ${proj.technologies.map(expandTech).join(", ")}`,
       { size: SIZE_PROJECT_TECH, font: state.italic },
     );
   }
@@ -918,16 +1109,19 @@ export async function renderAdaptedCvAsPdf(
   };
 
   // Photo header — drawn FIRST so the text doesn't overlap it.
-  // We size the photo by its natural aspect ratio (clamped to the
-  // PHOTO_WIDTH × PHOTO_HEIGHT bounding box) so a portrait photo
-  // doesn't get stretched horizontally. The previous code used
-  // fixed PHOTO_WIDTH × PHOTO_HEIGHT which stretched any photo
-  // whose aspect ratio didn't match 80:90 (e.g. the user's
-  // 577×845 portrait photo).
+  // Sizing: the photo fits inside the PHOTO_BOX_WIDTH × PHOTO_BOX_HEIGHT
+  // bounding box (with aspect-ratio preservation) and is drawn as a
+  // CIRCLE via `drawCircularImage`. Center is at:
+  //   - cx = PAGE_WIDTH - MARGIN - PHOTO_RADIUS (top-right column)
+  //   - cy = PAGE_HEIGHT - MARGIN - PHOTO_RADIUS (so the bottom of the
+  //     photo touches MARGIN from the top)
+  // This way the photo is `2*PHOTO_RADIUS` wide (80pt by default),
+  // aligned with the contact line, and DOES NOT extend below the
+  // header text — so the first section starts immediately below the
+  // header rule. The previous design reserved the photo's full
+  // vertical range for "right-side content" that never existed,
+  // producing ~110pt of ugly white space before the first section.
   let hasPhoto = false;
-  let photoWidth = PHOTO_WIDTH;
-  let photoHeight = PHOTO_HEIGHT;
-  let photoY: number | null = null;
   if (sanitized.photo) {
     const decoded = await decodePhotoDataUrl(sanitized.photo).catch(() => null);
     if (decoded) {
@@ -935,27 +1129,24 @@ export async function renderAdaptedCvAsPdf(
         const embedded = decoded.isJpeg
           ? await doc.embedJpg(decoded.bytes)
           : await doc.embedPng(decoded.bytes);
-        // Fit the embedded image's natural dimensions into the
-        // PHOTO_WIDTH × PHOTO_HEIGHT box while preserving the
-        // aspect ratio. The intrinsic dimensions come from
-        // pdf-lib after decoding the PNG/JPEG.
-        const intr = embedded.size();
-        if (intr.width > 0 && intr.height > 0) {
-          const scale = Math.min(
-            PHOTO_WIDTH / intr.width,
-            PHOTO_HEIGHT / intr.height,
-          );
-          photoWidth = Math.round(intr.width * scale);
-          photoHeight = Math.round(intr.height * scale);
-        }
-        const photoX = PAGE_WIDTH - MARGIN - photoWidth;
-        photoY = PAGE_HEIGHT - MARGIN - photoHeight;
-        state.page.drawImage(embedded, {
-          x: photoX,
-          y: photoY,
-          width: photoWidth,
-          height: photoHeight,
-        });
+        // The photo is drawn at a CIRCLE centered on the top-right
+        // of the page. The image is fit into PHOTO_BOX (its
+        // natural aspect ratio preserved via scale-to-fit) and
+        // the resulting bitmap is clipped to a circle of radius
+        // PHOTO_RADIUS centered on (photoCx, photoCy). This gives
+        // a perfectly circular profile photo regardless of the
+        // source image's aspect ratio (a 577x845 portrait gets
+        // scaled to fit the box, then clipped to the circle —
+        // the head ends up roughly centered).
+        const photoCx = PAGE_WIDTH - MARGIN - PHOTO_RADIUS;
+        const photoCy = PAGE_HEIGHT - MARGIN - PHOTO_RADIUS;
+        drawCircularImage(
+          state,
+          embedded,
+          photoCx,
+          photoCy,
+          PHOTO_RADIUS,
+        );
         hasPhoto = true;
       } catch (err) {
         // Embedder can throw on invalid image bytes — log + skip
@@ -965,8 +1156,9 @@ export async function renderAdaptedCvAsPdf(
     }
   }
 
-  // Header text — centered when no photo, else left-aligned (the
-  // photo occupies the right ~80pt of the page).
+  // Header text — centered when no photo, else left-aligned. The
+  // photo (when present) is small and inline with the header text,
+  // NOT a tall column that pushes the first section down.
   if (sanitized.name) {
     drawWrappedText(state, sanitized.name, {
       size: SIZE_NAME,
@@ -985,11 +1177,12 @@ export async function renderAdaptedCvAsPdf(
     });
   }
 
-  // Advance state.y below the photo's bottom edge so content
-  // doesn't run alongside the photo (REQ-PHOTO-001).
-  if (hasPhoto && photoY !== null) {
-    state.y = Math.min(state.y, photoY - 5);
-  }
+  // NO Y-reservation below the photo — the photo is small
+  // enough to fit beside the header text. Content flows
+  // directly below the contact line. (The old code did
+  // `state.y = Math.min(state.y, photoY - 5)` which created
+  // ~110pt of empty white space below the header — the worst
+  // visual bug in the previous Harvard layout.)
 
   // Horizontal rule under the header (separates header from body).
   drawSpacer(state, 5);
@@ -997,8 +1190,10 @@ export async function renderAdaptedCvAsPdf(
   drawSpacer(state, 6);
 
   // Resumen / Perfil Profesional — italic body under yellow section title.
+  // Keep-together passes the height of one summary line so a
+  // summary never gets orphaned at the bottom of a page.
   if (sanitized.summary) {
-    drawSectionTitle(state, SECTION_TITLES.summary);
+    drawSectionTitle(state, SECTION_TITLES.summary, lineHeight(SIZE_BODY_ITALIC));
     drawWrappedText(state, sanitized.summary, {
       size: SIZE_BODY_ITALIC,
       font: state.italic,
@@ -1008,7 +1203,7 @@ export async function renderAdaptedCvAsPdf(
 
   // Educación (Harvard order: before Experience).
   if (sanitized.education && sanitized.education.length > 0) {
-    drawSectionTitle(state, SECTION_TITLES.education);
+    drawSectionTitle(state, SECTION_TITLES.education, lineHeight(SIZE_EDU_INSTITUTION));
     for (const ed of sanitized.education) {
       drawEducationEntry(state, ed);
       drawSpacer(state, 2);
@@ -1018,7 +1213,7 @@ export async function renderAdaptedCvAsPdf(
 
   // Experiencia Profesional.
   if (sanitized.experience && sanitized.experience.length > 0) {
-    drawSectionTitle(state, SECTION_TITLES.experience);
+    drawSectionTitle(state, SECTION_TITLES.experience, lineHeight(SIZE_EXP_BULLET));
     for (const exp of sanitized.experience) {
       drawExperienceEntry(state, exp);
     }
@@ -1028,7 +1223,7 @@ export async function renderAdaptedCvAsPdf(
   // Proyectos (personal projects, volunteer work, standalone
   // experience items from the original CV that look like projects).
   if (sanitized.projects && sanitized.projects.length > 0) {
-    drawSectionTitle(state, SECTION_TITLES.projects);
+    drawSectionTitle(state, SECTION_TITLES.projects, lineHeight(SIZE_PROJECT_NAME));
     for (const proj of sanitized.projects) {
       drawProjectEntry(state, proj);
     }
@@ -1039,7 +1234,7 @@ export async function renderAdaptedCvAsPdf(
   // / 'Certifications' section in the original CV — licenses,
   // courses, and training programs).
   if (sanitized.certifications && sanitized.certifications.length > 0) {
-    drawSectionTitle(state, SECTION_TITLES.certifications);
+    drawSectionTitle(state, SECTION_TITLES.certifications, lineHeight(SIZE_EXP_BULLET));
     // Bullet list — each cert gets its own line. The `url` field
     // (when non-null) makes the cert name clickable and adds a
     // small "›" indicator so the user knows the cert has a link
@@ -1055,14 +1250,24 @@ export async function renderAdaptedCvAsPdf(
 
   // Habilidades.
   if (sanitized.skills && sanitized.skills.length > 0) {
-    drawSectionTitle(state, SECTION_TITLES.skills);
-    drawWrappedText(state, sanitized.skills.join(", "), { size: SIZE_SKILLS });
+    drawSectionTitle(state, SECTION_TITLES.skills, lineHeight(SIZE_SKILLS));
+    // Expand each skill to its ATS-friendly aliases (canonical /
+    // alias1 / alias2 joined by " / "). Display-only expansion —
+    // the LLM is forbidden from adding skills not in the original
+    // CV; we just render more keyword variants per skill that's
+    // already there. Helps ATS regex match on "React.js" /
+    // "ReactJS" / "React" all from a single skill entry.
+    drawWrappedText(
+      state,
+      sanitized.skills.map(expandTech).join(", "),
+      { size: SIZE_SKILLS },
+    );
     drawSpacer(state, SECTION_GAP);
   }
 
   // Idiomas.
   if (sanitized.languages && sanitized.languages.length > 0) {
-    drawSectionTitle(state, SECTION_TITLES.languages);
+    drawSectionTitle(state, SECTION_TITLES.languages, lineHeight(SIZE_LANGUAGES));
     drawWrappedText(state, sanitized.languages.join(", "), { size: SIZE_LANGUAGES });
   }
 
