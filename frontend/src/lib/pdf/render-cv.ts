@@ -347,10 +347,21 @@ function drawWrappedText(
 
 // ── Bullet line (• character + wrapped, indented text) ────────────────
 
+/**
+ * Draw a bullet line. When `link` is provided, the FIRST wrapped
+ * line of text is wrapped in a clickable PDF link annotation (the
+ * user can click the text to open the URL). The annotation only
+ * covers the first line because that's where the cert / bullet name
+ * lives; continuation lines (date, issuer, etc.) are not clickable.
+ *
+ * Used by both experience bullets (no link) and certification
+ * bullets (with link when the cert has a URL in the original CV).
+ */
 function drawBullet(
   state: DrawState,
   text: string,
   size: number = SIZE_EXP_BULLET,
+  link: string | null = null,
 ): void {
   const font = state.font;
   const bulletChar = "\u2022";
@@ -388,6 +399,22 @@ function drawBullet(
       size,
       color: rgb(0, 0, 0),
     });
+    // On the first line, if a link was provided, overlay a clickable
+    // region covering the text so the cert name is clickable.
+    if (i === 0 && link && link.startsWith("http")) {
+      const lineWidth = font.widthOfTextAtSize(line, size);
+      const textTopY = state.y; // top of the line (PDF Y-up)
+      const textBottomY = state.y - size;
+      const textHeight = textTopY - textBottomY;
+      drawLinkAnnotation(
+        state,
+        link,
+        textX,
+        textBottomY,
+        lineWidth,
+        textHeight,
+      );
+    }
     state.y -= height;
   }
 }
@@ -865,7 +892,10 @@ export async function renderAdaptedCvAsPdf(
         url: sanitizeForWinAnsi(l.url),
       })),
     })),
-    certifications: cv.certifications.map(sanitizeForWinAnsi),
+    certifications: cv.certifications.map((c) => ({
+      name: sanitizeForWinAnsi(c.name),
+      url: c.url ? sanitizeForWinAnsi(c.url) : null,
+    })),
     skills: cv.skills.map(sanitizeForWinAnsi),
     languages: cv.languages.map(sanitizeForWinAnsi),
     photo: cv.photo, // base64 data URL — no sanitization needed
@@ -1010,12 +1040,15 @@ export async function renderAdaptedCvAsPdf(
   // courses, and training programs).
   if (sanitized.certifications && sanitized.certifications.length > 0) {
     drawSectionTitle(state, SECTION_TITLES.certifications);
-    // Bullet list — each cert gets its own line. Splitting a
-    // comma-joined string would lose the issuer / date suffix
-    // that lives in the verbatim name (e.g. '... | NTT DATA /
-    // Oracle Training', '... - 2025-02-09').
+    // Bullet list — each cert gets its own line. The `url` field
+    // (when non-null) makes the cert name clickable and adds a
+    // small "›" indicator so the user knows the cert has a link
+    // (PDFs don't change cursor on hover like HTML — the icon is
+    // the only visual cue). "›" (U+203A) is in the WinAnsi
+    // extension set so it survives the sanitizer without mapping.
     for (const cert of sanitized.certifications) {
-      drawBullet(state, cert);
+      const indicator = cert.url ? " ›" : "";
+      drawBullet(state, `${cert.name}${indicator}`, SIZE_EXP_BULLET, cert.url);
     }
     drawSpacer(state, SECTION_GAP);
   }

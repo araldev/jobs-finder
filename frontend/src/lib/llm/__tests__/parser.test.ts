@@ -114,23 +114,54 @@ describe("parseAdaptedCVResponse", () => {
     expect(cv.projects[0]?.name).toBe("V12-UI");
   });
 
-  it("extracts certifications as a string array (respects original CV's section)", () => {
+  it("extracts certifications as {name, url|null}[] (the post-cv-link-preservation shape)", () => {
     // The user has a 'CERTIFICACIONES Y COMPETENCIAS' section in
     // their INFORMACIÓN ADICIONAL. The LLM should populate this
-    // array verbatim from that section.
+    // array with `{name, url}` objects — `name` is verbatim from
+    // the original CV; `url` is the hyperlink from the PDF
+    // annotation (or `null` when the original CV has no link).
+    const raw = JSON.stringify({
+      name: "Arturo",
+      certifications: [
+        {
+          name: "Carné de conducir B y vehículo propio.",
+          url: null,
+        },
+        {
+          name: "Ultimate JavaScript - Arturo Alba - 2025-02-09",
+          url: "https://ude.my/UC-abc123",
+        },
+        {
+          name: "Java SE Programmer Certification Preparation | NTT DATA / Oracle Training",
+          url: null,
+        },
+      ],
+    });
+    const cv = parseAdaptedCVResponse(raw);
+    expect(cv.certifications).toEqual([
+      { name: "Carné de conducir B y vehículo propio.", url: null },
+      { name: "Ultimate JavaScript - Arturo Alba - 2025-02-09", url: "https://ude.my/UC-abc123" },
+      { name: "Java SE Programmer Certification Preparation | NTT DATA / Oracle Training", url: null },
+    ]);
+  });
+
+  it("accepts the legacy string[] shape for backward compat (synthesizes url: null)", () => {
+    // Older adapted CVs cached as `string[]` (before the
+    // cv-link-preservation change added the {name, url} shape)
+    // MUST still parse — the parser synthesizes `url: null` for
+    // every entry. Cached CVs are the user's "saved adapted CV"
+    // that they re-download without re-running the LLM.
     const raw = JSON.stringify({
       name: "Arturo",
       certifications: [
         "Carné de conducir B y vehículo propio.",
         "Ultimate JavaScript - Arturo Alba - 2025-02-09",
-        "Java SE Programmer Certification Preparation | NTT DATA / Oracle Training",
       ],
     });
     const cv = parseAdaptedCVResponse(raw);
     expect(cv.certifications).toEqual([
-      "Carné de conducir B y vehículo propio.",
-      "Ultimate JavaScript - Arturo Alba - 2025-02-09",
-      "Java SE Programmer Certification Preparation | NTT DATA / Oracle Training",
+      { name: "Carné de conducir B y vehículo propio.", url: null },
+      { name: "Ultimate JavaScript - Arturo Alba - 2025-02-09", url: null },
     ]);
   });
 

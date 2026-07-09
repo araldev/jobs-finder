@@ -364,16 +364,22 @@ describe("renderAdaptedCvAsPdf", () => {
   it("renders a Certificaciones section between Proyectos and Habilidades when certifications are present", async () => {
     // The user's original CV has a 'CERTIFICACIONES Y COMPETENCIAS'
     // section in INFORMACIÓN ADICIONAL. The LLM surfaces those
-    // items in the 'certifications' array and the renderer draws
-    // a 'Certificaciones' section between 'Proyectos' and
-    // 'Habilidades', with each cert as a bullet so the issuer /
-    // date suffix is preserved.
+    // items in the 'certifications' array (now as {name, url}
+    // objects) and the renderer draws a 'Certificaciones' section
+    // between 'Proyectos' and 'Habilidades', with each cert as a
+    // bullet so the issuer / date suffix is preserved.
     const bytes = await renderAdaptedCvAsPdf({
       ...SPANISH_CV,
       certifications: [
-        "Carné de conducir B y vehículo propio.",
-        "Ultimate JavaScript - Arturo Alba - 2025-02-09",
-        "Java SE Programmer Certification Preparation | NTT DATA / Oracle Training",
+        { name: "Carné de conducir B y vehículo propio.", url: null },
+        {
+          name: "Ultimate JavaScript - Arturo Alba - 2025-02-09",
+          url: "https://ude.my/UC-abc123",
+        },
+        {
+          name: "Java SE Programmer Certification Preparation | NTT DATA / Oracle Training",
+          url: null,
+        },
       ],
     });
     const pdf = await getDocumentProxy(new Uint8Array(bytes));
@@ -384,6 +390,59 @@ describe("renderAdaptedCvAsPdf", () => {
     expect(text).toContain(
       "Java SE Programmer Certification Preparation | NTT DATA / Oracle Training",
     );
+    // The cert with a URL gets a small "›" indicator next to the name
+    // so the user knows the cert is clickable (PDFs don't change
+    // cursor on hover like HTML). "›" is in the WinAnsi set so it
+    // survives the sanitizer without remapping.
+    // Count of "›" must be exactly 1 (only the cert with a URL
+    // gets the indicator — pdf-lib's text extraction joins bullets
+    // on a single line so a regex-based "URL indicator on this
+    // cert, no indicator on the other" check is fragile).
+    const arrowCount = (text.match(/›/g) ?? []).length;
+    expect(arrowCount).toBe(1);
+    // And the indicator is on the cert with the URL (Ultimate
+    // JavaScript, NOT Carné de conducir B).
+    expect(text).toContain("Ultimate JavaScript - Arturo Alba - 2025-02-09 ›");
+
+    // The PDF must also contain a link annotation pointing to the
+    // cert URL — the visual indicator alone is not enough, the
+    // user must be able to click the cert name to open the URL.
+    // Use the same pdf-lib approach as the chip tests below.
+    // NOTE: walk ALL pages — the cert might land on a later page
+    // if the CV content pushes it past page 1.
+    const loaded = await PDFDocument.load(bytes);
+    let certUrlFound = false;
+    for (const p of loaded.getPages()) {
+      const annotsObj = p.node.get(PDFName.of("Annots"));
+      if (!annotsObj) continue;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const annots = (annotsObj as any)?.asArray() ?? [];
+      for (const ref of annots) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const a = loaded.context.lookup(ref as any) as any;
+        if (a?.get?.(PDFName.of("Subtype"))?.toString() !== "/Link") continue;
+        const action = a.get(PDFName.of("A"));
+        if (!action) continue;
+        const uri = action.get(PDFName.of("URI"));
+        // The URI is stored as a PDFName (e.g. "/https:#2F#2Fude.my#2FUC-abc123")
+        // because `context.obj` doesn't auto-convert string values
+        // to PDFString. `String(toString())` gives the raw encoded
+        // form, which still contains the readable hostname.
+        const uriStr = String(uri?.toString() ?? "");
+        // The URI is stored as a PDFName with `#2F` encoding for
+        // forward slashes (PDFName special-char rule). The
+        // encoded form of `https://ude.my/UC-abc123` is
+        // `/https:#2F#2Fude.my#2FUC-abc123`. Check for the URL
+        // path tail `UC-abc123` which is unique to this URL.
+        if (uriStr.includes("UC-abc123")) {
+          certUrlFound = true;
+          break;
+        }
+      }
+      if (certUrlFound) break;
+    }
+    expect(certUrlFound).toBe(true);
+    // The Certificaciones section sits between Proyectos and Habilidades.
     const projIdx = text.indexOf("PROYECTOS");
     const certIdx = text.indexOf("CERTIFICACIONES");
     const skillsIdx = text.indexOf("HABILIDADES");
@@ -578,7 +637,10 @@ describe("renderAdaptedCvAsPdf", () => {
       education: [],
       projects: [],
       certifications: [
-        "Ultimate JavaScript \u27F6 Arturo Alba \u2014 2025-02-09", // ⟶ arrow + em dash
+        {
+          name: "Ultimate JavaScript \u27F6 Arturo Alba \u2014 2025-02-09", // ⟶ arrow + em dash
+          url: null,
+        },
       ],
       skills: ["TypeScript", "React"],
       languages: ["Español"],

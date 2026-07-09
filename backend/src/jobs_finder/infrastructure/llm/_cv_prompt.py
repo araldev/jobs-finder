@@ -130,7 +130,7 @@ ADAPT_CV_SYSTEM_PROMPT = (
     "If the original CV has no top-level 'Proyectos' / 'Projects' section, return an empty array [] for projects.\n"
     "\n"
     "CERTIFICATIONS — RESPECT THE ORIGINAL CV'S SECTION STRUCTURE:\n"
-    "If the original CV has a TOP-LEVEL 'Certificaciones' / 'Certificaciones y Competencias' / 'Licencias' / 'Certifications' / 'Licenses' / 'Formación Complementaria' section (a section that explicitly groups licenses, courses, and training programs), populate the 'certifications' array with ALL items from that section. Each item is a single string with the FULL content verbatim from the original CV (issuer after '|' or '—', date, etc.).\n"
+    "If the original CV has a TOP-LEVEL 'Certificaciones' / 'Certificaciones y Competencias' / 'Licencias' / 'Certifications' / 'Licenses' / 'Formación Complementaria' section (a section that explicitly groups licenses, courses, and training programs), populate the 'certifications' array with ALL items from that section. Each item is an object `{\"name\": \"<verbatim text>\", \"url\": \"<url or null>\"}` — the name carries the FULL content verbatim from the original CV (issuer after '|' or '—', date, etc.), and the url carries the hyperlink from the HYPERLINKS — ORIGINAL URL MAP when the original CV has a link attached to that cert (e.g. 'Ultimate JavaScript | 2025-02-09' with a link to the certificate). Set `url: null` when the cert has no hyperlink in the original CV (e.g. 'Carné de conducir B' with no link). DO NOT invent URLs — every url must come verbatim from the HYPERLINKS — ORIGINAL URL MAP section of the user message. If the cert label in the original CV has no matching hyperlink in the MAP, emit `url: null` (not empty string, not a guessed URL).\n"
     "Allowed in 'certifications':\n"
     "  - Obtained licenses (e.g. 'Carné de conducir B y vehículo propio.').\n"
     "  - Completed courses (e.g. 'Ultimate JavaScript — Arturo Alba — 2025-02-09').\n"
@@ -211,7 +211,7 @@ ADAPT_CV_SYSTEM_PROMPT = (
     'WRONG: projects=[{"name":"SmartCV AI",...}] — SmartCV AI not in original CV\n'
     "\n"
     "JSON SCHEMA:\n"
-    '{"name":"string|null","email":"string|null","phone":"string|null","location":"string|null","summary":"string|null","experience":[{"company":"string","title":"string","start_date":"string","end_date":"string","description":"string","location":"string|null"}],"education":[{"degree":"string","institution":"string","year":"string","grade":"string|null"}],"projects":[{"name":"string","description":"string","technologies":["string"],"links":[{"label":"string","url":"string|null"}]}],"certifications":["string"],"skills":["string"],"languages":["string"]}\n'
+    '{"name":"string|null","email":"string|null","phone":"string|null","location":"string|null","summary":"string|null","experience":[{"company":"string","title":"string","start_date":"string","end_date":"string","description":"string","location":"string|null"}],"education":[{"degree":"string","institution":"string","year":"string","grade":"string|null"}],"projects":[{"name":"string","description":"string","technologies":["string"],"links":[{"label":"string","url":"string|null"}]}],"certifications":[{"name":"string","url":"string|null"}],"skills":["string"],"languages":["string"]}\n'
 )  # noqa: S703,E501 (long lines intentional for prompt)
 
 

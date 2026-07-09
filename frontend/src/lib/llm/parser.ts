@@ -11,7 +11,12 @@
 // Thinking-block stripping (the M2.x model family emits
 // `<think>...</think>` tags) is also mirrored here.
 
-import type { AdaptedCV, AdaptedCVProject, AdaptedCVProjectLink } from "./prompts";
+import type {
+  AdaptedCV,
+  AdaptedCVCertification,
+  AdaptedCVProject,
+  AdaptedCVProjectLink,
+} from "./prompts";
 
 export class AdaptedCVParseError extends Error {
   constructor(message: string) {
@@ -156,6 +161,48 @@ function listOr(value: unknown): string[] {
     return value.map((v) => String(v));
   }
   return [];
+}
+
+/**
+ * Parse the `certifications` array, accepting BOTH the old `string[]`
+ * shape (legacy) and the new `{name, url|null}[]` shape. Always
+ * returns the new shape so downstream consumers (renderer,
+ * post-processor) have a single contract.
+ *
+ * The old shape was a list of plain strings like
+ *   `["Ultimate JavaScript — Arturo Alba — 2025-02-09"]`
+ * — the LLM still emits this when the certification has no URL
+ * (and we also accept it for backward compat with cached
+ * adapted CVs). We synthesize `url: null` for those entries.
+ *
+ * The new shape is a list of objects:
+ *   `[{name: "Ultimate JavaScript — 2025-02-09", url: "https://..."}]`
+ * — `url` is the verbatim URL from the HYPERLINKS — ORIGINAL URL MAP
+ * in the user message, or `null` when the original CV had no
+ * hyperlink for that cert.
+ */
+function certificationsOr(value: unknown): AdaptedCVCertification[] {
+  if (!value || !Array.isArray(value)) return [];
+  const out: AdaptedCVCertification[] = [];
+  for (const v of value) {
+    if (typeof v === "string") {
+      const name = v.trim();
+      if (name.length > 0) out.push({ name, url: null });
+      continue;
+    }
+    if (v && typeof v === "object") {
+      const obj = v as Record<string, unknown>;
+      const name = strOr(obj.name).trim();
+      if (name.length === 0) continue;
+      const rawUrl = obj.url;
+      let url: string | null = null;
+      if (typeof rawUrl === "string" && rawUrl.length > 0) {
+        url = rawUrl;
+      }
+      out.push({ name, url });
+    }
+  }
+  return out;
 }
 
 function linksOr(value: unknown): AdaptedCVProjectLink[] {
@@ -307,7 +354,7 @@ export function parseAdaptedCVResponse(raw: string): AdaptedCV {
     experience,
     education,
     projects,
-    certifications: listOr(obj.certifications),
+    certifications: certificationsOr(obj.certifications),
     skills: listOr(obj.skills),
     languages: listOr(obj.languages),
     photo: photoOr(obj.photo),
