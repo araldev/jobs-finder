@@ -13,19 +13,20 @@ const PAGE_HEIGHT = 842;
 const MARGIN = 50;
 const CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN;
 
-// Photo bounding box (was 120×140 — too tall, caused ~110pt of
-// empty white space below the header because the renderer reserved
-// the right-column vertical range for "photo-side" content that
-// never actually existed). Sized to fit alongside the two-line
-// header text (name + contact), matching its vertical extent so
-// the photo doesn't push the first section down.
-const PHOTO_BOX_WIDTH = 80;
-const PHOTO_BOX_HEIGHT = 80;
-// Visual radius for the rounded-photo effect (pdf-lib's drawImage
-// has no built-in mask; we use SVG path clipping via raw PDF
-// operators — see drawRoundedImage below). ~32pt = Harvard/ATS
-// standard for a circular profile photo.
-const PHOTO_RADIUS = 40;
+// Photo bounding box + circle radius. The photo is positioned in
+// the top-right corner of the header, sized to fit alongside the
+// header text WITHOUT overlapping the section content below.
+//
+// 40×40pt is small enough to fit in the header's vertical room
+// (header text: name 18pt + contact 10pt = ~40pt total) without
+// pushing the first section down. The circle is drawn via
+// pdf-lib's `pushOperators` + arc operator (see
+// `drawCircularImage`); the bitmap is fit INSIDE the circle
+// preserving aspect ratio so a portrait source image doesn't
+// stretch into a square.
+const PHOTO_BOX_WIDTH = 40;
+const PHOTO_BOX_HEIGHT = 40;
+const PHOTO_RADIUS = 20;
 
 // ── Font selection ──────────────────────────────────────────────────────
 //
@@ -391,6 +392,10 @@ function drawCircularImage(
   cx: number,
   cy: number,
   r: number,
+  drawX: number,
+  drawY: number,
+  drawW: number,
+  drawH: number,
 ): void {
   // Operator sequence:
   //   q                 % push graphics state
@@ -418,13 +423,14 @@ function drawCircularImage(
     PDFOperator.of("W"),
     PDFOperator.of("n"),
   );
-  // Draw the image inside the clip. Origin is the bounding-box
-  // bottom-left (PDF Y-up); we want the image's BOTTOM at cy - r.
+  // Draw the image at the caller's specified (x, y, w, h) so we
+  // can preserve the source image's aspect ratio (a portrait
+  // 600x800 source gets drawn at 30x40, not stretched to 40x40).
   state.page.drawImage(image, {
-    x: cx - r,
-    y: cy - r,
-    width: r * 2,
-    height: r * 2,
+    x: drawX,
+    y: drawY,
+    width: drawW,
+    height: drawH,
   });
   // Pop the clip so subsequent draws aren't restricted.
   state.page.pushOperators(PDFOperator.of("Q"));
@@ -1109,18 +1115,17 @@ export async function renderAdaptedCvAsPdf(
   };
 
   // Photo header — drawn FIRST so the text doesn't overlap it.
-  // Sizing: the photo fits inside the PHOTO_BOX_WIDTH × PHOTO_BOX_HEIGHT
-  // bounding box (with aspect-ratio preservation) and is drawn as a
-  // CIRCLE via `drawCircularImage`. Center is at:
-  //   - cx = PAGE_WIDTH - MARGIN - PHOTO_RADIUS (top-right column)
-  //   - cy = PAGE_HEIGHT - MARGIN - PHOTO_RADIUS (so the bottom of the
-  //     photo touches MARGIN from the top)
-  // This way the photo is `2*PHOTO_RADIUS` wide (80pt by default),
-  // aligned with the contact line, and DOES NOT extend below the
-  // header text — so the first section starts immediately below the
-  // header rule. The previous design reserved the photo's full
-  // vertical range for "right-side content" that never existed,
-  // producing ~110pt of ugly white space before the first section.
+  // The photo is a SMALL CIRCLE (40×40pt) anchored in the top-right
+  // corner of the page, sized to fit alongside the header text
+  // (name + contact ~40pt tall) without pushing the first section
+  // down. The previous design used an 80×80 box that overlapped
+  // the Perfil Profesional section text.
+  //
+  // Aspect-ratio preservation: the source image's natural width
+  // and height are fit INSIDE the 2*PHOTO_RADIUS bounding circle
+  // (scale-to-fit), then clipped to the circle. A portrait
+  // 600×800 source gets drawn at 30×40 (preserved aspect), not
+  // stretched to 40×40 (which would distort the face).
   let hasPhoto = false;
   if (sanitized.photo) {
     const decoded = await decodePhotoDataUrl(sanitized.photo).catch(() => null);
@@ -1129,23 +1134,39 @@ export async function renderAdaptedCvAsPdf(
         const embedded = decoded.isJpeg
           ? await doc.embedJpg(decoded.bytes)
           : await doc.embedPng(decoded.bytes);
-        // The photo is drawn at a CIRCLE centered on the top-right
-        // of the page. The image is fit into PHOTO_BOX (its
-        // natural aspect ratio preserved via scale-to-fit) and
-        // the resulting bitmap is clipped to a circle of radius
-        // PHOTO_RADIUS centered on (photoCx, photoCy). This gives
-        // a perfectly circular profile photo regardless of the
-        // source image's aspect ratio (a 577x845 portrait gets
-        // scaled to fit the box, then clipped to the circle —
-        // the head ends up roughly centered).
+        const intr = embedded.size();
+        // Circle center in the top-right corner of the page
+        // header, vertically aligned with the NAME (state.y starts
+        // at PAGE_HEIGHT - MARGIN). The photo's TOP edge sits at
+        // the page top (just below the top margin) and its bottom
+        // edge sits at y = (PAGE_HEIGHT - MARGIN) - 2*PHOTO_RADIUS.
         const photoCx = PAGE_WIDTH - MARGIN - PHOTO_RADIUS;
         const photoCy = PAGE_HEIGHT - MARGIN - PHOTO_RADIUS;
+        // Scale-to-fit: width and height that fit inside the
+        // 2*PHOTO_RADIUS bounding circle while preserving the
+        // source's aspect ratio. The smaller dimension is
+        // exactly 2*PHOTO_RADIUS, the other is smaller (letterboxing
+        // inside the circle is the unused area; the head ends up
+        // centered because most photos have the face near the
+        // center of the frame).
+        const fitScale = Math.min(
+          (2 * PHOTO_RADIUS) / Math.max(intr.width, 1),
+          (2 * PHOTO_RADIUS) / Math.max(intr.height, 1),
+        );
+        const drawW = intr.width * fitScale;
+        const drawH = intr.height * fitScale;
+        const drawX = photoCx - drawW / 2;
+        const drawY = photoCy - drawH / 2;
         drawCircularImage(
           state,
           embedded,
           photoCx,
           photoCy,
           PHOTO_RADIUS,
+          drawX,
+          drawY,
+          drawW,
+          drawH,
         );
         hasPhoto = true;
       } catch (err) {
