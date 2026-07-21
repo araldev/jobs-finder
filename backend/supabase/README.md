@@ -42,6 +42,104 @@ The function body is structured to minimize blast radius when invoked:
 The function is **idempotent** on re-call (a second invocation is a
 no-op — no rows match, function returns `void`, no error).
 
+## Billing migrations (0001-0004)
+
+The `user-roles-and-billing` change adds four migrations that introduce
+Stripe-backed subscriptions, the audit log, the default-Free trigger on
+`auth.users`, and the sequence grants. Apply them AFTER the prior
+auth-flows migrations.
+
+| File | Purpose |
+| --- | --- |
+| `20260721_0001_subscriptions.sql` | `public.subscriptions` table + CHECKs + RLS + service-role grants + indexes |
+| `20260721_0002_billing_events.sql` | Append-only audit (`event_id` UNIQUE for replay safety) + service-role grants |
+| `20260721_0003_default_free_trigger.sql` | `AFTER INSERT ON auth.users` → INSERT `subscriptions(plan='free', status='active')` |
+| `20260721_0004_grant_sequences.sql` | `GRANT USAGE` on `billing_events_id_seq` (mirrors migration 006) |
+
+### Apply via the bundled `psql` helper
+
+If you don't have the `supabase` CLI on the box, use the script under
+`scripts/`:
+
+```bash
+cd backend
+SUPABASE_DB_URL='postgres://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres' \
+    bash supabase/scripts/apply-billing-migrations.sh
+```
+
+Add `--dry-run` to print the migration list + connection target without
+applying. The script verifies `psql` is on PATH and `SUPABASE_DB_URL` is
+set, then runs each file with `psql -v ON_ERROR_STOP=on` so a partial
+apply halts immediately.
+
+### Apply via the Supabase SQL editor
+
+For projects that prefer the dashboard workflow, paste each file in
+order in the SQL editor and click **Run**. Each file uses `IF NOT EXISTS`
+/ `CREATE OR REPLACE` / `DROP IF EXISTS` so re-applying is safe.
+
+### Verify the default-Free trigger fires
+
+After applying, sign up a fresh test user (any email — use a throwaway
+to avoid polluting real accounts), then run:
+
+```sql
+SELECT user_id, plan, status, created_at
+FROM public.subscriptions
+ORDER BY created_at DESC
+LIMIT 5;
+```
+
+Expect a row with `plan='free'`, `status='active'`, and `user_id`
+matching the new auth.users row.
+
+### RLS smoke test
+
+Verify cross-user reads are blocked at the database level. Paste the
+following in the SQL editor (it impersonates an `authenticated` user
+named `other-uid` and tries to read `target-uid`'s subscription):
+
+```sql
+-- Set up two test users (use the dashboard UI's "Add user" or an existing
+-- test account). Replace the UUIDs with real ones from auth.users.
+\set target_user_id 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+\set other_user_id  'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+
+-- Impersonate the "other" user.
+SET LOCAL ROLE authenticated;
+SELECT set_config(
+    'request.jwt.claim.sub',
+    :'other_user_id',
+    true
+);
+
+-- Attempt to read the target user's row.
+SELECT count(*) AS leaked_rows
+FROM public.subscriptions
+WHERE user_id = :'target_user_id';
+-- Expect: leaked_rows = 0  (RLS policy blocks it)
+```
+
+Then `RESET ROLE;` and run the same query as `service_role` — expect
+1 row. This proves RLS only allows own-row reads.
+
+### Rollback (kill switch)
+
+The kill switch lives in the application env, NOT the database. Set
+`NEXT_PUBLIC_BILLING_ENABLED=false` in `frontend/.env.local` and the
+billing routes short-circuit to 503 — the app runs unchanged on Free.
+
+For a full SQL revert (pre-launch only):
+
+```sql
+DROP TABLE IF EXISTS public.billing_events;
+DROP TABLE IF EXISTS public.subscriptions;
+DROP FUNCTION IF EXISTS public.default_free_subscription();
+DROP TRIGGER IF EXISTS trg_default_free_subscription ON auth.users;
+```
+
+No `down` migrations are shipped — reverts are manual SQL.
+
 ## Apply via local stack (`supabase start`)
 
 ```bash
@@ -167,3 +265,60 @@ SUPABASE_LOCAL_SERVICE_KEY=$(supabase status | grep 'service_role key' | awk '{p
 The current happy-path test is a smoke check (the full end-to-end
 requires the `/auth/v1/token?grant_type=password` flow which is
 out of scope for this change — see the function-level docstring).
+
+---
+
+## Billing migrations (user-roles-and-billing)
+
+Four migrations implement the Free/Pro/Pro+ subscription system backed by
+Stripe webhooks:
+
+| File | Purpose |
+| --- | --- |
+| `migrations/20260721_0001_subscriptions.sql` | `subscriptions` table + RLS |
+| `migrations/20260721_0002_billing_events.sql` | Append-only Stripe event audit log |
+| `migrations/20260721_0003_default_free_trigger.sql` | Auto-create Free row on `auth.users` INSERT |
+| `migrations/20260721_0004_grant_sequences.sql` | Sequence grants for `authenticated` / `anon` / `service_role` |
+
+### Apply via `psql` (manual)
+
+```bash
+# Dry run (shows what would be applied):
+./scripts/apply-billing-migrations.sh --dry-run
+
+# Real apply:
+./scripts/apply-billing-migrations.sh --apply
+
+# Or directly with psql:
+psql "$DATABASE_URL" -f migrations/20260721_0001_subscriptions.sql
+psql "$DATABASE_URL" -f migrations/20260721_0002_billing_events.sql
+psql "$DATABASE_URL" -f migrations/20260721_0003_default_free_trigger.sql
+psql "$DATABASE_URL" -f migrations/20260721_0004_grant_sequences.sql
+```
+
+### Apply via Supabase dashboard SQL editor
+
+Paste each file in order into the Supabase SQL editor and click **Run**.
+The `apply-billing-migrations.sh` script is for local/manual apply only;
+the dashboard has its own migration tracking.
+
+### Verify the trigger fires
+
+1. Register a new test user in the app (or via Supabase Studio).
+2. Run:
+   ```sql
+   SELECT plan, status FROM subscriptions WHERE user_id = '<new-user-uuid>';
+   ```
+   Expect: exactly one row with `plan = 'free'` and `status = 'active'`.
+
+### Rollback (pre-launch only)
+
+```sql
+DROP TRIGGER IF EXISTS on_auth_user_insert_default_subscription ON auth.users;
+DROP FUNCTION IF EXISTS public.handle_new_user_subscription();
+DROP TABLE IF EXISTS public.billing_events;
+DROP TABLE IF EXISTS public.subscriptions;
+```
+
+`billing_events` is append-only — deleted rows are gone permanently.
+
