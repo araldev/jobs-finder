@@ -83,6 +83,29 @@ describe("updateSession — publicPaths whitelist (REQ-AUTH-021)", () => {
     expect(res.status).toBe(200);
   });
 
+  it("DOES call auth.getUser for CHUNKED auth-token cookies (the .0 / .1 case)", async () => {
+    // Regression: Supabase's JS client splits large session tokens
+    // (>~4KB) across multiple cookies named `sb-<ref>-auth-token.0`,
+    // `sb-<ref>-auth-token.1`, etc. The previous middleware check
+    // (`startsWith('sb-') && endsWith('-auth-token')`) missed the
+    // chunked cookies, so logged-in users with chunked tokens were
+    // treated as anon and bounced to /login. The current check uses
+    // a regex that matches both the single-cookie and the chunked
+    // variants. We assert the response is 200 (not 307 to /login)
+    // for a logged-in user on /dashboard.
+    userRef.current = { id: "u", email: "u@example.com" };
+    const request = new NextRequest("http://localhost:3000/dashboard");
+    // Set BOTH chunked cookies (mimicking a chunked token).
+    request.cookies.set("sb-kpdhgvutrjirtadotlai-auth-token.0", "chunk-0");
+    request.cookies.set("sb-kpdhgvutrjirtadotlai-auth-token.1", "chunk-1");
+    const res = await updateSession(request);
+    // Logged-in user → middleware passes through (200), NOT
+    // redirect to /login (307). If the regex check missed the
+    // chunked cookies, user would be null and the middleware
+    // would 307-redirect to /login.
+    expect(res.status).toBe(200);
+  });
+
   it("does NOT call auth.getUser when no Supabase auth cookie is present", async () => {
     // Regression: anon traffic (no session cookie) used to hit
     // Supabase on every middleware run, failing noisily when

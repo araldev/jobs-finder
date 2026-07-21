@@ -48,14 +48,19 @@ export async function updateSession(
   // way to avoid the noise on anon traffic is to not call into
   // Supabase at all.
   //
-  // Cookie name pattern: `sb-<project-ref>-auth-token` (project-ref
-  // is derived from the Supabase URL at runtime, not hardcoded).
-  const SUPABASE_AUTH_COOKIE_PREFIX = "sb-";
-  const SUPABASE_AUTH_COOKIE_SUFFIX = "-auth-token";
-  const hasSupabaseAuthCookie = request.cookies.getAll().some(
-    (c) =>
-      c.name.startsWith(SUPABASE_AUTH_COOKIE_PREFIX) &&
-      c.name.endsWith(SUPABASE_AUTH_COOKIE_SUFFIX),
+  // Cookie name patterns (we match all variants so chunked tokens
+  // also trigger the auth path):
+  //   - `sb-<project-ref>-auth-token`           (single cookie, small token)
+  //   - `sb-<project-ref>-auth-token.0`         (chunked cookie, large token)
+  //   - `sb-<project-ref>-auth-token.1`         (chunked cookie, large token)
+  //   - `sb-<project-ref>-auth-token.N`         (Nth chunk)
+  // The previous prefix/suffix check missed `.0`/`.1` chunks and
+  // bounced logged-in users back to /login (the "Supabase 500
+  // callback" symptom — the cookies WERE set, but the middleware
+  // didn't see them).
+  const SUPABASE_AUTH_COOKIE_REGEX = /^sb-.*-auth-token(\.\d+)?$/;
+  const hasSupabaseAuthCookie = request.cookies.getAll().some((c) =>
+    SUPABASE_AUTH_COOKIE_REGEX.test(c.name),
   );
 
   let user = null;
