@@ -14,17 +14,18 @@ const MARGIN = 50;
 const CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN;
 
 // Photo bounding box + circle radius. The photo is positioned in
-// the top-right corner of the header as a 60×60pt circle (Harvard-
-// style passport-photo proportions). The header text shares the
+// the top-right corner of the header as an 80×80pt circle (Harvard-
+// style passport-photo proportions — ~28mm × 28mm at 72dpi, the
+// standard size for a CV headshot). The header text shares the
 // same vertical room — name 18pt + contact 10pt + line spacing ≈
-// 50pt — and the photo's right-column vertical range (y=732..792
+// 50pt — and the photo's right-column vertical range (y=712..792
 // in the default layout) is reserved at the END of the header so
 // the horizontal rule + first section start BELOW the photo, not
 // alongside it. The contact line uses a narrower width when
 // hasPhoto=true so it doesn't extend into the photo's column.
-const PHOTO_BOX_WIDTH = 60;
-const PHOTO_BOX_HEIGHT = 60;
-const PHOTO_RADIUS = 30;
+const PHOTO_BOX_WIDTH = 80;
+const PHOTO_BOX_HEIGHT = 80;
+const PHOTO_RADIUS = 40;
 const PHOTO_GAP = 8; // gap between contact line end and photo's left edge
 
 // ── Font selection ──────────────────────────────────────────────────────
