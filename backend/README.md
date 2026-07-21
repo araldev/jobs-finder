@@ -2972,3 +2972,11 @@ The composition root wires a `DisabledLinkedInCookieRefresher`
 The scraper's `_maybe_refresh_cookies` short-circuits to
 `False` and the v1 soft-WARNING path runs.
 
+## Ownership note: billing
+
+Billing (subscriptions, Stripe Checkout, quotas) lives entirely in the
+Next.js frontend (`frontend/src/lib/billing/` and `frontend/src/app/api/billing/`).
+The Python backend handles job scraping only; it is not involved in billing. See
+`backend/supabase/migrations/` for the database schema that both the frontend
+and backend share.
+
