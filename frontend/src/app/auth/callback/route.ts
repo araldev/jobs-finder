@@ -32,6 +32,18 @@ export async function GET(request: NextRequest) {
   const code = searchParams.get("code");
   const next = sanitizeNext(searchParams.get("next"));
 
+  if (process.env.NODE_ENV !== "production") {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[auth/callback] code=${code?.slice(0, 8) ?? "(none)"}... ` +
+        `origin=${origin} ` +
+        `cookies=${request.cookies
+          .getAll()
+          .map((c) => c.name)
+          .join(",")}`,
+    );
+  }
+
   if (!code) {
     return NextResponse.redirect(`${origin}/login?error=missing_code`);
   }
@@ -43,32 +55,64 @@ export async function GET(request: NextRequest) {
   // cookies()-from-next/headers pattern).
   let response = NextResponse.next({ request });
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet) {
-          // 1) Echo cookies back to the request (so server
-          //    components reading them see the freshly-written values).
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value),
-          );
-          // 2) Write cookies to a fresh response object (so they
-          //    actually travel with the response we return below).
-          response = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options),
-          );
+  let supabase;
+  try {
+    supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return request.cookies.getAll();
+          },
+          setAll(cookiesToSet) {
+            // 1) Echo cookies back to the request (so server
+            //    components reading them see the freshly-written values).
+            cookiesToSet.forEach(({ name, value }) =>
+              request.cookies.set(name, value),
+            );
+            // 2) Write cookies to a fresh response object (so they
+            //    actually travel with the response we return below).
+            response = NextResponse.next({ request });
+            cookiesToSet.forEach(({ name, value, options }) =>
+              response.cookies.set(name, value, options),
+            );
+          },
         },
       },
+    );
+  } catch (err) {
+    if (process.env.NODE_ENV !== "production") {
+      // eslint-disable-next-line no-console
+      console.error("[auth/callback] createServerClient threw:", err);
+    }
+    return NextResponse.redirect(
+      `${origin}/login?error=${encodeURIComponent(
+        err instanceof Error ? err.message : String(err),
+      )}`,
+    );
+  }
+
+  const { error } = await supabase.auth.exchangeCodeForSession(code).catch(
+    (err) => {
+      // Supabase client throws (not just returns { error }) on
+      // network failures, malformed responses, and certain
+      // protocol errors. We catch here so the route can return
+      // a clean redirect to /login instead of a 500. The error
+      // is logged in the dev server console for diagnosis.
+      if (process.env.NODE_ENV !== "production") {
+        // eslint-disable-next-line no-console
+        console.error(
+          "[auth/callback] exchangeCodeForSession threw:",
+          err,
+        );
+      }
+      return {
+        data: { user: null, session: null },
+        error: { message: err?.message ?? String(err) } as Error,
+      };
     },
   );
-
-  const { error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
     return NextResponse.redirect(
       `${origin}/login?error=${encodeURIComponent(error.message)}`,
