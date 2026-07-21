@@ -3,14 +3,19 @@ import { NextRequest } from "next/server";
 import { GET } from "../route";
 
 // Server-side supabase client mock — exchangeCodeForSession is the
-// only method the callback handler exercises.
+// only method the callback handler exercises. The mock targets
+// `@supabase/ssr` directly because the route imports
+// `createServerClient` from there (response-object pattern; the
+// `@/lib/supabase/server` helper is unused in the callback — it
+// uses next/headers `cookies()` which doesn't reliably attach to
+// the redirect response in App Router).
 const exchangeCodeForSession = vi.fn(async (_code: string) => ({
   data: { user: { id: "user-1", email: "u@example.com" } },
   error: null as Error | null,
 }));
 
-vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => ({
+vi.mock("@supabase/ssr", () => ({
+  createServerClient: () => ({
     auth: {
       exchangeCodeForSession: (code: string) => exchangeCodeForSession(code),
     },
@@ -80,10 +85,16 @@ describe("auth/callback — ?next= open-redirect defense (REQ-AUTH-022)", () => 
     expect(res.headers.get("location")).toBe("http://localhost:3000/dashboard");
   });
 
-  it("missing code → does NOT call exchangeCodeForSession, redirects to next path", async () => {
+  it("missing code → does NOT call exchangeCodeForSession, redirects to /login?error=missing_code", async () => {
     const res = await GET(makeRequest("/auth/callback?next=/reset-password"));
     expect(exchangeCodeForSession).not.toHaveBeenCalled();
-    expect(res.headers.get("location")).toBe("http://localhost:3000/reset-password");
+    // The previous version redirected to `next` even without a code,
+    // which was wrong (no session was ever set; sending the user
+    // to /reset-password would just bounce them to /login via the
+    // middleware). Send the user back to /login with a clear error.
+    expect(res.headers.get("location")).toBe(
+      "http://localhost:3000/login?error=missing_code",
+    );
   });
 
   it("exchangeCodeForSession rejects → redirects to /login?error=…", async () => {

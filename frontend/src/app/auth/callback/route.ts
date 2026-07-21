@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createServerClient } from "@supabase/ssr";
 import { sanitizeNext } from "@/lib/auth/sanitizeNext";
 
 /**
@@ -19,21 +19,65 @@ import { sanitizeNext } from "@/lib/auth/sanitizeNext";
  * implementation ships without the segment — leaving the prefix would
  * 404 the OAuth callback for English users. REQ-I18N-016 is satisfied
  * via the `NEXT_LOCALE` cookie pathway instead.
+ *
+ * Cookie handling uses the response-object pattern (the more reliable
+ * Next.js 15 pattern). The previous version used `cookies()` from
+ * `next/headers` to set cookies, but those writes don't always attach
+ * to the redirect response in App Router. The response-object pattern
+ * makes the cookie writes explicit and survives in both Server Actions
+ * and Route Handlers.
  */
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
   const next = sanitizeNext(searchParams.get("next"));
 
-  if (code) {
-    const supabase = await createClient();
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
-    if (error) {
-      return NextResponse.redirect(
-        `${origin}/login?error=${encodeURIComponent(error.message)}`,
-      );
-    }
+  if (!code) {
+    return NextResponse.redirect(`${origin}/login?error=missing_code`);
   }
 
-  return NextResponse.redirect(`${origin}${next}`);
+  // Mutable response — Supabase's `setAll` callback may replace it
+  // with a fresh one that has the new auth cookies attached. This
+  // is the pattern recommended by Supabase's docs for Route Handlers
+  // in Next.js 15 (avoids the cookie-write loss bug we hit with the
+  // cookies()-from-next/headers pattern).
+  let response = NextResponse.next({ request });
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          // 1) Echo cookies back to the request (so server
+          //    components reading them see the freshly-written values).
+          cookiesToSet.forEach(({ name, value }) =>
+            request.cookies.set(name, value),
+          );
+          // 2) Write cookies to a fresh response object (so they
+          //    actually travel with the response we return below).
+          response = NextResponse.next({ request });
+          cookiesToSet.forEach(({ name, value, options }) =>
+            response.cookies.set(name, value, options),
+          );
+        },
+      },
+    },
+  );
+
+  const { error } = await supabase.auth.exchangeCodeForSession(code);
+  if (error) {
+    return NextResponse.redirect(
+      `${origin}/login?error=${encodeURIComponent(error.message)}`,
+    );
+  }
+
+  // Attach the `?next=` redirect target. The session cookies are
+  // already on `response` (set by the Supabase client above).
+  return NextResponse.redirect(`${origin}${next}`, {
+    headers: response.headers,
+  });
 }
