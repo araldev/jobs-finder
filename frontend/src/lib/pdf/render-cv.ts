@@ -14,19 +14,18 @@ const MARGIN = 50;
 const CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN;
 
 // Photo bounding box + circle radius. The photo is positioned in
-// the top-right corner of the header, sized to fit alongside the
-// header text WITHOUT overlapping the section content below.
-//
-// 40×40pt is small enough to fit in the header's vertical room
-// (header text: name 18pt + contact 10pt = ~40pt total) without
-// pushing the first section down. The circle is drawn via
-// pdf-lib's `pushOperators` + arc operator (see
-// `drawCircularImage`); the bitmap is fit INSIDE the circle
-// preserving aspect ratio so a portrait source image doesn't
-// stretch into a square.
-const PHOTO_BOX_WIDTH = 40;
-const PHOTO_BOX_HEIGHT = 40;
-const PHOTO_RADIUS = 20;
+// the top-right corner of the header as a 60×60pt circle (Harvard-
+// style passport-photo proportions). The header text shares the
+// same vertical room — name 18pt + contact 10pt + line spacing ≈
+// 50pt — and the photo's right-column vertical range (y=732..792
+// in the default layout) is reserved at the END of the header so
+// the horizontal rule + first section start BELOW the photo, not
+// alongside it. The contact line uses a narrower width when
+// hasPhoto=true so it doesn't extend into the photo's column.
+const PHOTO_BOX_WIDTH = 60;
+const PHOTO_BOX_HEIGHT = 60;
+const PHOTO_RADIUS = 30;
+const PHOTO_GAP = 8; // gap between contact line end and photo's left edge
 
 // ── Font selection ──────────────────────────────────────────────────────
 //
@@ -504,6 +503,13 @@ interface DrawTextOptions {
   font?: PDFFont;
   indent?: number;
   center?: boolean;
+  /**
+   * Maximum line width in points. Defaults to CONTENT_WIDTH minus
+   * the indent. Pass an explicit narrower width when a side element
+   * (e.g. the header photo) occupies a column on the page and the
+   * text must not extend into it.
+   */
+  maxWidth?: number;
 }
 
 function drawWrappedText(
@@ -515,16 +521,17 @@ function drawWrappedText(
   const font = opts.font ?? state.font;
   const indent = opts.indent ?? 0;
   const center = opts.center ?? false;
+  const maxWidth = opts.maxWidth ?? CONTENT_WIDTH - indent;
 
   const trimmed = text.trim();
   if (trimmed.length === 0) return;
 
-  const lines = wrapLine(trimmed, font, size, CONTENT_WIDTH - indent);
+  const lines = wrapLine(trimmed, font, size, maxWidth - indent);
   const height = lineHeight(size);
   for (const line of lines) {
     ensureSpace(state, height);
     const x = center
-      ? MARGIN + (CONTENT_WIDTH - font.widthOfTextAtSize(line, size)) / 2
+      ? MARGIN + (maxWidth - font.widthOfTextAtSize(line, size)) / 2
       : MARGIN + indent;
     state.page.drawText(line, {
       x,
@@ -1122,11 +1129,14 @@ export async function renderAdaptedCvAsPdf(
   // the Perfil Profesional section text.
   //
   // Aspect-ratio preservation: the source image's natural width
-  // and height are fit INSIDE the 2*PHOTO_RADIUS bounding circle
-  // (scale-to-fit), then clipped to the circle. A portrait
-  // 600×800 source gets drawn at 30×40 (preserved aspect), not
-  // stretched to 40×40 (which would distort the face).
+  // The photo is drawn at a CIRCLE centered on the top-right of
+  // the page (60×60pt = Harvard-style passport photo). The bitmap
+  // is fit INSIDE the 2*PHOTO_RADIUS bounding circle with
+  // scale-to-fit so a portrait 600×800 source draws at ~45×60
+  // (preserved aspect, undistorted face) — not stretched to 60×60.
   let hasPhoto = false;
+  let photoCx = 0;
+  let photoCy = 0;
   if (sanitized.photo) {
     const decoded = await decodePhotoDataUrl(sanitized.photo).catch(() => null);
     if (decoded) {
@@ -1135,13 +1145,12 @@ export async function renderAdaptedCvAsPdf(
           ? await doc.embedJpg(decoded.bytes)
           : await doc.embedPng(decoded.bytes);
         const intr = embedded.size();
-        // Circle center in the top-right corner of the page
-        // header, vertically aligned with the NAME (state.y starts
-        // at PAGE_HEIGHT - MARGIN). The photo's TOP edge sits at
-        // the page top (just below the top margin) and its bottom
-        // edge sits at y = (PAGE_HEIGHT - MARGIN) - 2*PHOTO_RADIUS.
-        const photoCx = PAGE_WIDTH - MARGIN - PHOTO_RADIUS;
-        const photoCy = PAGE_HEIGHT - MARGIN - PHOTO_RADIUS;
+        // Circle center in the top-right corner of the page header.
+        // The photo's TOP edge sits at the page top (just below the
+        // top margin) and its BOTTOM edge sits at
+        //   y = (PAGE_HEIGHT - MARGIN) - 2*PHOTO_RADIUS.
+        photoCx = PAGE_WIDTH - MARGIN - PHOTO_RADIUS;
+        photoCy = PAGE_HEIGHT - MARGIN - PHOTO_RADIUS;
         // Scale-to-fit: width and height that fit inside the
         // 2*PHOTO_RADIUS bounding circle while preserving the
         // source's aspect ratio. The smaller dimension is
@@ -1178,13 +1187,23 @@ export async function renderAdaptedCvAsPdf(
   }
 
   // Header text — centered when no photo, else left-aligned. The
-  // photo (when present) is small and inline with the header text,
-  // NOT a tall column that pushes the first section down.
+  // Header text — left-aligned, NOT centered, when a photo is
+  // present (the photo occupies the right ~60pt of the page so the
+  // text MUST start from the left margin to avoid overlapping the
+  // photo's right-column vertical range). The contact line is
+  // width-restricted to `CONTENT_WIDTH - 2*PHOTO_RADIUS - PHOTO_GAP`
+  // when hasPhoto so it doesn't extend into the photo's column
+  // (otherwise long contact info wraps or visually collides with
+  // the photo's right side).
+  const textMaxWidth = hasPhoto
+    ? CONTENT_WIDTH - 2 * PHOTO_RADIUS - PHOTO_GAP
+    : undefined;
   if (sanitized.name) {
     drawWrappedText(state, sanitized.name, {
       size: SIZE_NAME,
       font: state.bold,
       center: !hasPhoto,
+      maxWidth: textMaxWidth,
     });
   }
   const contactParts: string[] = [];
@@ -1195,15 +1214,21 @@ export async function renderAdaptedCvAsPdf(
     drawWrappedText(state, contactParts.join(" | "), {
       size: SIZE_CONTACT,
       center: !hasPhoto,
+      maxWidth: textMaxWidth,
     });
   }
 
-  // NO Y-reservation below the photo — the photo is small
-  // enough to fit beside the header text. Content flows
-  // directly below the contact line. (The old code did
-  // `state.y = Math.min(state.y, photoY - 5)` which created
-  // ~110pt of empty white space below the header — the worst
-  // visual bug in the previous Harvard layout.)
+  // Y-RESERVATION: with a 60×60 photo, the photo's bottom edge
+  // extends below the contact line. Push state.y to the photo's
+  // bottom so the horizontal rule + first section start BELOW
+  // the photo (NOT alongside it). This is the modern equivalent
+  // of REQ-PHOTO-001 — we DON'T reserve a giant right-column
+  // (that's the bug that produced 110pt of empty space); we only
+  // push down enough to clear the actual photo bottom.
+  if (hasPhoto) {
+    const photoBottomY = photoCy - PHOTO_RADIUS;
+    state.y = Math.min(state.y, photoBottomY - 4);
+  }
 
   // Horizontal rule under the header (separates header from body).
   drawSpacer(state, 5);
