@@ -48,12 +48,20 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${origin}/login?error=missing_code`);
   }
 
-  // Mutable response — Supabase's `setAll` callback may replace it
-  // with a fresh one that has the new auth cookies attached. This
-  // is the pattern recommended by Supabase's docs for Route Handlers
-  // in Next.js 15 (avoids the cookie-write loss bug we hit with the
-  // cookies()-from-next/headers pattern).
-  let response = NextResponse.next({ request });
+  // Create the FINAL response first with the redirect target. The
+  // Supabase client's `setAll` callback will attach the session
+  // cookies directly to this response. We then return it (the
+  // response carries BOTH the redirect AND the Set-Cookie headers
+  // — the browser lands on `next` with the new session active).
+  //
+  // IMPORTANT: `NextResponse.next({ request })` is for MIDDLEWARE
+  // only. Calling it in a Route Handler throws "NextResponse.next()
+  // was used in a app route handler, this is not supported". The
+  // Route-Handler pattern is: build the FINAL response up front,
+  // let the Supabase client write cookies to it via setAll, and
+  // return that same response. No `next()` indirection.
+  const redirectUrl = new URL(`${origin}${next}`);
+  const response = NextResponse.redirect(redirectUrl, { status: 307 });
 
   let supabase;
   try {
@@ -66,17 +74,13 @@ export async function GET(request: NextRequest) {
             return request.cookies.getAll();
           },
           setAll(cookiesToSet) {
-            // 1) Echo cookies back to the request (so server
-            //    components reading them see the freshly-written values).
-            cookiesToSet.forEach(({ name, value }) =>
-              request.cookies.set(name, value),
-            );
-            // 2) Write cookies to a fresh response object (so they
-            //    actually travel with the response we return below).
-            response = NextResponse.next({ request });
-            cookiesToSet.forEach(({ name, value, options }) =>
-              response.cookies.set(name, value, options),
-            );
+            // Attach each freshly-written cookie to the FINAL
+            // response so it travels with the 307 redirect to
+            // `next`. The browser lands on `/dashboard` (or wherever)
+            // with the session cookies set.
+            for (const { name, value, options } of cookiesToSet) {
+              response.cookies.set(name, value, options);
+            }
           },
         },
       },
@@ -119,9 +123,8 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Attach the `?next=` redirect target. The session cookies are
-  // already on `response` (set by the Supabase client above).
-  return NextResponse.redirect(`${origin}${next}`, {
-    headers: response.headers,
-  });
+  // Session cookies are already attached to `response` via setAll.
+  // Return the same response object — it carries both the
+  // 307 redirect AND the Set-Cookie headers.
+  return response;
 }
