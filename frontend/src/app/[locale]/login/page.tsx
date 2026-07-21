@@ -52,10 +52,23 @@ export default function LoginPage() {
   }
 
   async function loginWithGoogle() {
+    // Use the explicit `NEXT_PUBLIC_SITE_URL` env var when set (so the
+    // redirectTo is consistent regardless of the access hostname —
+    // critical for OAuth: Supabase rejects codes when the callback
+    // URL doesn't match the project's allowlisted URLs, and
+    // `0.0.0.0:3000` is NOT in the default allowlist). Falls back to
+    // `location.origin` (the browser's current origin) so dev still
+    // works without the env var. The check `=== 'localhost'` is a
+    // safety net: if the env var is empty, force localhost.
+    const siteUrl =
+      process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
+      (location.hostname === "0.0.0.0" || location.hostname === "[::1]"
+        ? "http://localhost:3000"
+        : location.origin);
     const { error: authError } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${location.origin}/auth/callback`,
+        redirectTo: `${siteUrl}/auth/callback`,
         queryParams: {
           prompt: "select_account",
         },

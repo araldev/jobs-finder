@@ -65,6 +65,10 @@ beforeEach(() => {
     data: { user: { id: "u", email: "u@example.com" } },
     error: null,
   });
+  mockSupabaseAuth.auth.signInWithOAuth.mockResolvedValue({
+    data: { url: "https://accounts.google.com/..." , provider: "google" },
+    error: null,
+  });
 });
 
 // Import AFTER mocks are registered.
@@ -158,5 +162,57 @@ describe("LoginPage — OTP email prefill (REQ-MAINT-017)", () => {
     await waitFor(() => {
       expect(mockMagicLinkFormCallCount()).toBeGreaterThan(afterFirstMountCount + 1);
     });
+  });
+});
+
+describe("LoginPage — REQ-AUTH (Google OAuth redirect URL)", () => {
+  // The redirectTo passed to signInWithOAuth MUST be a Supabase-
+  // allowlisted URL. `0.0.0.0:3000` is NOT in the default allowlist
+  // and would cause the post-OAuth callback to fail with "fetch
+  // failed" (Supabase rejects the code exchange). The login page
+  // falls back to `http://localhost:3000` when the browser is
+  // accessing via 0.0.0.0 or [::1] (so dev via `pnpm dev --hostname
+  // 0.0.0.0` still works for developers who need LAN access).
+  it("uses http://localhost:3000 as the OAuth redirectTo when the browser is on 0.0.0.0", async () => {
+    // jsdom default location hostname is `localhost`, which would
+    // NOT trigger the fallback. Override to 0.0.0.0 to exercise
+    // the fallback path.
+    const originalLocation = window.location;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...originalLocation, hostname: "0.0.0.0", origin: "http://0.0.0.0:3000" },
+    });
+    try {
+      render(renderWithIntl(<LoginPage />, { locale: "es" }));
+      const googleButton = screen.getByRole("button", { name: /google/i });
+      fireEvent.click(googleButton);
+      await waitFor(() => {
+        expect(mockSupabaseAuth.auth.signInWithOAuth).toHaveBeenCalled();
+      });
+      const call = mockSupabaseAuth.auth.signInWithOAuth.mock.calls[0]?.[0];
+      expect(call?.options?.redirectTo).toBe(
+        "http://localhost:3000/auth/callback",
+      );
+    } finally {
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: originalLocation,
+      });
+    }
+  });
+
+  it("uses location.origin as the OAuth redirectTo when the browser is on localhost", async () => {
+    // jsdom default is `http://localhost:3000` — assert it's used
+    // as-is (no rewrite when origin is already localhost).
+    render(renderWithIntl(<LoginPage />, { locale: "es" }));
+    const googleButton = screen.getByRole("button", { name: /google/i });
+    fireEvent.click(googleButton);
+    await waitFor(() => {
+      expect(mockSupabaseAuth.auth.signInWithOAuth).toHaveBeenCalled();
+    });
+    const call = mockSupabaseAuth.auth.signInWithOAuth.mock.calls[0]?.[0];
+    expect(call?.options?.redirectTo).toBe(
+      "http://localhost:3000/auth/callback",
+    );
   });
 });
