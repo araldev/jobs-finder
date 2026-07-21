@@ -49,6 +49,8 @@
     "remark-gfm": "4.0.1",
     "server-only": "0.0.1",
     "sonner": "2.0.7",
+    "stripe": "22.3.2",
+    "@stripe/stripe-js": "9.12.0",
     "tailwind-merge": "3.6.0",
     "unpdf": "1.6.2",
     "zod": "4.4.3"
