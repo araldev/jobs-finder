@@ -3,6 +3,9 @@ import "server-only";
 import { type NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { chatCompletion, LLMUnavailableError } from "@/lib/llm-client";
+import { countCvAdaptedThisMonth, enforceCvQuota } from "@/lib/billing/quota";
+import { planCacheGet } from "@/lib/billing/plan-cache";
+import { PLANS } from "@/lib/billing/plans";
 import {
   ADAPT_CV_SYSTEM_PROMPT,
   buildAdaptCVUserMessage,
@@ -76,6 +79,30 @@ export async function POST(request: NextRequest) {
   } = await supabase.auth.getSession();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // 1b. Quota enforcement (after auth, before LLM).
+  const billingEnabled = process.env.NEXT_PUBLIC_BILLING_ENABLED;
+  if (billingEnabled === "true") {
+    const userId = session.user.id;
+    const cached = planCacheGet(userId);
+    const plan = cached?.plan ?? "free";
+    const config = PLANS[plan];
+    const used = await countCvAdaptedThisMonth(userId, supabase);
+    const { allowed, limit, remaining } = enforceCvQuota(plan, used);
+    if (!allowed) {
+      return NextResponse.json(
+        {
+          error: "CV quota exceeded",
+          message: `You have reached your monthly CV adaptation limit (${config.cvLimitPerMonth === "unlimited" ? "unlimited" : `${limit} per month`}). Upgrade to Pro for unlimited adaptations.`,
+          used,
+          limit,
+          remaining,
+          plan,
+        },
+        { status: 402 },
+      );
+    }
   }
 
   // 2. Parse + validate the multipart form.

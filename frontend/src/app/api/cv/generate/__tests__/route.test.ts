@@ -542,3 +542,158 @@ describe("POST /api/cv/generate — LLM + engagement flow", () => {
     expect(cvArg.photo).toBeNull();
   });
 });
+
+// ── Quota middleware (user-roles-and-billing) ────────────────────────────
+//
+// These tests cover the new billing-aware quota gate that runs
+// AFTER auth and BEFORE the LLM call. When
+// NEXT_PUBLIC_BILLING_ENABLED === "true", a Free user who has
+// already adapted 3 CVs this month gets a 402; a Pro user is
+// allowed through.
+
+import { planCacheClear, planCacheSet } from "@/lib/billing/plan-cache";
+import type { Subscription } from "@/types/billing";
+
+const PRO_SUB: Subscription = {
+  plan: "pro",
+  status: "active",
+  currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+  trialEnd: null,
+  cancelAtPeriodEnd: false,
+  stripeCustomerId: "cus_xyz",
+};
+
+// Mock the quota primitives so we control `used` per test without
+// driving a real Postgres COUNT.
+vi.mock("@/lib/billing/quota", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/billing/quota")>(
+      "@/lib/billing/quota",
+    );
+  return {
+    ...actual,
+    countCvAdaptedThisMonth: vi.fn(),
+  };
+});
+
+import { countCvAdaptedThisMonth as mockCount } from "@/lib/billing/quota";
+
+describe("POST /api/cv/generate — quota middleware", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    planCacheClear();
+    delete process.env.NEXT_PUBLIC_BILLING_ENABLED;
+    process.env.NEXT_PUBLIC_BILLING_ENABLED = "true";
+
+    // Re-establish session default from the outer beforeEach.
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: { user: { id: "user-1" } } },
+      error: null,
+    });
+    mockInsert.mockResolvedValue({ error: null });
+    mockExtractImage.mockResolvedValue(null);
+  });
+
+  it("returns 402 when a Free user is AT their monthly limit (3 CVs used)", async () => {
+    vi.mocked(mockCount).mockResolvedValueOnce(3);
+
+    const res = await POST(
+      makeFormRequest({
+        file: makePdfFile(),
+        job_title: "Senior Engineer",
+        job_company: "Acme",
+      }) as never,
+    );
+
+    expect(res.status).toBe(402);
+    const body = (await res.json()) as {
+      error: string;
+      used: number;
+      limit: number;
+      remaining: number;
+      plan: string;
+    };
+    expect(body.error).toMatch(/quota/i);
+    expect(body.used).toBe(3);
+    expect(body.limit).toBe(3);
+    expect(body.remaining).toBe(0);
+    expect(body.plan).toBe("free");
+    // The LLM was NOT called — quota check runs BEFORE the LLM.
+    expect(mockLLMCompletion).not.toHaveBeenCalled();
+  });
+
+  it("allows a Free user UNDER their monthly limit (2 CVs used)", async () => {
+    vi.mocked(mockCount).mockResolvedValueOnce(2);
+    mockLLMCompletion.mockResolvedValueOnce(
+      JSON.stringify({
+        name: "Ada",
+        experience: [],
+        education: [],
+        skills: [],
+        languages: [],
+      }),
+    );
+
+    const res = await POST(
+      makeFormRequest({
+        file: makePdfFile(),
+        job_title: "Senior Engineer",
+        job_company: "Acme",
+      }) as never,
+    );
+
+    expect(res.status).toBe(200);
+    // The LLM was called because the user is under quota.
+    expect(mockLLMCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a Pro user with 100 CVs used (unlimited)", async () => {
+    vi.mocked(mockCount).mockResolvedValueOnce(100);
+    planCacheSet("user-1", PRO_SUB);
+    mockLLMCompletion.mockResolvedValueOnce(
+      JSON.stringify({
+        name: "Ada",
+        experience: [],
+        education: [],
+        skills: [],
+        languages: [],
+      }),
+    );
+
+    const res = await POST(
+      makeFormRequest({
+        file: makePdfFile(),
+        job_title: "Senior Engineer",
+        job_company: "Acme",
+      }) as never,
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockLLMCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it("is BYPASSED when NEXT_PUBLIC_BILLING_ENABLED is not 'true'", async () => {
+    process.env.NEXT_PUBLIC_BILLING_ENABLED = "false";
+    mockLLMCompletion.mockResolvedValueOnce(
+      JSON.stringify({
+        name: "Ada",
+        experience: [],
+        education: [],
+        skills: [],
+        languages: [],
+      }),
+    );
+
+    const res = await POST(
+      makeFormRequest({
+        file: makePdfFile(),
+        job_title: "Senior Engineer",
+        job_company: "Acme",
+      }) as never,
+    );
+
+    expect(res.status).toBe(200);
+    // The quota module was never queried when the kill switch is off.
+    expect(mockCount).not.toHaveBeenCalled();
+  });
+});

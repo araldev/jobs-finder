@@ -15,7 +15,7 @@ describe("useCVAdapted", () => {
   it("fetches the count from /api/cv/count on mount", async () => {
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ total_today: 3 }),
+      json: async () => ({ total_this_month: 3 }),
     } as Response);
 
     const { result } = renderHook(() => useCVAdapted());
@@ -58,7 +58,7 @@ describe("useCVAdapted", () => {
   it("incrementCVAdapted bumps the count optimistically", async () => {
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ total_today: 2 }),
+      json: async () => ({ total_this_month: 2 }),
     } as Response);
 
     const { result } = renderHook(() => useCVAdapted());
@@ -76,9 +76,9 @@ describe("useCVAdapted", () => {
 
   it("does not set state after unmount (cancelled flag)", async () => {
     // Use a deferred promise so we control when it resolves
-    let resolvePromise!: (data: { total_today: number }) => void;
+    let resolvePromise!: (data: { total_this_month: number }) => void;
     const deferred = new Promise<Response>((resolve) => {
-      resolvePromise = (data: { total_today: number }) => {
+      resolvePromise = (data: { total_this_month: number }) => {
         resolve({ ok: true, json: async () => data } as Response);
       };
     });
@@ -91,7 +91,7 @@ describe("useCVAdapted", () => {
 
     // Now resolve — this should not call setState on unmounted component
     await act(async () => {
-      resolvePromise({ total_today: 99 });
+      resolvePromise({ total_this_month: 99 });
     });
 
     // After unmount, state is never updated

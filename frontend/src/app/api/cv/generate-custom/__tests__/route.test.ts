@@ -541,3 +541,124 @@ describe("POST /api/cv/generate-custom — LLM + engagement flow", () => {
     expect(cvArg.photo).toBe(dataUrl);
   });
 });
+
+// ── Quota middleware (user-roles-and-billing) ────────────────────────────
+//
+// Same contract as /api/cv/generate — the custom variant also inserts
+// ONE cv_adapted engagement event per call (D8: each variant = one
+// adaptation), so the same monthly quota covers both endpoints.
+
+import { planCacheClear, planCacheSet } from "@/lib/billing/plan-cache";
+import type { Subscription } from "@/types/billing";
+
+const PRO_SUB: Subscription = {
+  plan: "pro",
+  status: "active",
+  currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+  trialEnd: null,
+  cancelAtPeriodEnd: false,
+  stripeCustomerId: "cus_xyz",
+};
+
+vi.mock("@/lib/billing/quota", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/billing/quota")>(
+      "@/lib/billing/quota",
+    );
+  return {
+    ...actual,
+    countCvAdaptedThisMonth: vi.fn(),
+  };
+});
+
+import { countCvAdaptedThisMonth as mockCount } from "@/lib/billing/quota";
+
+describe("POST /api/cv/generate-custom — quota middleware", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    planCacheClear();
+    delete process.env.NEXT_PUBLIC_BILLING_ENABLED;
+    process.env.NEXT_PUBLIC_BILLING_ENABLED = "true";
+
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: { user: { id: "user-1" } } },
+      error: null,
+    });
+    mockInsert.mockResolvedValue({ error: null });
+    mockExtractImage.mockResolvedValue(null);
+    mockFetchUrlContent.mockResolvedValue({
+      title: "Senior Engineer",
+      textContent: "Job description.",
+      success: true,
+    });
+  });
+
+  it("returns 402 when a Free user is AT their monthly limit (D8: variants = adaptations)", async () => {
+    vi.mocked(mockCount).mockResolvedValueOnce(3);
+
+    const res = await POST(
+      makeFormRequest({
+        file: makePdfFile(),
+        job_description: "Senior engineer needed",
+      }) as never,
+    );
+
+    expect(res.status).toBe(402);
+    const body = (await res.json()) as {
+      error: string;
+      plan: string;
+      limit: number;
+    };
+    expect(body.error).toMatch(/quota/i);
+    expect(body.plan).toBe("free");
+    expect(body.limit).toBe(3);
+    expect(mockLLMCompletion).not.toHaveBeenCalled();
+  });
+
+  it("allows a Pro user (unlimited) through the quota gate", async () => {
+    vi.mocked(mockCount).mockResolvedValueOnce(50);
+    planCacheSet("user-1", PRO_SUB);
+    mockLLMCompletion.mockResolvedValueOnce(
+      JSON.stringify({
+        name: "Ada",
+        experience: [],
+        education: [],
+        skills: [],
+        languages: [],
+      }),
+    );
+
+    const res = await POST(
+      makeFormRequest({
+        file: makePdfFile(),
+        job_description: "Senior engineer needed",
+      }) as never,
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockLLMCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it("is BYPASSED when NEXT_PUBLIC_BILLING_ENABLED is not 'true'", async () => {
+    process.env.NEXT_PUBLIC_BILLING_ENABLED = "false";
+    mockLLMCompletion.mockResolvedValueOnce(
+      JSON.stringify({
+        name: "Ada",
+        experience: [],
+        education: [],
+        skills: [],
+        languages: [],
+      }),
+    );
+
+    const res = await POST(
+      makeFormRequest({
+        file: makePdfFile(),
+        job_description: "Senior engineer needed",
+      }) as never,
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockCount).not.toHaveBeenCalled();
+  });
+});

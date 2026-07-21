@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 
 interface CVCountResponse {
-  total_today: number;
+  total_this_month: number;
 }
 
 export interface UseCVAdaptedReturn {
@@ -35,7 +35,7 @@ export function useCVAdapted(): UseCVAdaptedReturn {
       })
       .then((data) => {
         if (!cancelled && data) {
-          setCVAdaptedCount(data.total_today);
+          setCVAdaptedCount(data.total_this_month);
         }
       })
       .catch(() => {
