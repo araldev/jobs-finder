@@ -56,9 +56,29 @@ export async function updateSession(
     },
   );
 
+  // `getUser` issues a network request to Supabase's /auth/v1/user
+  // endpoint. When Supabase is unreachable (DNS failure, paused
+  // project, offline dev environment) this rejects with `fetch
+  // failed`. We treat network errors as "anon" rather than
+  // crashing the middleware — public routes still render, auth-
+  // gated routes get redirected to /login by the rule below, and
+  // the dev server console isn't spammed with auth-fetch errors on
+  // every page load.
+  const userResult = await supabase.auth.getUser().catch((err) => {
+    if (process.env.NODE_ENV !== "production") {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[supabase/middleware] auth.getUser failed (treating as anon):",
+        err?.message ?? err,
+      );
+    }
+    return { data: { user: null }, error: err } as Awaited<
+      ReturnType<typeof supabase.auth.getUser>
+    >;
+  });
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = userResult;
 
   // Rutas públicas: / (landing page), /jobs (detalle público), /login, /signup, /auth
   // APIs (/api/*) son siempre accesibles. /forgot-password and /reset-password
