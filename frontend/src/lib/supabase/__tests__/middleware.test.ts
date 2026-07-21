@@ -18,7 +18,16 @@ vi.mock("@supabase/ssr", () => ({
 
 function makeRequest(pathname: string): NextRequest {
   const url = `http://localhost:3000${pathname}`;
-  return new NextRequest(url);
+  const request = new NextRequest(url);
+  // The middleware skips the Supabase auth.getUser() network
+  // call when there's NO Supabase auth cookie (anon traffic
+  // doesn't need a /auth/v1/user roundtrip). Tests inject a
+  // fake `sb-test-auth-token` cookie that matches the production
+  // cookie name pattern (`sb-<project-ref>-auth-token`) so the
+  // cookie-presence check passes and `userRef.current` controls
+  // the mock `auth.getUser()` response.
+  request.cookies.set("sb-test-auth-token", "fake-jwt");
+  return request;
 }
 
 async function runMiddleware(pathname: string, hasUser: boolean) {
@@ -72,6 +81,26 @@ describe("updateSession — publicPaths whitelist (REQ-AUTH-021)", () => {
   it("protected /dashboard with user → renders (200)", async () => {
     const res = await runMiddleware("/dashboard", true);
     expect(res.status).toBe(200);
+  });
+
+  it("does NOT call auth.getUser when no Supabase auth cookie is present", async () => {
+    // Regression: anon traffic (no session cookie) used to hit
+    // Supabase on every middleware run, failing noisily when
+    // Supabase was unreachable. The middleware now short-circuits
+    // the Supabase call when there's no `sb-*-auth-token` cookie
+    // (anon users have no session to refresh).
+    const getUserSpy = vi.fn(async () => ({
+      data: { user: null },
+      error: null,
+    }));
+    vi.doMock("@supabase/ssr", () => ({
+      createServerClient: () => ({ auth: { getUser: getUserSpy } }),
+    }));
+    const request = new NextRequest("http://localhost:3000/");
+    // Deliberately NO cookie set.
+    await updateSession(request);
+    expect(getUserSpy).not.toHaveBeenCalled();
+    vi.doUnmock("@supabase/ssr");
   });
 });
 

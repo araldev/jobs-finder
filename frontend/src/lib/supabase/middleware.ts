@@ -29,56 +29,77 @@ export async function updateSession(
   request: NextRequest,
   baseResponse?: NextResponse,
 ): Promise<NextResponse> {
-  // Use the caller-provided response as the base so middleware-chain
+// Use the caller-provided response as the base so middleware-chain
   // callers (e.g. next-intl) can pre-set headers like `x-middleware-rewrite`
   // that must survive into the final response. When called standalone
   // (e.g. from tests or the kill-switch branch), fall back to a fresh
   // NextResponse.next() so the original contract is preserved.
   const response = baseResponse ?? NextResponse.next({ request });
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value),
-          );
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options),
-          );
-        },
-      },
-    },
+  // SKIP the Supabase client entirely when there's NO auth cookie.
+  // The Supabase JS client calls /auth/v1/user on every middleware
+  // run, which fails noisily when Supabase is unreachable (DNS
+  // failure, Cloudflare 521, paused project, offline dev environment)
+  // and spams the dev server console. For anon users there's no
+  // session to refresh — the call is guaranteed to return user=null.
+  // We also avoid creating the client (which would call the server
+  // even if we skipped getUser()). The next-auth/ssr library logs
+  // AuthRetryableFetchError BEFORE our catch sees it, so the only
+  // way to avoid the noise on anon traffic is to not call into
+  // Supabase at all.
+  //
+  // Cookie name pattern: `sb-<project-ref>-auth-token` (project-ref
+  // is derived from the Supabase URL at runtime, not hardcoded).
+  const SUPABASE_AUTH_COOKIE_PREFIX = "sb-";
+  const SUPABASE_AUTH_COOKIE_SUFFIX = "-auth-token";
+  const hasSupabaseAuthCookie = request.cookies.getAll().some(
+    (c) =>
+      c.name.startsWith(SUPABASE_AUTH_COOKIE_PREFIX) &&
+      c.name.endsWith(SUPABASE_AUTH_COOKIE_SUFFIX),
   );
 
-  // `getUser` issues a network request to Supabase's /auth/v1/user
-  // endpoint. When Supabase is unreachable (DNS failure, paused
-  // project, offline dev environment) this rejects with `fetch
-  // failed`. We treat network errors as "anon" rather than
-  // crashing the middleware — public routes still render, auth-
-  // gated routes get redirected to /login by the rule below, and
-  // the dev server console isn't spammed with auth-fetch errors on
-  // every page load.
-  const userResult = await supabase.auth.getUser().catch((err) => {
-    if (process.env.NODE_ENV !== "production") {
-      // eslint-disable-next-line no-console
-      console.warn(
-        "[supabase/middleware] auth.getUser failed (treating as anon):",
-        err?.message ?? err,
-      );
-    }
-    return { data: { user: null }, error: err } as Awaited<
-      ReturnType<typeof supabase.auth.getUser>
-    >;
-  });
-  const {
-    data: { user },
-  } = userResult;
+  let user = null;
+  if (hasSupabaseAuthCookie) {
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return request.cookies.getAll();
+          },
+          setAll(cookiesToSet) {
+            cookiesToSet.forEach(({ name, value }) =>
+              request.cookies.set(name, value),
+            );
+            cookiesToSet.forEach(({ name, value, options }) =>
+              response.cookies.set(name, value, options),
+            );
+          },
+        },
+      },
+    );
+
+    // `getUser` issues a network request to Supabase's /auth/v1/user.
+    // When Supabase is unreachable this rejects with `fetch failed`
+    // or `AuthRetryableFetchError`. We treat network errors as "anon"
+    // rather than crashing the middleware — public routes still
+    // render, auth-gated routes get redirected to /login by the rule
+    // below.
+    const userResult = await supabase.auth.getUser().catch((err) => {
+      if (process.env.NODE_ENV !== "production") {
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[supabase/middleware] auth.getUser failed (treating as anon):",
+          err?.message ?? err,
+        );
+      }
+      return { data: { user: null }, error: err } as Awaited<
+        ReturnType<typeof supabase.auth.getUser>
+      >;
+    });
+    user = userResult.data.user;
+  }
 
   // Rutas públicas: / (landing page), /jobs (detalle público), /login, /signup, /auth
   // APIs (/api/*) son siempre accesibles. /forgot-password and /reset-password
